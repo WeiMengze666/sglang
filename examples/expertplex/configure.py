@@ -1,0 +1,81 @@
+"""Generate a single-node configuration; runs without PyTorch or GPUs."""
+
+import argparse
+import json
+from pathlib import Path
+
+from _bootstrap import module
+
+config = module("config")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model-path", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--prefill", type=int, default=1)
+    parser.add_argument("--decode", type=int, default=3)
+    parser.add_argument("--experts", type=int, default=4)
+    parser.add_argument("--max-prefill-tokens", type=int, default=2048)
+    parser.add_argument("--max-decode-tokens", type=int, default=256)
+    parser.add_argument("--rendezvous-dir", required=True)
+    args = parser.parse_args()
+    if min(args.prefill, args.decode, args.experts) < 1:
+        parser.error("Each role needs at least one GPU")
+    if args.prefill + args.decode + args.experts != 8:
+        parser.error("prefill + decode + experts must equal 8")
+    attention = args.prefill + args.decode
+    node = config.NodeConfig(
+        model_path=str(Path(args.model_path).expanduser().resolve()),
+        clients=tuple(
+            config.ClientConfig(
+                id=i,
+                phase="prefill" if i < args.prefill else "decode",
+                device=i,
+                port=30000 + i,
+            )
+            for i in range(attention)
+        ),
+        expert_devices=tuple(range(attention, 8)),
+        max_prefill_tokens=args.max_prefill_tokens,
+        max_decode_tokens=args.max_decode_tokens,
+        rendezvous_dir=str(Path(args.rendezvous_dir).expanduser().resolve()),
+    )
+    if Path(node.model_path, "config.json").exists():
+        spec = config.ModelSpec.from_model_path(node.model_path)
+        node.validate(spec)
+        capacity = max(node.max_prefill_tokens, node.max_decode_tokens)
+        experts = spec.num_experts // len(node.expert_devices)
+        buffers = (
+            len(node.clients)
+            * experts
+            * capacity
+            * (2 * spec.hidden_size + spec.intermediate_size)
+            * 2
+        )
+        memory = {
+            "expert_weights_gib_per_gpu": spec.expert_weight_bytes
+            / args.experts
+            / 2**30,
+            "expert_mailboxes_gib_per_gpu": buffers / 2**30,
+            "attention_weights_gib_per_gpu": spec.attention_weight_bytes / 2**30,
+            "kv_bytes_per_token": spec.kv_bytes_per_token,
+            "note": "Weight/mailbox estimate; KV pool, CUDA context and scratch are additional.",
+        }
+        if (
+            memory["expert_weights_gib_per_gpu"]
+            + memory["expert_mailboxes_gib_per_gpu"]
+            + 8
+            > node.gpu_memory_gib
+        ):
+            parser.error(
+                "Expert weights and mailboxes exceed the configured GPU memory budget"
+            )
+        print(json.dumps(memory, indent=2))
+    Path(args.output).expanduser().parent.mkdir(parents=True, exist_ok=True)
+    node.write_json(args.output)
+    print(f"Wrote {args.output}")
+
+
+if __name__ == "__main__":
+    main()

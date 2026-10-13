@@ -29,6 +29,11 @@ from transformers import PretrainedConfig
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
 from sglang.srt.eplb.expert_location import ModelConfigForExpertLocation
 from sglang.srt.eplb.expert_location_dispatch import ExpertLocationDispatchInfo
+from sglang.srt.expertplex.integration import (
+    expertplex_enabled,
+    is_routed_expert_weight,
+    validate_attention_model,
+)
 from sglang.srt.layers.aux_hidden_states import AuxHiddenStateAccumulator
 from sglang.srt.layers.layer_boundary import (
     append_stages,
@@ -48,7 +53,7 @@ from sglang.srt.layers.moe import (
 )
 from sglang.srt.layers.moe.ep_moe.layer import get_moe_impl_class
 from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
-from sglang.srt.layers.moe.topk import TopK, TopKOutputChecker
+from sglang.srt.layers.moe.topk import TopK, TopKOutputChecker, TopKOutputFormat
 from sglang.srt.layers.moe.utils import (
     RoutingMethodType,
     filter_moe_weight_param_global_expert,
@@ -244,6 +249,9 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         self.tp_size = get_parallel().moe_tp_size
         self.ep_size = get_parallel().moe_ep_size
         self.layer_id = layer_id
+        self._expertplex = expertplex_enabled()
+        if self._expertplex and quant_config is not None:
+            raise ValueError("ExpertPlex attention supports unquantized BF16 only")
         if self.tp_size > config.num_experts:
             raise ValueError(
                 f"Tensor parallel size {self.tp_size} is greater than "
@@ -261,18 +269,24 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             renormalize=norm_topk_prob,
             use_grouped_topk=False,
             layer_id=layer_id,
+            output_format=TopKOutputFormat.STANDARD if self._expertplex else None,
         )
 
-        self.experts = get_moe_impl_class(quant_config)(
-            num_experts=config.num_experts + get_exec().moe.ep_num_redundant_experts,
-            top_k=config.num_experts_per_tok,
-            layer_id=layer_id,
-            hidden_size=config.hidden_size,
-            intermediate_size=config.moe_intermediate_size,
-            quant_config=quant_config,
-            prefix=add_prefix("experts", prefix),
-            routing_method_type=RoutingMethodType.Renormalize,
-        )
+        # Attention ranks keep the router, but never allocate routed expert
+        # parameter storage. Those weights belong to persistent expert ranks.
+        self.experts = None
+        if not self._expertplex:
+            self.experts = get_moe_impl_class(quant_config)(
+                num_experts=config.num_experts
+                + get_exec().moe.ep_num_redundant_experts,
+                top_k=config.num_experts_per_tok,
+                layer_id=layer_id,
+                hidden_size=config.hidden_size,
+                intermediate_size=config.moe_intermediate_size,
+                quant_config=quant_config,
+                prefix=add_prefix("experts", prefix),
+                routing_method_type=RoutingMethodType.Renormalize,
+            )
 
         # Router gate: description-driven quant. Only the offline ModelSlim path
         # (which carries a per-layer quant_model_description) may quantise the
@@ -311,6 +325,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         forward_batch: Optional[ForwardBatch] = None,
     ) -> torch.Tensor:
 
+        if self._expertplex:
+            return self._forward_expertplex(hidden_states)
         if self._use_mega_moe:
             return self._forward_mega_moe(hidden_states, forward_batch)
         if (
@@ -322,6 +338,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             return self.forward_deepep(hidden_states, forward_batch)
 
     def get_moe_weights(self):
+        if self._expertplex:
+            return []
         return [
             x.data
             for name, x in self.experts.named_parameters()
@@ -330,6 +348,30 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 name, x, self.experts.num_local_experts
             )
         ]
+
+    def _forward_expertplex(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        from sglang.srt.expertplex.client import get_client
+
+        num_tokens, hidden_dim = hidden_states.shape
+        if num_tokens == 0:
+            return hidden_states
+        hidden_states = hidden_states.reshape(-1, hidden_dim)
+        router_logits, _ = self.gate(hidden_states)
+        topk_output = self.topk(hidden_states, router_logits)
+        if not TopKOutputChecker.format_is_standard(topk_output):
+            raise RuntimeError(
+                "ExpertPlex requires standard TopK expert IDs and weights"
+            )
+        # The configured client phase determines the remote queue, including
+        # decode-worker warmup/extend forwards. ForwardBatch's current mode
+        # must not send a decode client into the prefill queue.
+        output = get_client().run(
+            self.layer_id,
+            hidden_states,
+            topk_output.topk_ids,
+            topk_output.topk_weights,
+        )
+        return output.view(num_tokens, hidden_dim)
 
     def forward_normal(
         self,
@@ -1021,6 +1063,7 @@ class Qwen3MoeForCausalLM(nn.Module):
         prefix: str = "",
     ) -> None:
         super().__init__()
+        validate_attention_model(config, quant_config)
         self.pp_group = get_parallel().pp_group
         self.config = config
         self.quant_config = quant_config
@@ -1190,6 +1233,10 @@ class Qwen3MoeForCausalLM(nn.Module):
         params_dict = dict(self.named_parameters())
 
         for name, loaded_weight in weights:
+            if expertplex_enabled() and is_routed_expert_weight(name):
+                # Defense for externally supplied iterators; the default
+                # loader filters these names before reading their tensors.
+                continue
             if is_mtp:
                 if "mtp" not in name:
                     continue

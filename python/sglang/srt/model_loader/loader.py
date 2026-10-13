@@ -284,6 +284,9 @@ def _initialize_model(
     quant_config: Optional[QuantizationConfig] = None,
 ) -> nn.Module:
     """Initialize a model with the given configurations."""
+    from sglang.srt.expertplex.integration import validate_attention_model
+
+    validate_attention_model(model_config.hf_config, quant_config)
     model_class, _ = get_model_architecture(model_config)
     # Decide the shared-experts-fusion question here, once per runner, before any
     # layer exists: this is the only place a model class is instantiated, and it
@@ -629,7 +632,27 @@ class DefaultModelLoader(BaseModelLoader):
             hf_weights_files = list(resolved_source.weight_files)
             use_safetensors = resolved_source.use_safetensors
 
-        if self.load_config.load_format == LoadFormat.NPCACHE:
+        from sglang.srt.expertplex.integration import (
+            attention_weights_iterator,
+            expertplex_enabled,
+        )
+
+        if expertplex_enabled():
+            if self.load_config.load_format not in (
+                LoadFormat.AUTO,
+                LoadFormat.SAFETENSORS,
+            ):
+                raise ValueError(
+                    "ExpertPlex attention supports auto/safetensors loading only"
+                )
+            if not use_safetensors:
+                raise ValueError(
+                    "ExpertPlex attention requires a safetensors checkpoint"
+                )
+            # Select before eager, buffered and bulk-device loaders: they
+            # materialize the expert weights an attention rank must skip.
+            weights_iterator = attention_weights_iterator(hf_weights_files)
+        elif self.load_config.load_format == LoadFormat.NPCACHE:
             # Currently np_cache only support *.bin checkpoints
             assert use_safetensors is False
             weights_iterator = np_cache_weights_iterator(

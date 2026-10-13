@@ -93,6 +93,10 @@ def check_server_args(server_args: Any):
 
     cfg = resolving_view(server_args)
 
+    from sglang.srt.expertplex.integration import validate_server_args
+
+    validate_server_args(cfg)
+
     # Check parallel size constraints
     if cfg.ep_join_mode != "scale":
         assert (cfg.tp_size * cfg.pp_size) % cfg.nnodes == 0, (

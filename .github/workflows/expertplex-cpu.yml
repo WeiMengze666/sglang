@@ -1,0 +1,39 @@
+name: ExpertPlex CPU contracts
+
+on:
+  push:
+    paths:
+      - "python/sglang/srt/expertplex/**"
+      - "python/sglang/srt/models/qwen3_moe.py"
+      - "python/sglang/srt/model_loader/loader.py"
+      - "python/sglang/benchmark/serving.py"
+      - "examples/expertplex/**"
+      - "test/registered/expertplex/**"
+      - "test/registered/unit/expertplex/**"
+      - ".github/workflows/expertplex-cpu.yml"
+  pull_request:
+    paths:
+      - "python/sglang/srt/expertplex/**"
+      - "python/sglang/srt/models/qwen3_moe.py"
+      - "python/sglang/srt/model_loader/loader.py"
+      - "python/sglang/benchmark/serving.py"
+      - "examples/expertplex/**"
+      - "test/registered/expertplex/**"
+      - "test/registered/unit/expertplex/**"
+      - ".github/workflows/expertplex-cpu.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python examples/expertplex/check_cpu.py
