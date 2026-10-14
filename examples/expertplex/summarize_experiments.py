@@ -88,7 +88,7 @@ def summarize(paths):
         runs.append(
             {
                 "path": str(root),
-                "variant": settings["variant"],
+                "variant": settings.get("label") or settings["variant"],
                 "maximum_feasible_tested_rps": sweep[
                     "p90_goodput_max_tested_arrival_rps"
                 ],
@@ -119,7 +119,7 @@ def summarize(paths):
                 if ok
             ]
             row = {
-                "variant": settings["variant"],
+                "variant": settings.get("label") or settings["variant"],
                 "experiment": str(root),
                 "request_rate": result["request_rate"],
                 "attempted": result["attempted_requests"],

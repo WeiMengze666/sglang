@@ -28,6 +28,11 @@ def main():
     parser.add_argument("--top-k", type=int, default=2)
     parser.add_argument("--world", type=int, default=2)
     parser.add_argument("--graph-replays", type=int, default=20)
+    parser.add_argument(
+        "--second-prefill",
+        action="store_true",
+        help="Stress two concurrent raw prefill mailboxes against native arithmetic",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not 1 <= args.world <= 4 or args.capacity < 128 or args.experts < 2:
@@ -49,6 +54,7 @@ def main():
         "status": "running",
         "tolerances": {"atol": 0.005, "rtol": 0.02, "relative_l2": 0.002},
     }
+    phases = [0, 0 if args.second_prefill else 1]
     settings = [
         dict(
             hidden=args.hidden,
@@ -60,7 +66,7 @@ def main():
             seed=1234 + rank,
             weight_std=0.02,
             capacities=[args.capacity, args.capacity],
-            packed_layout=[1, 0],
+            packed_layout=[1, int(args.second_prefill)],
             prefill_preprocess=True,
             expert_rank=rank,
             expert_world=args.world,
@@ -96,6 +102,7 @@ def main():
         )
 
     def reference(case, phase):
+        phase = phases[phase]
         partials = []
         for rank, (w13, w2) in enumerate(weights):
             ids = case["ids"].clone()
@@ -147,7 +154,7 @@ def main():
                         prepared["ids"],
                         prepared["row_map"],
                         prepared["layer"],
-                        phase,
+                        phases[phase],
                         prepared["weights"],
                     )
                     prepared["output"].zero_()
@@ -200,7 +207,10 @@ def main():
 
                 # Both mailboxes are pending together. D uses the same weights
                 # and native masked templates while P traverses all six stages.
-                pair = [make_case(args.capacity, 82), make_case(17, 84)]
+                pair = [
+                    make_case(args.capacity, 82),
+                    make_case(args.capacity - 17 if args.second_prefill else 17, 84),
+                ]
                 refs = [reference(c, phase) for phase, c in enumerate(pair)]
                 for _ in range(5):
                     buffers = [_prepare(torch, c, 0) for c in pair]

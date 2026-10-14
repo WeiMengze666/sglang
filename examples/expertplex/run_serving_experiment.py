@@ -24,6 +24,9 @@ def main():
         choices=("expertplex", "colocated", "chunked", "pdd", "pdmux"),
         required=True,
     )
+    p.add_argument(
+        "--label", help="Explicit experiment label for layout/overlap ablations"
+    )
     p.add_argument("--model-path", required=True)
     p.add_argument("--tokenizer-path", required=True)
     p.add_argument("--config", help="ExpertPlex node configuration")
@@ -159,7 +162,7 @@ def main():
         "--weight-mode",
         args.weight_mode,
         "--label",
-        args.variant,
+        args.label or args.variant,
         "--dataset-name",
         "custom",
         "--dataset-path",

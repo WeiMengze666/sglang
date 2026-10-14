@@ -23,7 +23,7 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
 | §4.2 | 保留原生 CTA/cluster shape、TMA multicast、warp specialization | 默认双 CTA、2SM MMA、9-stage TMA、原生 STSM/TMA epilogue 已通过回归；GateUp/ACT/Down 独立调度。Nsight Systems 确认对应 native GEMM 几何；性能仍落后 | 原生算子形状及流水线代码审计，数值测试 |
 | §4.3 Fig.4 | system P → CTA0 → device p_i → cluster DSMEM → warp broadcast → mbarrier | 默认后端已实现 CTA0→device policy→leader DSMEM→mbarrier；抢占 trace 与上界尚未验证 | 可控时刻注入 urgent decode，记录各级 epoch/timestamp |
 | §4.3 | 决策在 check epoch 内固定；观察切换后不得再领取旧 phase tile | leader 是唯一领取者并向所有成员分发同一 Task；压力与 trace 验证仍待补齐 | 有预取、多 warp、多 CTA 的长时间压力测试 |
-| §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 使用双 accumulator，只有 phase 切换等待前一个 tile 退休；普通 tile 继续流水 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
+| §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 使用双 accumulator；原路径每 tile 等待 TMA store 完成，尚不能宣称完全保留原生 store pipeline。新增延迟退休实验已通过跨 mailbox 数值回归，但配对性能更差，默认仍关闭 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
 | §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | NVLink IPC 路径已验证全部 56 个有向 GPU 对 | 多发送方、重复 epoch、容量边界、故障路径 |
 | §5.2 | E 无通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 参考路径已实现 | kernel trace、并发 P/D 数值验证 |
 | §5.2 Fig.5 | 单线程 WaitDone 位于 COMM stream；COMPUTE stream 可继续 TBO/SBO | 独立 COMM stream 和双 mailbox 已实现；client 的 TBO/graph 对照通过，小 checkpoint 完整 SGLang TBO/图回放通过，真实模型待验收 | CUDA timeline 及双 microbatch 生命周期检查 |

@@ -15,6 +15,31 @@ import statistics
 from pathlib import Path
 
 
+# CUDA random generation depends on the visible SM count (notably under MPS).
+# Generate on CPU, in fixed per-expert chunks, so partitions receive identical
+# weights and routing, not merely identical seeds.
+WORKLOAD_IDENTITY = "cpu-bf16-expert-chunks-v1"
+
+
+def weights(args):
+    import torch
+
+    generator = torch.Generator().manual_seed(20261014)
+    result = []
+    for n, k in [
+        (2 * args.intermediate, args.hidden),
+        (args.hidden, args.intermediate),
+    ]:
+        tensor = torch.empty(args.experts, n, k, device="cuda", dtype=torch.bfloat16)
+        for expert in range(args.experts):
+            chunk = torch.empty(n, k, dtype=torch.bfloat16).normal_(
+                std=0.02, generator=generator
+            )
+            tensor[expert].copy_(chunk)
+        result.append(tensor)
+    return result
+
+
 def workload(args, rows, phase, w13, w2, *, return_buffers=False):
     import deep_gemm
     import torch
@@ -22,12 +47,12 @@ def workload(args, rows, phase, w13, w2, *, return_buffers=False):
     from sglang.kernels.ops.activation.activation import silu_and_mul
 
     h, inner, experts = args.hidden, args.intermediate, args.experts
-    gen = torch.Generator(device=args.device).manual_seed(rows)
-    x = torch.randn(rows, h, generator=gen, device="cuda", dtype=torch.bfloat16)
+    gen = torch.Generator().manual_seed(rows)
+    x = torch.randn(rows, h, generator=gen, dtype=torch.bfloat16).cuda()
     ids = (
-        torch.rand(rows, experts * args.world, generator=gen, device="cuda")
+        torch.rand(rows, experts * args.world, generator=gen)
         .topk(args.top_k, dim=-1)
-        .indices
+        .indices.cuda()
     )
     counts = [int((ids == e * args.world).sum()) for e in range(experts)]
     forced = False
@@ -191,21 +216,7 @@ def main():
         extra_ldflags=["-lcuda"],
     )
     torch.cuda.set_device(args.device)
-    torch.manual_seed(20261014)
-    w13 = torch.empty(
-        args.experts,
-        2 * args.intermediate,
-        args.hidden,
-        device="cuda",
-        dtype=torch.bfloat16,
-    ).normal_(std=0.02)
-    w2 = torch.empty(
-        args.experts,
-        args.hidden,
-        args.intermediate,
-        device="cuda",
-        dtype=torch.bfloat16,
-    ).normal_(std=0.02)
+    w13, w2 = weights(args)
     works = [
         workload(args, rows, phase, w13, w2)
         for phase, rows in enumerate([args.prefill_rows, args.decode_rows])
@@ -220,6 +231,7 @@ def main():
     original_sms = deep_gemm.get_num_sms()
     report = {
         "scope": __doc__,
+        "workload_identity": WORKLOAD_IDENTITY,
         "settings": vars(args) | {"output": str(args.output)},
         "gpu": torch.cuda.get_device_name(),
         "native_kernel_sm_limit": total_sms,

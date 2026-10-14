@@ -137,6 +137,10 @@ def main():
     report = {
         "scope": "all-layer MoE deployment and capacity only; no attention, no pretrained model accuracy",
         "config": config.to_dict(),
+        "native_source_sha256": module("native").source_fingerprint(),
+        "environment": {
+            k: v for k, v in os.environ.items() if k.startswith("SGLANG_EXPERTPLEX_")
+        },
         "results": [],
     }
     try:

@@ -13,6 +13,7 @@
 #include <climits>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <string>
@@ -88,12 +89,15 @@ struct DeviceBuffers {
   size_t base_rows[kMaxSlots];
 };
 
+__device__ __forceinline__ int uncached_load_int(const int *p);
+
 __device__ __forceinline__ size_t expert_base(const DeviceBuffers &b, int slot,
                                               int expert) {
-  return b.base_rows[slot] + (b.packed[slot]
-                                  ? b.offsets[slot * b.experts + expert]
-                                  : static_cast<size_t>(expert) *
-                                        ((b.capacity[slot] + 127) / 128 * 128));
+  return b.base_rows[slot] +
+         (b.packed[slot]
+              ? uncached_load_int(b.offsets + slot * b.experts + expert)
+              : static_cast<size_t>(expert) *
+                    ((b.capacity[slot] + 127) / 128 * 128));
 }
 
 static std::string encode_handle(void *pointer) {
@@ -1211,6 +1215,13 @@ public:
           reinterpret_cast<const BF16 *>(w2.data_ptr<at::BFloat16>()),
           w13.size(0), ctas, trace_capacity, cluster, fused);
     native_context.benchmark_stage = benchmark_stage;
+    const char *pipeline_stores =
+        std::getenv("SGLANG_EXPERTPLEX_PIPELINED_STORES");
+    native_context.pipelined_stores =
+        pipeline_stores && std::string(pipeline_stores) == "1";
+    TORCH_CHECK(
+        !native_context.pipelined_stores || backend == "sm100",
+        "Pipelined store retirement requires the complete SM100 backend");
     cudaFuncAttributes attrs;
     C10_CUDA_CHECK(cudaFuncGetAttributes(&attrs, kernel));
     int optin = 0;
@@ -1298,6 +1309,7 @@ public:
     d["trace_capacity_per_cta"] = native_context.trace_capacity;
     d["backend"] = backend_name;
     d["benchmark_stage"] = native_context.benchmark_stage;
+    d["pipelined_stores"] = native_context.pipelined_stores;
     d["ctas"] = launch_ctas;
     d["cluster_size"] = cluster_size;
     d["prefill_preprocess"] = bool(owner->b.prefill_preprocess);

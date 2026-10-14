@@ -34,7 +34,7 @@ def worker(settings, phase, handle, pipe):
         import deep_gemm
         import torch
 
-        from bench_sharing import workload
+        from bench_sharing import weights, workload
 
         args = argparse.Namespace(**settings)
         args.device = 0  # Each MPS client exposes only the expert GPU UUID.
@@ -42,21 +42,7 @@ def worker(settings, phase, handle, pipe):
         torch.cuda.set_device(0)
         control = extension()
         flags = control.import_flags(handle, 0)
-        torch.manual_seed(20261014)
-        w13 = torch.empty(
-            args.experts,
-            2 * args.intermediate,
-            args.hidden,
-            device="cuda",
-            dtype=torch.bfloat16,
-        ).normal_(std=0.02)
-        w2 = torch.empty(
-            args.experts,
-            args.hidden,
-            args.intermediate,
-            device="cuda",
-            dtype=torch.bfloat16,
-        ).normal_(std=0.02)
+        w13, w2 = weights(args)
         invoke, out, counts = workload(
             args, args.prefill_rows if phase == 0 else args.decode_rows, phase, w13, w2
         )
@@ -162,8 +148,11 @@ def main():
     stamps = torch.zeros(4, dtype=torch.int64, device=args.control_device)
     handle = control.export_flags(flags)
     ctx = multiprocessing.get_context("spawn")
+    from bench_sharing import WORKLOAD_IDENTITY
+
     report = {
         "scope": __doc__,
+        "workload_identity": WORKLOAD_IDENTITY,
         "settings": vars(args)
         | {"work_dir": str(args.work_dir), "output": str(args.output)},
         "gpu_uuid": uuid,

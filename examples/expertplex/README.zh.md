@@ -129,6 +129,16 @@ nvidia-smi topo -m
 将官方 BF16 checkpoint 下载到本地目录，并记录 Hugging Face revision。不要使用 FP8、
 GPTQ、AWQ 或 ModelOpt 权重代替。原始 480B 权重约需 960 GB 磁盘空间，另留缓存空间。
 
+可先只读检查下载的 shard header、BF16 dtype 和文件长度；缺少索引、分片或 payload 时返回非零：
+
+```bash
+python examples/expertplex/check_checkpoint.py \
+  --model-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
+  --output /tmp/expertplex-checkpoint-readiness.json
+```
+
+此检查不计算全部权重内容的哈希，部署期间仍须保持文件不变。
+
 CPU 上也能检查配置和启动命令：
 
 ```bash
@@ -280,3 +290,10 @@ rendezvous。`bench_apk_sharing.py` 对 GateUp/Down 分别执行 §7.3 对照；
 `SGLANG_EXPERTPLEX_GROUP_COMM=1` 显式选择整组通信。
 `check_teacher_forcing.py --top-k 128 --flush-between` 比较同一历史、无前缀缓存复用的
 logprob；top-k 子集不能当作完整词表的 TV/KL。所有脚本的输出均明确实验范围。
+
+### 存储流水线诊断
+
+`SGLANG_EXPERTPLEX_PIPELINED_STORES=1` 可启用 SM100 的延迟 store 退休实验。
+当前已通过多客户端、双 prefill、变化路由和图重放回归，但配对微基准比默认路径更慢，
+因此默认关闭，不作为已达成论文低开销目标的证据。`VALIDATION.md` 保留失败、修复和 A/B 结果。
+组件图由 `plot_components.py` 根据实际 JSON 数据绘制，并拒绝混用不同初始化算法或专家负载。

@@ -138,6 +138,12 @@ def main():
                                 repeat=repeat,
                                 attention_release_gap_us=(release[1] - release[0])
                                 / 1000,
+                                attention_admission_ack_upper_bound_us=[
+                                    (release[i + 2] - release[i]) / 1000
+                                    if release[i + 2]
+                                    else None
+                                    for i in range(2)
+                                ],
                                 expert_timings_ns=timings,
                             )
                         )

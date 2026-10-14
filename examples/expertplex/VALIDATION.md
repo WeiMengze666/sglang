@@ -340,3 +340,59 @@ This coarse grid and sample size do not establish a 2x boundary ratio or the
 requested 1.5x acceptance. Other baselines, finer grids, and disjoint held-out
 requests are still required. Both runs use canonical random weights, not the
 pretrained Coder checkpoint. Evidence is retained in `checkpoint-2149/`.
+
+## Canonical four-baseline pilot and validation failures, 22:07 UTC archive
+
+`checkpoint-2207` extends the canonical same-weight ShareGPT pilot with ChunkedPrefill
+and PDD. At 1 req/s, joint attainment was colocated 54/64, chunked (2048) 27/64,
+PDD 58/64, and ExpertPlex 61/64. PDD and ExpertPlex both pass the same tested
+arrival rate; this does not demonstrate a 1.5× gain. The plot retains failed
+requests in the denominator and labels synthetic weights and n=64.
+
+The full-480B PDMux attempt failed during decode graph capture: DeepEP LL's
+160-expert dispatch uses 80 cooperative CTAs, exceeding the original 32–64 SM
+decode Green Contexts. Its startup logs are retained. The revised partition
+grid reserves at least 80 decode SMs and remains pending full-model validation.
+
+Strict component-plot validation also detected that MPS partitions generated
+different expert-load vectors despite equal CUDA RNG seeds. CUDA RNG execution
+geometry depends on visible SM count. The old MPS partition results cannot be
+used as matched-input comparisons. Sharing fixtures now generate weights in
+fixed CPU per-expert chunks and generate inputs/routing on CPU before copying
+them to the selected device. Native, APK and MPS must be rerun with this same
+workload identity; old and new initialization schemes must not be combined.
+
+The first pipelined-store experiment failed compilation after moving completion
+logic into a helper (`gate` was out of scope). Its complete failure report is
+preserved. The corrected build passed the eight-round Coder-shape GPU numerical,
+native-reference, concurrency, graph and timeout suite; four-E and all-client
+validation is still in progress. No performance improvement is assumed yet.
+
+## Store retirement and dynamic metadata regression, 22:16 UTC
+
+`checkpoint-2216` preserves the first failing multi-client pipeline run: prefill
+serial/overlap outputs differed in 7% of elements (maximum absolute difference
+1.90625). Decode clients passed. Store=0/raw=1, store=1/raw=0 and store=0/raw=0
+isolation runs passed. Dynamic expert row counts and packed offsets now use
+explicit L2 loads rather than potentially retaining earlier invocation metadata
+in an SM's L1. After this change, store=1/raw=1 passed 30 rounds at both P128
+and P257, with 120 exact overlap comparisons plus 20 exact graph comparisons
+per attention client; store=0/P257 also passed. The pre-fix sources and failed
+report are retained for reproduction. These regressions narrow the fault;
+they are not a hardware-counter demonstration of a particular cache event.
+
+Both store policies then passed 35 native-reference cases with two concurrent
+raw prefill mailboxes, four E ranks, H6144/I2560, top-8, dynamic/padded routing
+and 20 CUDA Graph replays. The changed control-plane identity guards were also
+exercised by the node runs. CPU coverage is now 45 tests (including three
+checkpoint-readiness cases), all passing.
+
+`SGLANG_EXPERTPLEX_PIPELINED_STORES=1` delays tile completion publication until
+its asynchronous global stores retire, retaining a pending tile and explicitly
+draining at phase changes or lack of a successor. It remains an experimental
+ablation, disabled by default. Matched-input A/B tests found it **slower** than
+store=0: isolated GateUp P was roughly 2.35 ms versus 1.96 ms, and Down P roughly
+1.61 ms versus 1.19 ms. The remaining serving queue therefore selects store=0;
+no speedup is claimed for this change. Task-ring reuse still waits for delayed
+retirement and is a candidate pipeline bottleneck requiring another controlled
+experiment. Original low-overhead APK performance remains unfulfilled.

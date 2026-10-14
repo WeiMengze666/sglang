@@ -78,6 +78,7 @@ struct alignas(128) QueueHead {
   U64 word;
 };
 struct Context {
+  bool pipelined_stores = false;
   int benchmark_stage =
       0; // Diagnostic single-operation execution; 0 = full MoE.
   int column_group = 0;
@@ -419,12 +420,64 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
             lo,
             static_cast<int>(local_row) * tile_m,
             static_cast<int>(column_tile) * N * Cluster,
-            b.counts[static_cast<size_t>(slot) * b.experts + lo],
+            uncached_load_int(b.counts + static_cast<size_t>(slot) * b.experts +
+                              lo),
             phase,
             q >> 35};
     return true;
   }
   return false;
+}
+
+// Commit only after the tile's asynchronous global stores are complete.
+// Called by the issuing epilogue lane; mailbox/ring release is collective.
+template <int Cluster, bool Fused>
+__device__ __forceinline__ void retire_task(const DeviceBuffers &b,
+                                            Context context, const Task &task,
+                                            uint32_t sequence) {
+  auto *state = b.states + task.slot;
+  unsigned total = operation_tiles(state, task.stage);
+  if (atomicAdd(&state->completed, 1U) == total * Cluster - 1) {
+    state->completed = 0;
+    __threadfence();
+    Stage next = IDLE;
+    if (b.prefill_preprocess && b.packed[task.slot]) {
+      if (task.stage == SCATTER1) {
+        build_row_tiles<Cluster, Fused>(b, task.slot, context);
+        next = SCATTER2;
+      } else if (task.stage == SCATTER2) {
+        next = state->gate_tiles ? GATE : GATHER;
+      } else if (task.stage == GATE)
+        next = ACTIVATE;
+      else if (task.stage == ACTIVATE)
+        next = DOWN;
+      else if (task.stage == DOWN)
+        next = GATHER;
+
+    } else if (task.stage != DOWN && context.benchmark_stage == 0) {
+      next = task.stage == GATE && !Fused ? ACTIVATE : DOWN;
+    }
+    if (system_load(b.control + task.slot * kControlWords + ERROR))
+      next = IDLE;
+    if (next != IDLE) {
+      __threadfence();
+      reset_queues(context, task.slot, task.epoch, next);
+      queue_store(&state->queue, queue_value(task.epoch, next));
+    } else {
+      queue_store(&state->queue, queue_value(task.epoch, IDLE));
+      b.control[static_cast<size_t>(task.slot) * kControlWords + FINISH_NS] =
+          now_ns();
+      __threadfence_system();
+      system_store(b.control + static_cast<size_t>(task.slot) * kControlWords +
+                       DONE,
+                   task.epoch);
+    }
+  }
+  if (context.trace && sequence < context.trace_capacity)
+    context
+        .trace[static_cast<size_t>(blockIdx.x) * context.trace_capacity +
+               sequence]
+        .finish_ns = now_ns();
 }
 
 template <int Cluster, int Hidden = 0, int Intermediate = 0, bool Fused = false>
@@ -436,8 +489,26 @@ __global__ __launch_bounds__(Threads, 1) void executor(
   extern __shared__ __align__(1024) unsigned char workspace[];
   auto &s = *reinterpret_cast<Storage<Cluster, Fused> *>(workspace);
   constexpr int Stages = Storage<Cluster, Fused>::Stages;
+  constexpr int TmemColumns = Fused ? 512 : OutputStages * M;
   int warp = threadIdx.x / 32, lane = threadIdx.x % 32;
   const int rank = blockIdx.x % Cluster;
+  if (threadIdx.x == 0) {
+    // Native DeepGEMM warms the fixed descriptors before its first tile.
+    // These addresses never change while the persistent executor is alive.
+    cute::prefetch_tma_descriptor(&context.weights[0].gate);
+    cute::prefetch_tma_descriptor(&context.weights[0].up);
+    cute::prefetch_tma_descriptor(&context.weights[0].down);
+    for (int slot = 0; slot < b.slots; ++slot)
+      for (int phase = 0; phase < 2; ++phase) {
+        cute::prefetch_tma_descriptor(&context.maps[slot].input[phase]);
+        cute::prefetch_tma_descriptor(&context.maps[slot].activation[phase]);
+        cute::prefetch_tma_descriptor(&context.maps[slot].gateup_store[phase]);
+        cute::prefetch_tma_descriptor(&context.maps[slot].output[phase]);
+        if constexpr (Fused)
+          cute::prefetch_tma_descriptor(
+              &context.maps[slot].activation_store[phase]);
+      }
+  }
   if (threadIdx.x == 32) {
     for (int i = 0; i < Stages; ++i) {
       s.full[i].init(Cluster);
@@ -460,7 +531,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
     cute::cluster_wait();
   }
   if (warp == 2)
-    Allocator().allocate(512, &s.tmem);
+    Allocator().allocate(TmemColumns, &s.tmem);
   __syncthreads();
   if constexpr (Cluster > 1) {
     cute::cluster_arrive();
@@ -476,6 +547,9 @@ __global__ __launch_bounds__(Threads, 1) void executor(
     int cursor = blockIdx.x % b.slots;
     int previous_phase = -1;
     int previous_budget = -1;
+    bool previous_was_flush = false;
+    Task deferred{};
+    deferred.slot = -1;
     for (uint32_t sequence = 0;; ++sequence) {
       const int index = sequence % OutputStages,
                 parity = (sequence / OutputStages) & 1;
@@ -486,7 +560,11 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         // A ring slot is reusable only after every participating CTA retires
         // its epilogue. The other output slot remains pipelined concurrently.
         s.cluster_empty[index].wait(parity ^ 1);
-        while (task.slot < 0) {
+        if (deferred.slot >= 0) {
+          task = deferred;
+          deferred.slot = -1;
+        }
+        while (task.slot == -1) {
           // Read-only polling must not serialize every idle cluster through
           // a read-modify-write on the same L2 atomic location.
           if (cuda::atomic_ref<int, cuda::thread_scope_device>(*b.stop).load(
@@ -502,11 +580,25 @@ __global__ __launch_bounds__(Threads, 1) void executor(
                               .load(cuda::memory_order_acquire);
           if (!claim<Cluster, Fused>(b, context, preferred, cursor, task))
             claim<Cluster, Fused>(b, context, 1 - preferred, cursor, task);
-          if (task.slot < 0)
+          if (task.slot < 0) {
+            // A final tile cannot wait for a successor that does not exist.
+            // A control-only flush releases its pending store/ring ownership.
+            if (context.pipelined_stores && sequence && !previous_was_flush) {
+              task.slot = -3;
+              task.stage = IDLE;
+              break;
+            }
             __nanosleep(64);
+          }
         }
         // Drain at a phase switch only, not after every tile. No member can
         // independently claim an old-phase tile after this shared decision.
+        if (context.pipelined_stores && sequence && task.slot >= 0 &&
+            task.phase != previous_phase && !previous_was_flush) {
+          deferred = task;
+          task.slot = -3;
+          task.stage = IDLE;
+        }
         if (sequence && task.slot >= 0 && task.phase != previous_phase) {
           const uint32_t previous = sequence - 1;
           s.cluster_empty[previous % OutputStages].wait(
@@ -543,6 +635,9 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       s.task_full[index].arrive();
       if (task.slot == -2)
         break;
+      previous_was_flush = task.slot == -3;
+      if (task.slot == -3)
+        continue;
       previous_phase = task.phase;
       cursor = (task.slot + 1) % b.slots;
       if (task.stage == ACTIVATE || data_stage(task.stage))
@@ -624,7 +719,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         break;
       s.accum_empty[index].wait(parity ^ 1);
       deep_gemm::ptx::tcgen05_after_thread_sync();
-      if (task.stage == ACTIVATE || data_stage(task.stage)) {
+      if (task.slot == -3 || task.stage == ACTIVATE || data_stage(task.stage)) {
         if (lane == 0)
           for (int member = 0; member < Cluster; ++member)
             s.accum_full[index].arrive(member, true);
@@ -675,14 +770,47 @@ __global__ __launch_bounds__(Threads, 1) void executor(
   } else if (warp >= 4) {
     const int local_row = (warp - 4) * 32 + lane;
     uint32_t tma_store_stage = 0;
+    Task pending{};
+    pending.slot = -1;
+    uint32_t pending_sequence = 0;
+    auto release_task = [&](const Task &completed,
+                            uint32_t completed_sequence) {
+      if (local_row == 0 && completed.slot >= 0)
+        retire_task<Cluster, Fused>(b, context, completed, completed_sequence);
+      cutlass::arch::NamedBarrier::sync(M, 0);
+      s.task_empty[completed_sequence % OutputStages].arrive();
+      s.cluster_empty[completed_sequence % OutputStages].arrive(0, true);
+    };
+    auto drain_pending = [&]() {
+      // Native epilogue elects a deterministic issuing lane from the first
+      // full warp. Wait in that entire warp, without assuming the lane is 0.
+      if (local_row < 32) {
+        asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
+        asm volatile("fence.proxy.async.global;" ::: "memory");
+        __threadfence();
+      }
+      cutlass::arch::NamedBarrier::sync(M, 0);
+      if (pending.slot >= 0) {
+        release_task(pending, pending_sequence);
+        pending.slot = -1;
+      }
+    };
     for (uint32_t sequence = 0;; ++sequence) {
       const int index = sequence % OutputStages,
                 parity = (sequence / OutputStages) & 1;
       s.task_full[index].wait(parity);
       Task task = s.task[index];
-      if (task.slot == -2)
+      if (task.slot == -2) {
+        drain_pending();
         break;
+      }
       s.accum_full[index].wait(parity);
+      if (task.slot == -3) {
+        drain_pending();
+        s.accum_empty[index].arrive(0u);
+        release_task(task, sequence);
+        continue;
+      }
       deep_gemm::ptx::tcgen05_after_thread_sync();
       const bool gate = task.stage == GATE;
       const int tile_m = tile_rows(task.phase, task.stage);
@@ -790,64 +918,26 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       deep_gemm::ptx::tcgen05_before_thread_sync();
       if (Fused || task.stage == ACTIVATE || data_stage(task.stage))
         s.accum_empty[index].arrive(0u);
-      // Retire every store before publishing completion or reusing its SMEM.
-      if (local_row == 0) {
-        // CUTLASS's .read wait only releases SMEM; completion publication
-        // additionally requires the global writes to have completed.
-        asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
-        asm volatile("fence.proxy.async.global;" ::: "memory");
-        __threadfence();
-      }
-      cutlass::arch::NamedBarrier::sync(M, 0);
-      if (local_row == 0) {
-        auto *state = b.states + task.slot;
-        unsigned total = operation_tiles(state, task.stage);
-        if (atomicAdd(&state->completed, 1U) == total * Cluster - 1) {
-          state->completed = 0;
-          __threadfence();
-          Stage next = IDLE;
-          if (b.prefill_preprocess && b.packed[task.slot]) {
-            if (task.stage == SCATTER1) {
-              build_row_tiles<Cluster, Fused>(b, task.slot, context);
-              next = SCATTER2;
-            } else if (task.stage == SCATTER2) {
-              next = state->gate_tiles ? GATE : GATHER;
-            } else if (task.stage == GATE)
-              next = ACTIVATE;
-            else if (task.stage == ACTIVATE)
-              next = DOWN;
-            else if (task.stage == DOWN)
-              next = GATHER;
-
-          } else if (task.stage != DOWN && context.benchmark_stage == 0) {
-            next = gate && !Fused ? ACTIVATE : DOWN;
-          }
-          if (system_load(b.control + task.slot * kControlWords + ERROR))
-            next = IDLE;
-          if (next != IDLE) {
+      if (context.pipelined_stores && !Fused && task.stage != ACTIVATE &&
+          !data_stage(task.stage)) {
+        if (pending.slot >= 0) {
+          if (local_row < 32) {
+            // Native epilogue commits eight store groups per M128 tile.
+            // Retain this tile's final two groups while retiring all older
+            // writes. Do not use .read: DONE requires global completion.
+            asm volatile("cp.async.bulk.wait_group 2;" ::: "memory");
+            asm volatile("fence.proxy.async.global;" ::: "memory");
             __threadfence();
-            reset_queues(context, task.slot, task.epoch, next);
-            queue_store(&state->queue, queue_value(task.epoch, next));
-          } else {
-            queue_store(&state->queue, queue_value(task.epoch, IDLE));
-            b.control[static_cast<size_t>(task.slot) * kControlWords +
-                      FINISH_NS] = now_ns();
-            __threadfence_system();
-            system_store(b.control +
-                             static_cast<size_t>(task.slot) * kControlWords +
-                             DONE,
-                         task.epoch);
           }
+          cutlass::arch::NamedBarrier::sync(M, 0);
+          release_task(pending, pending_sequence);
         }
-        if (context.trace && sequence < context.trace_capacity)
-          context
-              .trace[static_cast<size_t>(blockIdx.x) * context.trace_capacity +
-                     sequence]
-              .finish_ns = now_ns();
+        pending = task;
+        pending_sequence = sequence;
+      } else {
+        drain_pending();
+        release_task(task, sequence);
       }
-      cutlass::arch::NamedBarrier::sync(M, 0);
-      s.task_empty[index].arrive();
-      s.cluster_empty[index].arrive(0, true);
     }
   }
   __syncthreads();
@@ -856,6 +946,6 @@ __global__ __launch_bounds__(Threads, 1) void executor(
     cute::cluster_wait();
   }
   if (warp == 0)
-    Allocator().free(0, 512);
+    Allocator().free(0, TmemColumns);
 }
 } // namespace expertplex_sm100

@@ -12,7 +12,7 @@ import statistics
 from pathlib import Path
 
 from _bootstrap import module
-from bench_sharing import workload
+from bench_sharing import WORKLOAD_IDENTITY, weights, workload
 
 
 def main():
@@ -66,21 +66,7 @@ def main():
     torch.cuda.set_device(args.device)
     native = module("native")
     extension = native.load_extension()
-    torch.manual_seed(20261014)
-    w13 = torch.empty(
-        args.experts,
-        2 * args.intermediate,
-        args.hidden,
-        device="cuda",
-        dtype=torch.bfloat16,
-    ).normal_(std=0.02)
-    w2 = torch.empty(
-        args.experts,
-        args.hidden,
-        args.intermediate,
-        device="cuda",
-        dtype=torch.bfloat16,
-    ).normal_(std=0.02)
+    w13, w2 = weights(args)
     works = [
         workload(args, rows, phase, w13, w2, return_buffers=True)
         for phase, rows in enumerate([args.prefill_rows, args.decode_rows])
@@ -90,6 +76,7 @@ def main():
     torch.cuda.synchronize(args.device)
     report = {
         "scope": __doc__,
+        "workload_identity": WORKLOAD_IDENTITY,
         "settings": vars(args) | {"output": str(args.output)},
         "native_source_sha256": native.source_fingerprint(),
         "expert_rows": [work[2] for work in works],
