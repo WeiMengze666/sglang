@@ -87,3 +87,15 @@ reached the profiling range, but the server denied hardware counter access with
 `ERR_NVGPUCTRPERM`. No hardware-counter profile is available. Software tile traces
 show uneven work distribution and substantial gaps between claims; queue contention
 is an investigation hypothesis, not yet a measured causal conclusion.
+
+An eight-shard generation-tagged task queue subsequently reduced the same 2048-token
+prefill expert time from about 2.26 ms (read-only stop polling) through 1.96 ms
+(bounded single-head CAS retries) to 0.99 ms. Decode at 128 tokens measured about
+0.96 ms. Dispatch/combine remain additional costs; these are not serving gains.
+The shard version passed eight rounds of numerical, concurrent, padding, graph and
+timeout checks. Direct native DeepGEMM BF16 arithmetic comparisons had relative L2
+errors at most 3.66e-5 and at least 99.9918% exactly equal output elements in these
+cases, using the unchanged existing tolerances and an explicit FP32 weighted combine.
+This isolates expert arithmetic; it does not reproduce DeepEP's distributed reduction
+order. The H=2048 full-model comparison against native DP4/EP4 completed but did not
+pass strict greedy-token equality. That end-to-end discrepancy remains open.

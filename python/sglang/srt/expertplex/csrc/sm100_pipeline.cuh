@@ -65,12 +65,17 @@ struct TraceRecord {
   U64 begin_ns, finish_ns, ready_seen_ns, epoch;
   U64 sequence, slot, phase, stage;
 };
+constexpr int QueueShards = 8;
+struct alignas(128) QueueHead {
+  U64 word;
+};
 struct Context {
   TraceRecord *trace = nullptr;
   int trace_capacity = 0;
   Maps *maps;
   WeightMaps *weights;
   int *policy;
+  QueueHead *queues;
 };
 
 inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
@@ -123,6 +128,10 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
   result.weights = static_cast<WeightMaps *>(
       owner.allocate(weights.size() * sizeof(WeightMaps)));
   result.policy = static_cast<int *>(owner.allocate(ctas * sizeof(int)));
+  result.queues = static_cast<QueueHead *>(
+      owner.allocate(b.slots * QueueShards * sizeof(QueueHead)));
+  C10_CUDA_CHECK(cudaMemset(result.queues, 0,
+                            b.slots * QueueShards * sizeof(QueueHead)));
   C10_CUDA_CHECK(cudaMemcpy(result.maps, maps.data(),
                             maps.size() * sizeof(Maps),
                             cudaMemcpyHostToDevice));
@@ -133,9 +142,19 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
   return result;
 }
 
+__device__ __forceinline__ void reset_queues(Context context, int slot,
+                                            U64 epoch, Stage stage) {
+  // Each shard owns indices shard + k * QueueShards. Keep the generation in
+  // every head: an idle claimant from a retired operation cannot reserve a
+  // tile in the next operation using stale layer/phase metadata.
+  for (int shard = 0; shard < QueueShards; ++shard)
+    queue_store(&context.queues[slot * QueueShards + shard].word,
+                queue_value(epoch, stage, shard));
+}
+
 template <int Cluster>
 __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
-                                           int layers) {
+                                           int layers, Context context) {
   auto *c = b.control + static_cast<size_t>(slot) * kControlWords;
   auto *s = b.states + slot;
   U64 q = queue_load(&s->queue);
@@ -174,8 +193,10 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
     queue_store(&s->queue, queue_value(epoch, IDLE));
     c[FINISH_NS] = now_ns();
     system_store(c + DONE, epoch);
-  } else
+  } else {
+    reset_queues(context, slot, epoch, GATE);
     queue_store(&s->queue, queue_value(epoch, GATE));
+  }
 }
 
 // Only CTA0 reads attention readiness words. Other CTAs consume device-scope
@@ -185,7 +206,7 @@ __device__ __forceinline__ void
 update_policy(const DeviceBuffers &b, Context context, int layers,
               int decode_budget, float expected, int cap) {
   for (int s = 0; s < b.slots; ++s)
-    initialize<Cluster>(b, s, layers);
+    initialize<Cluster>(b, s, layers, context);
   U64 footprint = 0;
   for (int i = 0; i < b.slots; ++i) {
     auto *s = b.states + i;
@@ -210,8 +231,8 @@ update_policy(const DeviceBuffers &b, Context context, int layers,
 }
 
 template <int Cluster>
-__device__ __forceinline__ bool claim(const DeviceBuffers &b, int phase,
-                                      int cursor, Task &task) {
+__device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
+                                      int phase, int cursor, Task &task) {
   for (int i = 0; i < b.slots; ++i) {
     int slot = (cursor + i) % b.slots;
     auto *state = b.states + slot;
@@ -219,9 +240,28 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, int phase,
     int stage = (q >> 32) & 3;
     if ((stage != GATE && stage != DOWN) || state->phase != phase)
       continue;
-    unsigned index = static_cast<unsigned>(q);
+    const U64 generation = q & ~static_cast<U64>(UINT_MAX);
     unsigned total = stage == GATE ? state->gate_tiles : state->down_tiles;
-    if (index >= total || !queue_cas(&state->queue, q, q + 1))
+    unsigned index = 0;
+    bool reserved = false;
+    for (int probe = 0; probe < QueueShards && !reserved; ++probe) {
+      int shard = (blockIdx.x / Cluster + probe) % QueueShards;
+      auto &head = context.queues[slot * QueueShards + shard].word;
+      U64 ticket = queue_load(&head);
+      for (int attempt = 0; attempt < 4; ++attempt) {
+        index = static_cast<unsigned>(ticket);
+        if ((ticket & ~static_cast<U64>(UINT_MAX)) != generation || index >= total)
+          break;
+        if (cuda::atomic_ref<U64, cuda::thread_scope_device>(head)
+                .compare_exchange_strong(ticket, ticket + QueueShards,
+                                         cuda::memory_order_acquire,
+                                         cuda::memory_order_relaxed)) {
+          reserved = true;
+          break;
+        }
+      }
+    }
+    if (!reserved)
       continue;
     const int tile_m = phase == 0 ? M : 32;
     const int tile_n =
@@ -307,7 +347,10 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         // its epilogue. The other output slot remains pipelined concurrently.
         s.cluster_empty[index].wait(parity ^ 1);
         while (task.slot < 0) {
-          if (atomicAdd(b.stop, 0)) {
+          // Read-only polling must not serialize every idle cluster through
+          // a read-modify-write on the same L2 atomic location.
+          if (cuda::atomic_ref<int, cuda::thread_scope_device>(*b.stop)
+                  .load(cuda::memory_order_acquire)) {
             task.slot = -2;
             break;
           }
@@ -317,8 +360,8 @@ __global__ __launch_bounds__(Threads, 1) void executor(
           int preferred = cuda::atomic_ref<int, cuda::thread_scope_device>(
                               context.policy[blockIdx.x / Cluster])
                               .load(cuda::memory_order_acquire);
-          if (!claim<Cluster>(b, preferred, cursor, task))
-            claim<Cluster>(b, 1 - preferred, cursor, task);
+          if (!claim<Cluster>(b, context, preferred, cursor, task))
+            claim<Cluster>(b, context, 1 - preferred, cursor, task);
           if (task.slot < 0)
             __nanosleep(64);
         }
@@ -554,9 +597,10 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         if (atomicAdd(&state->completed, 1U) == total * Cluster - 1) {
           state->completed = 0;
           __threadfence();
-          if (gate)
+          if (gate) {
+            reset_queues(context, task.slot, task.epoch, DOWN);
             queue_store(&state->queue, queue_value(task.epoch, DOWN));
-          else {
+          } else {
             queue_store(&state->queue, queue_value(task.epoch, IDLE));
             b.control[static_cast<size_t>(task.slot) * kControlWords +
                       FINISH_NS] = now_ns();

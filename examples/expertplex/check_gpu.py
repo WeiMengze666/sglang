@@ -227,6 +227,73 @@ def _prepare(torch, case, device):
     }
 
 
+def _reference_deepgemm(torch, case, w13, w2, settings, device, phase):
+    """Native BF16 grouped GEMMs/activation with an explicit FP32 combine.
+
+    This isolates expert arithmetic from DeepEP's distributed combine order
+    and from attention/LM-head differences in the full-model comparison.
+    """
+    import deep_gemm
+
+    from sglang.kernels.ops.activation.activation import silu_and_mul
+    from sglang.kernels.ops.moe.ep_moe_kernels import silu_and_mul_masked_fwd
+
+    h, inner, experts = (
+        settings["hidden"],
+        settings["intermediate"],
+        settings["experts"],
+    )
+    counts = [int((case["ids"] == e).sum()) for e in range(experts)]
+    positions = [(case["ids"] == e).nonzero(as_tuple=True) for e in range(experts)]
+    weights13 = w13[case["layer"]].to(device)
+    weights2 = w2[case["layer"]].to(device)
+    if phase == 0:
+        sizes = [(c + 127) // 128 * 128 for c in counts]
+        total = max(128, sum(sizes))
+        x = torch.zeros(total, h, dtype=torch.bfloat16, device=device)
+        layout = torch.full((total,), -1, dtype=torch.int32, device=device)
+        cursor = 0
+        for expert, (count, size) in enumerate(zip(counts, sizes)):
+            x[cursor : cursor + count] = case["hidden"][positions[expert][0]].to(device)
+            layout[cursor : cursor + size] = expert
+            cursor += size
+        gateup = torch.zeros(total, 2 * inner, dtype=torch.bfloat16, device=device)
+        activation = torch.empty(total, inner, dtype=torch.bfloat16, device=device)
+        out = torch.zeros(total, h, dtype=torch.bfloat16, device=device)
+        deep_gemm.m_grouped_bf16_gemm_nt_contiguous(x, weights13, gateup, layout)
+        silu_and_mul(gateup, activation)
+        deep_gemm.m_grouped_bf16_gemm_nt_contiguous(activation, weights2, out, layout)
+    else:
+        capacity = max(128, (max(counts) + 127) // 128 * 128)
+        x = torch.zeros(experts, capacity, h, dtype=torch.bfloat16, device=device)
+        for expert, count in enumerate(counts):
+            x[expert, :count] = case["hidden"][positions[expert][0]].to(device)
+        layout = torch.tensor(counts, dtype=torch.int32, device=device)
+        expected = max(1, math.ceil(sum(counts) / experts))
+        gateup = torch.zeros(
+            experts, capacity, 2 * inner, dtype=torch.bfloat16, device=device
+        )
+        activation = torch.empty(
+            experts, capacity, inner, dtype=torch.bfloat16, device=device
+        )
+        out = torch.zeros(experts, capacity, h, dtype=torch.bfloat16, device=device)
+        deep_gemm.m_grouped_bf16_gemm_nt_masked(x, weights13, gateup, layout, expected)
+        silu_and_mul_masked_fwd(gateup, activation, layout)
+        deep_gemm.m_grouped_bf16_gemm_nt_masked(
+            activation, weights2, out, layout, expected
+        )
+    out = out.cpu().float()
+    result = torch.zeros(case["hidden"].shape, dtype=torch.float32)
+    cursor = 0
+    for expert, count in enumerate(counts):
+        row, choice = positions[expert]
+        selected = out[cursor : cursor + count] if phase == 0 else out[expert, :count]
+        result.index_add_(0, row, selected * case["weights"][row, choice, None])
+        if phase == 0:
+            cursor += sizes[expert]
+    return result.bfloat16()
+
+
 def _run(torch, native, remote, prepared, phase, epoch, device, timeout_ms):
     # RemoteBuffers has per-object completion status storage. Each concurrent
     # slot therefore has its own RemoteBuffers, stream and tensor storage.
@@ -336,6 +403,20 @@ def check_pair(torch, native, args, settings, report):
                         **_numerics(torch, actual, expected, args),
                     }
                     report["cases"].append(evidence)
+                    if args.native_reference:
+                        native_expected = _reference_deepgemm(
+                            torch, case, w13, w2, settings, attention, slot
+                        )
+                        evidence["native_deepgemm_reference"] = _numerics(
+                            torch, actual, native_expected, args
+                        )
+                        evidence["native_deepgemm_reference"][
+                            "exact_elements_fraction"
+                        ] = float((actual == native_expected).float().mean())
+                        if not evidence["native_deepgemm_reference"]["passed"]:
+                            raise AssertionError(
+                                f"Native DeepGEMM mismatch: {evidence}"
+                            )
                     if not evidence["passed"]:
                         raise AssertionError(f"Numerical mismatch: {evidence}")
 
@@ -576,6 +657,11 @@ def parse_args():
     parser.add_argument("--operation-timeout-ms", type=int, default=10000)
     parser.add_argument("--timeout-test-ms", type=int, default=100)
     parser.add_argument("--skip-timeout-test", action="store_true")
+    parser.add_argument(
+        "--native-reference",
+        action="store_true",
+        help="Also compare native DeepGEMM BF16 expert arithmetic with FP32 weighted combine",
+    )
     parser.add_argument(
         "--full-mesh",
         action="store_true",
