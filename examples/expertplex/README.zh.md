@@ -24,7 +24,9 @@
 论文原实验使用 H800/SM90 与 FP8；本适配使用 B300/SM103 的 BF16 TMA/TCGEN05。
 默认 `sm100` 后端采用双 CTA cluster、producer/MMA/epilogue warp 分工、9-stage TMA
 与双 accumulator 流水线；GateUp、激活、Down 是独立调度的 operation templates，
-GEMM 直接复用原生 DeepGEMM 的 STSM/TMA epilogue。CTA0 读取系统 ready word，cluster leader 读取 device policy，
+GEMM 直接复用原生 DeepGEMM 的 STSM/TMA epilogue。
+可选 `--prefill-preprocess` 将 normal 模式的两阶段 scatter 和 BF16 gather 也纳入同一个长驻调度器；
+已通过 Coder 专家形状的 4E/top-8 算子验证，完整服务验收仍在进行。CTA0 读取系统 ready word，cluster leader 读取 device policy，
 通过 DSMEM 分发 tile 决策，mbarrier 向后续 warp 交接；共享输入使用 TMA multicast。
 `sm100_cta1` 保留单 CTA 消融后端，`sm100_fused` 保留早期 4-stage 融合 gate/up/激活后端，
 `wmma` 保留功能参考。它们不能混作论文性能结果。
@@ -85,7 +87,7 @@ SGLang D attention GPU 3 ── dispatch / pull ─┘
 3. E 卡长期运行的 kernel 通过 generation-tagged queue 认领 tile，融合 gate/up GEMM、
    SiLU 和 down GEMM。stage 之间使用完成计数器，最后一个 tile 发布下一 stage。
 4. 每个 CTA 在完整 tile 提交后重新选择阶段。竞争时按论文 Eq.4 的当前 decode
-   `sum(ceil(expert_rows/32))` 相对离线期望调整 decode CTA 预算；上限保留 prefill
+   `sum(ceil(expert_rows/128))` 相对离线期望调整 decode CTA 预算；上限保留 prefill
    进展。一个阶段没有可认领任务时，其他阶段可以借用空闲 CTA。动态 shared memory
    限制每个 SM 只驻留一个 executor CTA，CTA 预算才具有 SM 预算含义。
 5. E 卡发布 done epoch；attention 使用 system-scope acquire 等待并拉取最终专家输出，

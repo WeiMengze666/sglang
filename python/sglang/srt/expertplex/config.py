@@ -192,6 +192,7 @@ class NodeConfig:
     synthetic_seed: int = 1234
     overlap: str = "none"
     kernel: str = "sm100"
+    prefill_preprocess: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "clients", tuple(self.clients))
@@ -214,6 +215,12 @@ class NodeConfig:
             return cls.from_dict(json.load(source))
 
     def validate(self, model_spec: ModelSpec | None = None) -> None:
+        if not isinstance(self.prefill_preprocess, bool):
+            raise ValueError("prefill_preprocess must be boolean")
+        if self.prefill_preprocess and self.kernel != "sm100":
+            raise ValueError(
+                "expert-side preprocessing requires the native sm100 backend"
+            )
         if self.kernel not in ("sm100", "sm100_cta1", "sm100_fused", "wmma"):
             raise ValueError("kernel must be sm100, sm100_cta1, sm100_fused or wmma")
         if self.overlap not in ("none", "tbo"):

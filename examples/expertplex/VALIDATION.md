@@ -16,7 +16,7 @@ Dependencies were installed in an isolated workspace venv; the original conda en
 
 | Scope | Evidence / result |
 |---|---|
-| CPU adapter, ownership, SLO, config and planner contracts | 37 passed; syntax and CLI checks passed |
+| CPU adapter, ownership, SLO, config and planner contracts | 40 passed; syntax and CLI checks passed |
 | CUDA IPC / native atomics | All 56 ordered pairs passed |
 | Device-generated epochs / CUDA graph | 20 replays with changing inputs/routes passed |
 | Full 62-layer 480B expert residency, synthetic BF16 | Four experts and four attention clients passed; initial masked version used about 227.65 GiB/E |
@@ -240,3 +240,84 @@ TV lower bounds and full-vocabulary KL; missing probabilities are never zeroed.
 
 Completed reports and failed attempts are retained under
 `results/b300-20261015/checkpoint-2049/`.
+
+
+## Native preprocessing checkpoint, 21:18 UTC
+
+The opt-in `prefill_preprocess` path moves normal-mode EP Scatter1, Scatter2
+and Gather into the persistent E kernel. Attention pushes unique token rows
+and routing metadata into fixed receive buffers. Gather materializes BF16 per
+E rank before the attention-side pull/reduction, matching the native normal
+MoE gather boundary. D keeps the direct masked path. No E receiver kernel is
+introduced. Descriptor version is 5; each invocation retains independent
+immutable operation tile counts in a 48-byte scheduler state.
+
+The first preprocessing test failed with zero outputs after a padding batch:
+reusing a stage's tile count during transition let a stale claimant reserve
+phantom tasks. Independent stage bounds and generation rechecks fixed this.
+The failing report is retained. Coder H6144/I2560 tests then passed with 2E
+(top-2 and top-8) and 4E/top-8, each with 35 numeric checks, 20 graph replays,
+partial/all padding, changing input/routes, and concurrent P/D. The 4E run
+verified exact data-operation task counts for all 31 P invocations per rank;
+maximum relative L2 difference from native DeepGEMM was 2.07e-5. This is
+operator evidence, not pretrained model accuracy.
+
+The data-operation tiles are startup constants (256 route counters, 32
+scatter routes, 4 gather tokens per CTA). Producer-handoff-to-retirement traces
+include pipeline waits and exclude A-to-CTA0 propagation. The observed gather
+maximum reached 149 us and scatter maximum 78.2 us in this diagnostic; these
+are not the paper's reported 25.3 us bound and are not a full reallocation
+bound proof. Further kernel tuning and controlled-size sweeps remain required.
+The separate 1P3D4E group-versus-peer communication test passed 12 overlapping
+and 20 graph comparisons per attention client bit-for-bit.
+
+The grouped-communication/q96/expected-footprint-8 64-request ShareGPT pilot
+reached joint attainment 61/64 at 1 rps, 17/64 at 2 rps and 13/64 at 3 rps.
+This improves the earlier candidate pilot but does not establish 1.5x.
+**Fairness limitation found during audit:** default SGLang dummy initialization
+is shard-shape-dependent, while E workers used per-expert seeds. Consequently
+these legacy full-size synthetic pilots do not compare identical weights and
+cannot establish an acceptance speedup. A new explicit canonical initializer
+uses full HF tensor names and shapes before standard TP/EP slicing, with the
+same expert generator on E workers; its subsequent validation is recorded below.
+The tiny checkpoint comparisons and paired native/APK microbenchmarks already
+use identical weights and are unaffected by this limitation.
+
+The cache-flushed serial tiny-model fixed-history comparison retained 24/24
+identical top-1 choices; maximum top-128 common logprob difference decreased
+from the cache-reuse outlier 0.6283 to 0.03163. This does not resolve the
+cache-reuse anomaly or prove strict full-vocabulary accuracy. The one-GPU
+attention profile pilot also completed, but its sparse unconstrained fit has
+negative decode coefficients and needs a broader grid and held-out validation.
+
+Raw evidence, including failed attempts and compressed traces, is retained in
+`results/b300-20261015/checkpoint-2118/`. Runtime IPC handle/lock files are
+excluded from evidence archives; the accidentally archived obsolete handles
+in checkpoint-2049 were removed.
+
+## Canonical weights and preprocessing checkpoint, 21:35 UTC
+
+The canonical BF16 initializer produced bitwise-identical sampled expert tensors
+on GPUs 0 and 4, including fused gate/up views and global expert/layer endpoints.
+The tiny synthetic colocated and 1P3D4E deployments both completed 24 requests ×
+128 tokens. Under the same 24 cache-flushed fixed histories, 23/24 top-1 choices
+matched and the maximum common top-128 logprob difference was 0.016279. The one
+top-1 difference had a 0.015625 reference margin. This is functional and numerical
+evidence, not strict token alignment or trained-model accuracy. Startup protocol
+v2 additionally rejects A/E initializer or seed mismatches before importing IPC.
+The identity guard is CPU-tested; these GPU runs preceded that guard-only change.
+
+The E preprocessing path also passed the existing tiny BF16 checkpoint's full
+24×128 generation check and 24/24 fixed-history top-1 comparisons, with maximum
+common logprob difference 0.031322. Full-480B serving with legacy weights reached
+64/64, 62/64, 32/64 and 23/64 joint attainment at 0.5, 1, 1.5 and 2 rps. Because
+the older baseline used different synthetic weights, this remains diagnostic.
+New full-size comparisons using canonical weights are in progress.
+
+Caching route metadata in warp lanes preserved all 35 four-E/top-8 numerical
+checks and exact preprocessing task counts. The maximum observed Gather interval
+fell to 94.656 us and Scatter2 to 58.688 us in this run; GateUp reached 55.072 us.
+These include pipeline waiting, and trace retirement now includes stage commit.
+They are neither isolated instruction timings nor a proof of the paper's complete
+25.3 us reallocation bound. Raw reports/traces are in `checkpoint-2135/` below the
+same results directory; `checkpoint-2118/` retains the earlier implementation.

@@ -9,6 +9,7 @@ hardware profile or used to claim B300 performance.
 import copy
 import importlib.util
 import json
+import math
 import sys
 import tempfile
 import types
@@ -35,6 +36,7 @@ def load_module(name):
 
 config = load_module("config")
 optimizer = load_module("optimizer")
+synthetic = load_module("synthetic_weights")
 
 
 def model_config(*, coder=False, large=False):
@@ -100,6 +102,45 @@ class ConfigTests(unittest.TestCase):
         )
         # A single shared stop word is independent of mailbox count.
         self.assertEqual(b.expert_buffers_bytes - 4, 2 * (a.expert_buffers_bytes - 4))
+
+    def test_preprocessing_buffers_and_backend_contract(self):
+        model = config.ModelSpec.from_dict(model_config(coder=True))
+        base = config.default_config("/models/coder", overlap="tbo")
+        raw = config.NodeConfig.from_dict(
+            {**base.to_dict(), "prefill_preprocess": True}
+        )
+        a = optimizer.estimate_memory(base, model, kv_tokens_per_attention_gpu=1024)
+        b = optimizer.estimate_memory(raw, model, kv_tokens_per_attention_gpu=1024)
+        rows = 2 * base.max_prefill_tokens
+        expected = (
+            rows * (model.hidden_size * 4 + model.top_k * 12) + base.slot_count * 4
+        )
+        self.assertEqual(b.expert_buffers_bytes - a.expert_buffers_bytes, expected)
+        for fields in (
+            {"prefill_preprocess": 1},
+            {"prefill_preprocess": True, "kernel": "wmma"},
+        ):
+            with self.assertRaises(ValueError):
+                config.NodeConfig.from_dict({**base.to_dict(), **fields})
+
+    def test_canonical_tensor_manifest_covers_exact_model_size(self):
+        model = config.ModelSpec.from_dict(model_config(coder=True))
+        entries = list(synthetic.canonical_shapes(model))
+        self.assertEqual(len({name for name, _ in entries}), len(entries))
+        total = sum(math.prod(shape) * 2 for _, shape in entries)
+        self.assertEqual(
+            total, model.expert_weight_bytes + model.attention_weight_bytes
+        )
+        a = "model.layers.0.mlp.experts.0.gate_proj.weight"
+        b = "model.layers.0.mlp.experts.1.gate_proj.weight"
+        self.assertNotEqual(
+            synthetic.tensor_seed(a, 1234), synthetic.tensor_seed(b, 1234)
+        )
+        self.assertNotEqual(
+            synthetic.tensor_seed(a, 1234), synthetic.tensor_seed(a, 1235)
+        )
+        with self.assertRaises(ValueError):
+            synthetic.tensor_seed(a, -1)
 
     def test_round_trip_and_mailbox_ids(self):
         original = config.default_config("/models/Qwen3-Coder-480B")
@@ -221,7 +262,7 @@ class OptimizerTests(unittest.TestCase):
             (packed_rows + decode_rows) * (2 * 6144 + 3 * 2560) * 2
             + 4 * 40 * 8
             + 4 * 64
-            + 4 * 32
+            + 4 * 48
             + 4
         )
         self.assertEqual(memory.expert_buffers_bytes, expected)

@@ -7,6 +7,7 @@ stopped. Use separate output directories for tuning and held-out evaluation.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -39,6 +40,11 @@ def main():
         "--attention-backend", choices=("triton", "flashinfer"), default="triton"
     )
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--canonical-synthetic-seed",
+        type=int,
+        help="Use identical globally named random BF16 tensors in every layout",
+    )
     p.add_argument("--port", type=int, default=31000)
     p.add_argument("--startup-timeout", type=int, default=900)
     p.add_argument("--benchmark-timeout", type=int, default=3600)
@@ -48,6 +54,14 @@ def main():
         p.error("ExpertPlex requires --config")
     if args.variant == "pdmux" and not args.pdmux_config:
         p.error("PDMux requires tested --pdmux-config")
+    if args.canonical_synthetic_seed is not None:
+        if args.weight_mode != "synthetic" or args.canonical_synthetic_seed < 0:
+            p.error(
+                "Canonical synthetic seed requires synthetic mode and a nonnegative seed"
+            )
+        os.environ["SGLANG_EXPERTPLEX_SYNTHETIC_SEED"] = str(
+            args.canonical_synthetic_seed
+        )
     args.output_dir.mkdir(parents=True, exist_ok=False)
     scripts = Path(__file__).resolve().parent
     common = [
@@ -74,6 +88,11 @@ def main():
             p.error("Aggregate KV capacity must divide across D workers")
         if node["max_prefill_tokens"] < args.sequence_cap:
             p.error("P mailbox must cover the common input+output length cap")
+        if (
+            args.canonical_synthetic_seed is not None
+            and node.get("synthetic_seed", 1234) != args.canonical_synthetic_seed
+        ):
+            p.error("Node synthetic seed differs from the canonical seed")
         node["rendezvous_dir"] = str((args.output_dir / "rendezvous").resolve())
         node_path = args.output_dir / "node.json"
         node_path.write_text(json.dumps(node, indent=2) + "\n")
@@ -141,8 +160,38 @@ def main():
         "--output-dir",
         str(args.output_dir / "sweep"),
     ]
+    repo = scripts.parents[1]
+    source_paths = (
+        list((repo / "python/sglang/srt/expertplex").rglob("*.py"))
+        + list((repo / "python/sglang/srt/expertplex/csrc").glob("*"))
+        + [
+            repo / "python/sglang/srt/models/qwen3_moe.py",
+            repo / "python/sglang/srt/model_loader/loader.py",
+            scripts / "launch.py",
+            scripts / "launch_baseline.py",
+            Path(__file__),
+        ]
+    )
+    source_hashes = {
+        str(p.relative_to(repo)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in source_paths
+        if p.is_file()
+    }
+    hardware = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,name,uuid,memory.total,clocks.current.sm,clocks.current.memory,power.draw,temperature.gpu,pstate",
+            "--format=csv",
+        ],
+        capture_output=True,
+        text=True,
+    )
     report = {
         "scope": __doc__,
+        "source_files_sha256": source_hashes,
+        "hardware_at_start": hardware.stdout
+        if hardware.returncode == 0
+        else hardware.stderr,
         "settings": vars(args) | {"output_dir": str(args.output_dir)},
         "launch_command": launch,
         "benchmark_command": bench,

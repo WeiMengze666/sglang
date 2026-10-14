@@ -34,6 +34,7 @@ def estimate_buffer_bytes(
     capacities: list[int] | None = None,
     packed: list[int] | None = None,
     top_k: int = 0,
+    prefill_preprocess: bool = False,
 ) -> dict[str, int]:
     """Exact requested cudaMalloc bytes, excluding allocator/driver overhead."""
     dims = (slot_count, local_experts, max_rows, hidden, intermediate)
@@ -63,9 +64,20 @@ def estimate_buffer_bytes(
         "counts": slot_count * local_experts * 4,
         "offsets": slot_count * local_experts * 4,
         "control": slot_count * 8 * 8,
-        "scheduler": slot_count * 32,
+        "scheduler": slot_count * 48,
         "stop": 4,
     }
+    if prefill_preprocess:
+        raw_rows = sum(c for c, p in zip(capacities, packed) if p)
+        if raw_rows:
+            result.update(
+                raw_input=raw_rows * hidden * 2,
+                raw_output=raw_rows * hidden * 2,
+                raw_ids=raw_rows * top_k * 4,
+                raw_map=raw_rows * top_k * 4,
+                raw_weights=raw_rows * top_k * 4,
+                raw_n=slot_count * 4,
+            )
     result["total"] = sum(result.values())
     return result
 
@@ -124,6 +136,9 @@ class OwnedBuffers:
         capacities: list[int] | None = None,
         packed: list[int] | None = None,
         top_k: int = 0,
+        prefill_preprocess: bool = False,
+        expert_rank: int = 0,
+        expert_world: int = 1,
     ) -> None:
         self._impl = load_extension().OwnedBuffers(
             slot_count,
@@ -135,6 +150,9 @@ class OwnedBuffers:
             capacities or [],
             packed or [],
             top_k,
+            prefill_preprocess,
+            expert_rank,
+            expert_world,
         )
 
     def descriptor(self) -> dict[str, Any]:
@@ -162,8 +180,10 @@ class RemoteGroup:
         self.peers = peers
         self._impl = load_extension().RemoteGroup([peer._impl for peer in peers])
 
-    def dispatch(self, hidden, ids, row_map, layer, phase):
-        self._impl.dispatch(hidden, ids, row_map, layer, phase)
+    def dispatch(
+        self, hidden, ids, row_map, layer, phase, weights=None, *, publish=True
+    ):
+        self._impl.dispatch(hidden, ids, row_map, layer, phase, weights, publish)
 
     def combine(self, output, ids, weights, row_map, timeout_ms=30000):
         self._impl.combine(output, ids, weights, row_map, timeout_ms)

@@ -57,7 +57,8 @@ class ExpertPlexClient:
         self.native = native
         self.groups = (
             [native.RemoteGroup(peers) for peers in self.mailboxes]
-            if os.environ.get("SGLANG_EXPERTPLEX_GROUP_COMM") == "1"
+            if self.config.prefill_preprocess
+            or os.environ.get("SGLANG_EXPERTPLEX_GROUP_COMM") == "1"
             else []
         )
         self.epoch = 0
@@ -140,7 +141,7 @@ class ExpertPlexClient:
                 )
                 if self.groups:
                     self.groups[mailbox].dispatch(
-                        hidden_states, topk_ids, row_map, layer_id, phase
+                        hidden_states, topk_ids, row_map, layer_id, phase, topk_weights
                     )
                 else:
                     for rank, peer in enumerate(peers):

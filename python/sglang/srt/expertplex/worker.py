@@ -38,14 +38,35 @@ def load_expert_weights(model_path, spec, rank, world, device, synthetic_seed=No
         device=device,
     )
     if synthetic_seed is not None:
-        # Explicit synthetic mode: no checkpoint shards are read or fabricated.
-        # Independent expert seeds avoid identical experts and routing artifacts.
+        from .synthetic_weights import ENVIRONMENT, fill_tensor
+
+        canonical_seed = os.environ.get(ENVIRONMENT)
+        if canonical_seed is not None and int(canonical_seed) != synthetic_seed:
+            raise ValueError("Canonical synthetic seed differs from node configuration")
         for layer in range(spec.num_layers):
             for local in range(local_experts):
-                seed = synthetic_seed + layer * spec.num_experts + local * world + rank
-                generator = torch.Generator(device=device).manual_seed(seed)
-                w13[layer, local].uniform_(-1e-3, 1e-3, generator=generator)
-                w2[layer, local].uniform_(-1e-3, 1e-3, generator=generator)
+                expert = local * world + rank
+                if canonical_seed is not None:
+                    prefix = f"model.layers.{layer}.mlp.experts.{expert}"
+                    fill_tensor(
+                        w13[layer, local, : spec.intermediate_size],
+                        f"{prefix}.gate_proj.weight",
+                        synthetic_seed,
+                    )
+                    fill_tensor(
+                        w13[layer, local, spec.intermediate_size :],
+                        f"{prefix}.up_proj.weight",
+                        synthetic_seed,
+                    )
+                    fill_tensor(
+                        w2[layer, local], f"{prefix}.down_proj.weight", synthetic_seed
+                    )
+                else:
+                    # Retain legacy geometry-only fixtures and their provenance.
+                    seed = synthetic_seed + layer * spec.num_experts + expert
+                    generator = torch.Generator(device=device).manual_seed(seed)
+                    w13[layer, local].uniform_(-1e-3, 1e-3, generator=generator)
+                    w2[layer, local].uniform_(-1e-3, 1e-3, generator=generator)
         torch.cuda.synchronize(device)
         logger.warning(
             "SYNTHETIC weights: geometry/capacity testing only, not model accuracy"
@@ -146,6 +167,7 @@ def expert_main(config_path, rank, manifest, stop_event):
         capacities=capacities,
         packed=packed,
         top_k=spec.top_k,
+        prefill_preprocess=config.prefill_preprocess,
     )["total"]
     required_bytes = (
         spec.expert_weight_bytes // len(config.expert_devices) + buffer_bytes
@@ -180,6 +202,9 @@ def expert_main(config_path, rank, manifest, stop_event):
         capacities=capacities,
         packed=packed,
         top_k=spec.top_k,
+        prefill_preprocess=config.prefill_preprocess,
+        expert_rank=rank,
+        expert_world=len(config.expert_devices),
     )
     executor = PersistentExecutor(
         buffers,

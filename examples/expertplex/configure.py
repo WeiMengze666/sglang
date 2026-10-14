@@ -21,7 +21,14 @@ def main():
     parser.add_argument("--rendezvous-dir", required=True)
     parser.add_argument("--overlap", choices=("none", "tbo"), default="none")
     parser.add_argument(
-        "--kernel", choices=("sm100", "sm100_cta1", "sm100_fused", "wmma"), default="sm100"
+        "--kernel",
+        choices=("sm100", "sm100_cta1", "sm100_fused", "wmma"),
+        default="sm100",
+    )
+    parser.add_argument(
+        "--prefill-preprocess",
+        action="store_true",
+        help="Run normal-mode scatter and gather inside the persistent expert kernel",
     )
     parser.add_argument(
         "--synthetic-weights",
@@ -52,6 +59,7 @@ def main():
         weight_mode="synthetic" if args.synthetic_weights else "checkpoint",
         overlap=args.overlap,
         kernel=args.kernel,
+        prefill_preprocess=args.prefill_preprocess,
     )
     if Path(node.model_path, "config.json").exists():
         spec = config.ModelSpec.from_model_path(node.model_path)
@@ -68,6 +76,7 @@ def main():
             capacities=capacities,
             packed=packed,
             top_k=spec.top_k,
+            prefill_preprocess=node.prefill_preprocess,
         )["total"]
         memory = {
             "expert_weights_gib_per_gpu": spec.expert_weight_bytes

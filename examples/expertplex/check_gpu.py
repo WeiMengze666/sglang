@@ -65,6 +65,9 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
             packed=settings.get("packed_layout")
             or ([1, 1] if settings.get("packed") else None),
             top_k=settings["top_k"],
+            prefill_preprocess=settings.get("prefill_preprocess", False),
+            expert_rank=settings.get("expert_rank", 0),
+            expert_world=settings.get("expert_world", 1),
         )
         if start_executor:
             w13, w2 = _weights(torch, settings)
@@ -227,7 +230,9 @@ def _prepare(torch, case, device):
     }
 
 
-def _reference_deepgemm(torch, case, w13, w2, settings, device, phase):
+def _reference_deepgemm(
+    torch, case, w13, w2, settings, device, phase, *, fp32_combine=False
+):
     """Native BF16 grouped GEMMs/activation with an explicit FP32 combine.
 
     This isolates expert arithmetic from DeepEP's distributed combine order
@@ -291,7 +296,7 @@ def _reference_deepgemm(torch, case, w13, w2, settings, device, phase):
         result.index_add_(0, row, selected * case["weights"][row, choice, None])
         if phase == 0:
             cursor += sizes[expert]
-    return result.bfloat16()
+    return result if fp32_combine else result.bfloat16()
 
 
 def _run(torch, native, remote, prepared, phase, epoch, device, timeout_ms):

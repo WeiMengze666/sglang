@@ -14,7 +14,9 @@ import time
 import uuid
 from pathlib import Path
 
-PROTOCOL_VERSION = 1
+from .synthetic_weights import weight_identity
+
+PROTOCOL_VERSION = 2
 
 
 def config_digest(config) -> str:
@@ -61,6 +63,7 @@ def pid_alive(pid: int) -> bool:
 
 
 def begin_run(config) -> dict:
+    identity = weight_identity(config)
     root = Path(config.rendezvous_dir)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     # No automatic stale-lock takeover: two launchers must never export buffers
@@ -80,6 +83,7 @@ def begin_run(config) -> dict:
         "run_id": uuid.uuid4().hex,
         "config_digest": config_digest(config),
         "checkpoint_fingerprint": checkpoint_fingerprint(config.model_path),
+        "weight_identity": identity,
         "pid": os.getpid(),
         "state": "starting",
     }
@@ -107,6 +111,7 @@ def wait_for_workers(config) -> tuple[dict, list[dict]]:
     deadline = time.monotonic() + config.startup_timeout_s
     last_reason = "no run manifest"
     expected_checkpoint = checkpoint_fingerprint(config.model_path)
+    expected_weights = weight_identity(config)
     while time.monotonic() < deadline:
         try:
             manifest = json.loads((root / "run.json").read_text())
@@ -114,6 +119,10 @@ def wait_for_workers(config) -> tuple[dict, list[dict]]:
                 raise RuntimeError("ExpertPlex IPC protocol version mismatch")
             if manifest["config_digest"] != config_digest(config):
                 raise RuntimeError("ExpertPlex worker/client configuration mismatch")
+            if manifest.get("weight_identity") != expected_weights:
+                raise RuntimeError(
+                    "ExpertPlex worker/client weight initialization mismatch"
+                )
             if manifest["checkpoint_fingerprint"] != expected_checkpoint:
                 raise RuntimeError("ExpertPlex checkpoint changed after worker startup")
             if not pid_alive(manifest["pid"]):

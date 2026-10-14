@@ -23,13 +23,28 @@ def main():
     p.add_argument("--config", type=Path, required=True)
     p.add_argument("--tokenizer-path", required=True)
     p.add_argument("--client-id", type=int, default=1)
+    p.add_argument(
+        "--attention-backend", choices=("triton", "flashinfer"), default="triton"
+    )
     p.add_argument("--batches", type=int, nargs="+", default=[1, 2, 4, 8, 16, 32])
     p.add_argument("--lengths", type=int, nargs="+", default=[128, 512, 2048, 8192])
+    p.add_argument("--holdout-batches", type=int, nargs="*", default=[3, 12])
+    p.add_argument("--holdout-lengths", type=int, nargs="*", default=[1024, 4096])
     p.add_argument("--iterations", type=int, default=5)
     p.add_argument("--kv-tokens", type=int, default=98304)
     p.add_argument("--output-dir", type=Path, required=True)
     args = p.parse_args()
-    if min(*args.batches, *args.lengths, args.iterations, args.kv_tokens) <= 0:
+    if (
+        min(
+            *args.batches,
+            *args.lengths,
+            *args.holdout_batches,
+            *args.holdout_lengths,
+            args.iterations,
+            args.kv_tokens,
+        )
+        <= 0
+    ):
         p.error("Profile sizes must be positive")
     config = module("config")
     source_node = config.load_config(args.config)
@@ -102,8 +117,8 @@ def main():
         )
         bench._init_process_global_configs()
         runner, _ = bench.load_model(server_args, port_args, client.device, tp_rank)
-        for batch_size in args.batches:
-            for length in args.lengths:
+        for batch_size in sorted(set(args.batches + args.holdout_batches)):
+            for length in sorted(set(args.lengths + args.holdout_lengths)):
                 if batch_size * (length + args.iterations + 4) > args.kv_tokens:
                     report["skipped"].append(
                         {"batch": batch_size, "length": length, "reason": "KV capacity"}
@@ -128,6 +143,9 @@ def main():
                 for phase, values in phase_samples.items():
                     row = {
                         "phase": phase,
+                        "split": "train"
+                        if batch_size in args.batches and length in args.lengths
+                        else "holdout",
                         "x": batch_size,
                         "sequence_length": length if phase == "prefill" else length + 2,
                         "latency_s": statistics.median(
@@ -167,7 +185,7 @@ def main():
         "--disable-overlap-schedule",
         "--disable-flashinfer-autotune",
         "--attention-backend",
-        "triton",
+        args.attention_backend,
         "--sampling-backend",
         "pytorch",
         "--cuda-graph-backend-prefill",
@@ -175,7 +193,7 @@ def main():
         "--cuda-graph-backend-decode",
         "full",
         "--cuda-graph-max-bs-decode",
-        str(max(args.batches)),
+        str(max(args.batches + args.holdout_batches)),
         "--max-running-requests",
         str(source_node.max_decode_tokens),
         "--max-prefill-tokens",
@@ -187,7 +205,7 @@ def main():
         "--mem-fraction-static",
         "0.75",
         "--context-length",
-        str(max(args.lengths) + args.iterations + 4),
+        str(max(args.lengths + args.holdout_lengths) + args.iterations + 4),
     ]
     report["server_arguments"] = cli
     server = ServerArgs.from_cli_args(parser.parse_args(cli))
@@ -199,12 +217,53 @@ def main():
         report["fits"] = {
             phase: asdict(
                 fit(
-                    [s for s in report["samples"] if s["phase"] == phase],
+                    [
+                        s
+                        for s in report["samples"]
+                        if s["phase"] == phase and s["split"] == "train"
+                    ],
                     component="attention",
                 )
             )
             for phase in ("prefill", "decode")
         }
+        coefficients_type = module("optimizer").LatencyCoefficients
+        report["validation"] = {}
+        for phase in ("prefill", "decode"):
+            coefficients = coefficients_type(**report["fits"][phase])
+            rows = []
+            for sample in report["samples"]:
+                if sample["phase"] != phase or sample["split"] != "holdout":
+                    continue
+                predicted = coefficients.predict(sample["x"], sample["sequence_length"])
+                rows.append(
+                    {
+                        "x": sample["x"],
+                        "sequence_length": sample["sequence_length"],
+                        "measured_s": sample["latency_s"],
+                        "predicted_s": predicted,
+                        "relative_error": abs(predicted - sample["latency_s"])
+                        / sample["latency_s"],
+                    }
+                )
+            report["validation"][phase] = {
+                "holdout": rows,
+                "median_relative_error": statistics.median(
+                    r["relative_error"] for r in rows
+                )
+                if rows
+                else None,
+                "maximum_relative_error": max(
+                    (r["relative_error"] for r in rows), default=None
+                ),
+                "monotone_over_sampled_lengths": all(
+                    coefficients.beta
+                    + coefficients.gamma * s
+                    + coefficients.delta * s * s
+                    >= 0
+                    for s in args.lengths + args.holdout_lengths
+                ),
+            }
         report["status"] = "completed"
     except BaseException as exc:
         report.update(status="failed", error=repr(exc))

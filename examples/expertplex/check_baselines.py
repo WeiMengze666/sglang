@@ -19,6 +19,9 @@ from pathlib import Path
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--model-path", required=True)
+    p.add_argument(
+        "--weight-mode", choices=("checkpoint", "synthetic"), default="checkpoint"
+    )
     p.add_argument("--output-dir", required=True, type=Path)
     p.add_argument(
         "--variants",
@@ -54,7 +57,9 @@ def main():
         "scope": __doc__,
         "settings": vars(args) | {"output_dir": str(args.output_dir)},
         "communication_environment": {
-            k: v for k, v in os.environ.items() if k.startswith(("NVSHMEM_", "NCCL_"))
+            k: v
+            for k, v in os.environ.items()
+            if k.startswith(("NVSHMEM_", "NCCL_", "SGLANG_EXPERTPLEX_"))
         },
         "cases": [],
     }
@@ -77,6 +82,8 @@ def main():
                 variant,
                 "--model-path",
                 args.model_path,
+                "--load-format",
+                "dummy" if args.weight_mode == "synthetic" else "safetensors",
                 "--attention-backend",
                 "triton",
                 "--skip-tokenizer-init",
@@ -97,9 +104,11 @@ def main():
                 node = json.loads(Path(args.expertplex_config).read_text())
                 if (
                     node["model_path"] != args.model_path
-                    or node["weight_mode"] != "checkpoint"
+                    or node["weight_mode"] != args.weight_mode
                 ):
-                    raise ValueError("ExpertPlex must use the same real BF16 fixture")
+                    raise ValueError(
+                        "ExpertPlex must use the same BF16 fixture and weight mode"
+                    )
                 node["rendezvous_dir"] = str((args.output_dir / "rendezvous").resolve())
                 node_path = args.output_dir / "node.json"
                 node_path.write_text(json.dumps(node, indent=2) + "\n")

@@ -1546,7 +1546,15 @@ class DummyModelLoader(BaseModelLoader):
 
             # NOTE(woosuk): For accurate performance evaluation, we assign
             # random values to the weights.
-            initialize_dummy_weights(model)
+            if os.environ.get("SGLANG_EXPERTPLEX_SYNTHETIC_SEED") is not None:
+                # Opt-in experiment fixture: global parameter names define the
+                # same weights for every TP/EP/attention layout. Default dummy
+                # loading is unchanged and still uses initialize_dummy_weights.
+                from sglang.srt.expertplex.synthetic_weights import initialize_model
+
+                initialize_model(model)
+            else:
+                initialize_dummy_weights(model)
 
             post_load_weights(model)
 

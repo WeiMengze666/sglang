@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from dataclasses import replace
 from pathlib import Path
 
@@ -66,6 +67,17 @@ class RendezvousTests(unittest.TestCase):
         (self.model / "config.json").write_text('{"changed":true}')
         with self.assertRaisesRegex(RuntimeError, "checkpoint changed"):
             rv.wait_for_workers(self.config)
+
+    def test_synthetic_initializers_must_match_across_roles(self):
+        self.config = replace(self.config, weight_mode="synthetic", synthetic_seed=1234)
+        with patch.dict(os.environ, {}, clear=True):
+            self.ready_run()
+        with patch.dict(os.environ, {"SGLANG_EXPERTPLEX_SYNTHETIC_SEED": "1234"}):
+            with self.assertRaisesRegex(RuntimeError, "weight initialization mismatch"):
+                rv.wait_for_workers(self.config)
+        with patch.dict(os.environ, {"SGLANG_EXPERTPLEX_SYNTHETIC_SEED": "5678"}):
+            with self.assertRaisesRegex(ValueError, "seed differs"):
+                rv.wait_for_workers(self.config)
 
     def test_old_generation_descriptor_cannot_be_reused(self):
         self.ready_run()

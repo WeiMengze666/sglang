@@ -1,0 +1,75 @@
+{
+  "scope": "Serially smoke-test eight-GPU baseline deployments with one checkpoint.\n\nThis runs finite-generation checks, not paper accuracy or goodput acceptance.\nEach launcher owns and cleans its process groups; no global process killer is\nused. The output root must be new so failed runs are preserved.\n",
+  "settings": {
+    "model_path": "/home/alayadb/mengze/expertplex-b300/tiny-deepep-checkpoint",
+    "output_dir": "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-matrix-fresh-01",
+    "variants": [
+      "colocated",
+      "expertplex"
+    ],
+    "port": 32000,
+    "pdmux_config": null,
+    "expertplex_config": "/home/alayadb/mengze/expertplex-b300/tiny-deepep-tbo-01.json",
+    "teacher_reference": null,
+    "teacher_flush_between": true,
+    "teacher_histories": "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-colocated-tiny-01/colocated-e2e.json",
+    "startup_timeout": 600
+  },
+  "communication_environment": {
+    "NVSHMEM_HCA_LIST": "mlx5_0:1,mlx5_6:1,mlx5_8:1,mlx5_10:1,mlx5_12:1,mlx5_13:1,mlx5_14:1,mlx5_15:1,mlx5_16:1,mlx5_20:1",
+    "NVSHMEM_ENABLE_NIC_PE_MAPPING": "1"
+  },
+  "cases": [
+    {
+      "variant": "colocated",
+      "command": [
+        "/home/alayadb/mengze/expertplex-b300/venv/bin/python",
+        "/home/alayadb/mengze/expertplex-b300/src/examples/expertplex/launch_baseline.py",
+        "--variant",
+        "colocated",
+        "--model-path",
+        "/home/alayadb/mengze/expertplex-b300/tiny-deepep-checkpoint",
+        "--attention-backend",
+        "triton",
+        "--skip-tokenizer-init",
+        "--sequence-cap",
+        "4096",
+        "--max-prefill-tokens",
+        "2048",
+        "--port",
+        "32000",
+        "--log-dir",
+        "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-matrix-fresh-01/colocated",
+        "--startup-timeout",
+        "600"
+      ],
+      "status": "functional_pass",
+      "teacher_forcing_recorded": true
+    },
+    {
+      "variant": "expertplex",
+      "command": [
+        "/home/alayadb/mengze/expertplex-b300/venv/bin/python",
+        "/home/alayadb/mengze/expertplex-b300/src/examples/expertplex/launch.py",
+        "--config",
+        "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-matrix-fresh-01/node.json",
+        "--attention-backend",
+        "triton",
+        "--sampling-backend",
+        "pytorch",
+        "--skip-tokenizer-init",
+        "--cuda-graph",
+        "--sequence-cap",
+        "4096",
+        "--kv-tokens",
+        "8192",
+        "--port",
+        "32000",
+        "--log-dir",
+        "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-matrix-fresh-01/expertplex"
+      ],
+      "status": "failed",
+      "error": "Command '['/home/alayadb/mengze/expertplex-b300/venv/bin/python', '/home/alayadb/mengze/expertplex-b300/src/examples/expertplex/check_teacher_forcing.py', '--base-url', 'http://127.0.0.1:32000', '--model-path', '/home/alayadb/mengze/expertplex-b300/tiny-deepep-checkpoint', '--histories', '/home/alayadb/mengze/expertplex-b300/artifacts/teacher-colocated-tiny-01/colocated-e2e.json', '--output', '/home/alayadb/mengze/expertplex-b300/artifacts/teacher-matrix-fresh-01/expertplex-teacher.json', '--top-k', '128', '--flush-between', '--reference', '/home/alayadb/mengze/expertplex-b300/artifacts/teacher-matrix-fresh-01/colocated-teacher.json']' returned non-zero exit status 1."
+    }
+  ]
+}

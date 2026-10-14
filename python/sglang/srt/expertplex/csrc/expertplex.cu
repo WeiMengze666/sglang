@@ -44,7 +44,16 @@ enum Error {
   TIMEOUT = 7,
   STOPPED = 8
 };
-enum Stage { IDLE = 0, GATE = 1, DOWN = 2, ACTIVATE = 3, INITIALIZING = 4 };
+enum Stage {
+  IDLE = 0,
+  GATE = 1,
+  DOWN = 2,
+  ACTIVATE = 3,
+  INITIALIZING = 4,
+  SCATTER1 = 5,
+  SCATTER2 = 6,
+  GATHER = 7
+};
 constexpr U64 kMaxEpoch = (1ULL << 29) - 1;
 
 struct SlotState {
@@ -53,15 +62,24 @@ struct SlotState {
   unsigned int gate_tiles;
   unsigned int down_tiles;
   unsigned int activation_tiles;
+  // Keep per-operation bounds immutable for the entire invocation. An idle
+  // claimant may still hold the retiring stage generation while its last CTA
+  // publishes the next one; reusing a tile bound here admits phantom tasks.
+  unsigned int scatter1_tiles, scatter2_tiles, gather_tiles;
   int phase;
   int layer;
 };
-static_assert(sizeof(SlotState) == 32,
+static_assert(sizeof(SlotState) == 48,
               "Update the Python memory estimator for changed state layout");
 
 struct DeviceBuffers {
   BF16 *input, *activation, *output, *gateup;
   int *counts, *offsets;
+  BF16 *raw_input, *raw_output;
+  int *raw_ids, *raw_map, *raw_n;
+  float *raw_weights;
+  size_t raw_base[kMaxSlots];
+  int top_k, expert_rank, expert_world, prefill_preprocess;
   U64 *control;
   SlotState *states;
   int *stop;
@@ -131,10 +149,13 @@ public:
   std::vector<void *> allocations;
   std::string input_handle, output_handle, counts_handle, control_handle,
       offsets_handle;
+  std::string raw_input_handle, raw_output_handle, raw_ids_handle,
+      raw_weights_handle, raw_n_handle;
 
   OwnedBuffers(int slots, int experts, int rows, int hidden, int intermediate,
                int dev, std::vector<int> capacities, std::vector<int> packed,
-               int top_k)
+               int top_k, bool prefill_preprocess, int expert_rank,
+               int expert_world)
       : device(dev) {
     TORCH_CHECK(slots > 0 && experts > 0 && rows > 0 && hidden > 0 &&
                     intermediate > 0,
@@ -151,6 +172,15 @@ public:
     C10_CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
     TORCH_CHECK(prop.major == 10 && prop.minor == 3,
                 "This experimental extension targets B300 (sm_103)");
+    TORCH_CHECK(expert_world > 0 && expert_rank >= 0 &&
+                    expert_rank < expert_world,
+                "Invalid expert rank");
+    TORCH_CHECK(!prefill_preprocess || top_k > 0,
+                "Preprocessing requires top_k");
+    b.top_k = top_k;
+    b.expert_rank = expert_rank;
+    b.expert_world = expert_world;
+    b.prefill_preprocess = prefill_preprocess;
     b.slots = slots;
     b.experts = experts;
     b.rows = rows;
@@ -163,7 +193,7 @@ public:
       packed.assign(slots, 0);
     TORCH_CHECK(capacities.size() == slots && packed.size() == slots,
                 "Mailbox layout length mismatch");
-    size_t total_rows = 0;
+    size_t total_rows = 0, raw_rows = 0;
     for (int s = 0; s < slots; ++s) {
       TORCH_CHECK(capacities[s] > 0 && capacities[s] <= rows &&
                       (packed[s] == 0 || packed[s] == 1),
@@ -183,8 +213,29 @@ public:
       b.storage_rows[s] = storage;
       b.base_rows[s] = total_rows;
       total_rows += storage;
+      b.raw_base[s] = raw_rows;
+      if (prefill_preprocess && packed[s])
+        raw_rows += capacities[s];
     }
     try {
+      if (raw_rows) {
+        b.raw_input = static_cast<BF16 *>(allocate(
+            checked_product({static_cast<int64_t>(raw_rows), hidden, 2})));
+        b.raw_output = static_cast<BF16 *>(allocate(
+            checked_product({static_cast<int64_t>(raw_rows), hidden, 2})));
+        b.raw_ids = static_cast<int *>(allocate(
+            checked_product({static_cast<int64_t>(raw_rows), top_k, 4})));
+        b.raw_map = static_cast<int *>(allocate(
+            checked_product({static_cast<int64_t>(raw_rows), top_k, 4})));
+        b.raw_weights = static_cast<float *>(allocate(
+            checked_product({static_cast<int64_t>(raw_rows), top_k, 4})));
+        b.raw_n = static_cast<int *>(allocate(checked_product({slots, 4})));
+        raw_input_handle = encode_handle(b.raw_input);
+        raw_output_handle = encode_handle(b.raw_output);
+        raw_ids_handle = encode_handle(b.raw_ids);
+        raw_weights_handle = encode_handle(b.raw_weights);
+        raw_n_handle = encode_handle(b.raw_n);
+      }
       b.input = static_cast<BF16 *>(allocate(
           checked_product({static_cast<int64_t>(total_rows), hidden, 2})));
       b.gateup = static_cast<BF16 *>(allocate(checked_product(
@@ -243,7 +294,19 @@ public:
   }
   py::dict descriptor() const {
     py::dict d;
-    d["version"] = 4;
+    d["version"] = 5;
+    d["prefill_preprocess"] = bool(b.prefill_preprocess);
+    d["top_k"] = b.top_k;
+    d["expert_rank"] = b.expert_rank;
+    d["expert_world"] = b.expert_world;
+    d["raw_base"] = std::vector<size_t>(b.raw_base, b.raw_base + b.slots);
+    if (b.raw_input) {
+      d["raw_input_handle"] = raw_input_handle;
+      d["raw_output_handle"] = raw_output_handle;
+      d["raw_ids_handle"] = raw_ids_handle;
+      d["raw_weights_handle"] = raw_weights_handle;
+      d["raw_n_handle"] = raw_n_handle;
+    }
     d["device"] = device;
     d["slot_count"] = b.slots;
     d["local_experts"] = b.experts;
@@ -275,7 +338,7 @@ public:
   bool closed = false;
 
   RemoteBuffers(py::dict d, int slot_id, int dev) : device(dev), slot(slot_id) {
-    TORCH_CHECK(py::cast<int>(d["version"]) == 4,
+    TORCH_CHECK(py::cast<int>(d["version"]) == 5,
                 "Unsupported IPC descriptor version");
     b.slots = py::cast<int>(d["slot_count"]);
     b.experts = py::cast<int>(d["local_experts"]);
@@ -283,6 +346,13 @@ public:
     b.hidden = py::cast<int>(d["hidden"]);
     b.intermediate = py::cast<int>(d["intermediate"]);
     TORCH_CHECK(b.slots > 0 && b.slots <= kMaxSlots, "Invalid slot count");
+    b.prefill_preprocess = py::cast<bool>(d["prefill_preprocess"]);
+    b.top_k = py::cast<int>(d["top_k"]);
+    b.expert_rank = py::cast<int>(d["expert_rank"]);
+    b.expert_world = py::cast<int>(d["expert_world"]);
+    auto raw_bases = py::cast<std::vector<size_t>>(d["raw_base"]);
+    TORCH_CHECK(raw_bases.size() == b.slots, "Malformed raw mailbox layout");
+    std::copy(raw_bases.begin(), raw_bases.end(), b.raw_base);
     auto capacities = py::cast<std::vector<int>>(d["capacities"]);
     auto packed = py::cast<std::vector<int>>(d["packed"]);
     auto storage = py::cast<std::vector<int>>(d["storage_rows"]);
@@ -311,6 +381,18 @@ public:
                 "ExpertPlex requires peer access and native peer atomics "
                 "(single-node NVLink)");
     try {
+      if (b.prefill_preprocess && b.packed[slot]) {
+        b.raw_input = static_cast<BF16 *>(
+            map(py::cast<std::string>(d["raw_input_handle"])));
+        b.raw_output = static_cast<BF16 *>(
+            map(py::cast<std::string>(d["raw_output_handle"])));
+        b.raw_ids =
+            static_cast<int *>(map(py::cast<std::string>(d["raw_ids_handle"])));
+        b.raw_weights = static_cast<float *>(
+            map(py::cast<std::string>(d["raw_weights_handle"])));
+        b.raw_n =
+            static_cast<int *>(map(py::cast<std::string>(d["raw_n_handle"])));
+      }
       b.input =
           static_cast<BF16 *>(map(py::cast<std::string>(d["input_handle"])));
       b.output =
@@ -1078,6 +1160,10 @@ public:
         ctas - 1, static_cast<int>(std::floor(ctas * max_decode_fraction)));
     TORCH_CHECK(max_decode_ctas >= 1,
                 "Decode cap must admit at least one decode CTA");
+    TORCH_CHECK(!owner->b.prefill_preprocess ||
+                    (backend == "sm100" && benchmark_stage == 0),
+                "Expert-side preprocessing requires the complete native SM100 "
+                "pipeline");
     const bool fused = backend == "sm100_fused";
     const bool sm100 = backend == "sm100" || backend == "sm100_cta1" || fused;
     const int cluster = backend == "sm100_cta1" ? 1 : 2;
@@ -1214,8 +1300,11 @@ public:
     d["benchmark_stage"] = native_context.benchmark_stage;
     d["ctas"] = launch_ctas;
     d["cluster_size"] = cluster_size;
+    d["prefill_preprocess"] = bool(owner->b.prefill_preprocess);
     d["operation_templates"] =
-        backend_name == "sm100_fused" || backend_name == "wmma"
+        owner->b.prefill_preprocess
+            ? "scatter1,scatter2,gate_up,activation,down,gather"
+        : backend_name == "sm100_fused" || backend_name == "wmma"
             ? "fused_gate_up_activation,down"
             : "gate_up,activation,down";
     d["loading_stages"] =
@@ -1342,6 +1431,9 @@ static void dispatch(std::shared_ptr<RemoteBuffers> r, torch::Tensor hidden,
                      int layer, int phase, int rank, int world, bool publish) {
   check_tensor(hidden, *r, at::kBFloat16, 2, "hidden");
   check_routes(ids, rows, *r, rank, world);
+  TORCH_CHECK(!(r->b.prefill_preprocess && r->b.packed[r->slot]),
+              "Expert-side preprocessing requires RemoteGroup dispatch with "
+              "routing weights");
   TORCH_CHECK(hidden.size(0) == ids.size(0) && hidden.size(1) == r->b.hidden,
               "Hidden/routing shape mismatch");
   TORCH_CHECK(
@@ -1496,7 +1588,7 @@ static torch::Tensor read_timing(std::shared_ptr<RemoteBuffers> r) {
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<OwnedBuffers, std::shared_ptr<OwnedBuffers>>(m, "OwnedBuffers")
       .def(py::init<int, int, int, int, int, int, std::vector<int>,
-                    std::vector<int>, int>())
+                    std::vector<int>, int, bool, int, int>())
       .def("descriptor", &OwnedBuffers::descriptor);
   py::class_<RemoteBuffers, std::shared_ptr<RemoteBuffers>>(m, "RemoteBuffers")
       .def(py::init<py::dict, int, int>())
@@ -1513,7 +1605,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            py::call_guard<py::gil_scoped_release>());
   py::class_<RemoteGroup, std::shared_ptr<RemoteGroup>>(m, "RemoteGroup")
       .def(py::init<std::vector<std::shared_ptr<RemoteBuffers>>>())
-      .def("dispatch", &RemoteGroup::dispatch)
+      .def("dispatch", &RemoteGroup::dispatch, py::arg("hidden"),
+           py::arg("ids"), py::arg("rows"), py::arg("layer"), py::arg("phase"),
+           py::arg("weights") = py::none(), py::arg("publish") = true)
       .def("combine", &RemoteGroup::combine);
   m.def("dispatch", &dispatch);
   m.def("read_timing", &read_timing);

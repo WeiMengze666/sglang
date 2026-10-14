@@ -250,6 +250,7 @@ def estimate_memory(
         capacities=capacities,
         packed=packed,
         top_k=model.top_k,
+        prefill_preprocess=config.prefill_preprocess,
     )["total"]
     # Dispatch writes to peer final buffers and combine reads those buffers
     # directly. Only hidden/output and routing tensors are local to attention;

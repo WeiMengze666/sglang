@@ -179,7 +179,8 @@ __device__ __forceinline__ int tile_rows(int phase, int stage) {
 }
 
 __device__ __forceinline__ bool active_stage(int stage) {
-  return stage == GATE || stage == ACTIVATE || stage == DOWN;
+  return stage == GATE || stage == ACTIVATE || stage == DOWN ||
+         stage >= SCATTER1;
 }
 template <bool Fused>
 __device__ __forceinline__ int operation_columns(const DeviceBuffers &b,
@@ -189,10 +190,15 @@ __device__ __forceinline__ int operation_columns(const DeviceBuffers &b,
 }
 __device__ __forceinline__ unsigned operation_tiles(const SlotState *state,
                                                     int stage) {
-  return stage == GATE       ? state->gate_tiles
+  return stage == SCATTER1   ? state->scatter1_tiles
+         : stage == SCATTER2 ? state->scatter2_tiles
+         : stage == GATHER   ? state->gather_tiles
+         : stage == GATE     ? state->gate_tiles
          : stage == ACTIVATE ? state->activation_tiles
                              : state->down_tiles;
 }
+
+#include "preprocessing.cuh"
 
 template <int Cluster, bool Fused>
 __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
@@ -213,6 +219,27 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
     set_error(c, BAD_LAYER);
   if (s->phase < 0 || s->phase > 1)
     set_error(c, BAD_PHASE);
+  if (b.prefill_preprocess && b.packed[slot]) {
+    const int n = uncached_load_int(b.raw_n + slot);
+    if (n < 0 || n > b.capacity[slot])
+      set_error(c, ROW_OVERFLOW);
+    if (s->phase != 0)
+      set_error(c, BAD_PHASE);
+    if (system_load(c + ERROR) || n == 0) {
+      queue_store(&s->queue, queue_value(epoch, IDLE));
+      c[FINISH_NS] = now_ns();
+      system_store(c + DONE, epoch);
+      return;
+    }
+    s->scatter1_tiles = (n * b.top_k + 256 * Cluster - 1) / (256 * Cluster);
+    s->scatter2_tiles = (n * b.top_k + 32 * Cluster - 1) / (32 * Cluster);
+    s->gather_tiles = (n + 4 * Cluster - 1) / (4 * Cluster);
+    s->completed = 0;
+    __threadfence();
+    reset_queues(context, slot, epoch, SCATTER1);
+    queue_store(&s->queue, queue_value(epoch, SCATTER1));
+    return;
+  }
   const int tile_m = s->phase == 0 ? M : DecodeM;
   U64 rows = 0, activation_rows = 0;
   for (int e = 0; e < b.experts; ++e) {
@@ -312,6 +339,8 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
       for (int attempt = 0; attempt < 4; ++attempt) {
         index = static_cast<unsigned>(ticket);
         if ((ticket & ~static_cast<U64>(UINT_MAX)) != generation ||
+            (queue_load(&state->queue) & ~static_cast<U64>(UINT_MAX)) !=
+                generation ||
             index >= total)
           break;
         if (cuda::atomic_ref<U64, cuda::thread_scope_device>(head)
@@ -323,8 +352,21 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
         }
       }
     }
-    if (!reserved)
+    if (!reserved ||
+        (queue_load(&state->queue) & ~static_cast<U64>(UINT_MAX)) != generation)
       continue;
+    if (data_stage(stage)) {
+      task = {slot,
+              stage,
+              state->layer,
+              0,
+              static_cast<int>(index) * data_tile_rows(stage) * Cluster,
+              0,
+              uncached_load_int(b.raw_n + slot),
+              phase,
+              q >> 35};
+      return true;
+    }
     const int tile_m = tile_rows(phase, stage);
     const int tile_n =
         (operation_columns<Fused>(b, stage) + N * Cluster - 1) / (N * Cluster);
@@ -478,7 +520,10 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         s.decision_full[index].wait(parity);
         task = s.decision[index];
       }
-      task.column += rank * N;
+      if (data_stage(task.stage))
+        task.row += rank * data_tile_rows(task.stage);
+      else
+        task.column += rank * N;
       if (task.slot >= 0 && context.trace &&
           sequence < context.trace_capacity) {
         auto &record = context.trace[static_cast<size_t>(blockIdx.x) *
@@ -500,7 +545,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         break;
       previous_phase = task.phase;
       cursor = (task.slot + 1) % b.slots;
-      if (task.stage == ACTIVATE)
+      if (task.stage == ACTIVATE || data_stage(task.stage))
         continue;
       const auto &maps = context.maps[task.slot];
       const auto &weights = context.weights[0];
@@ -579,7 +624,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         break;
       s.accum_empty[index].wait(parity ^ 1);
       deep_gemm::ptx::tcgen05_after_thread_sync();
-      if (task.stage == ACTIVATE) {
+      if (task.stage == ACTIVATE || data_stage(task.stage)) {
         if (lane == 0)
           for (int member = 0; member < Cluster; ++member)
             s.accum_full[index].arrive(member, true);
@@ -645,7 +690,9 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       const int map_row =
           task.row + static_cast<int>(expert_base(b, task.slot, task.expert) -
                                       b.base_rows[task.slot]);
-      if (task.stage == ACTIVATE) {
+      if (data_stage(task.stage)) {
+        process_data_tile<Hidden>(b, task, local_row);
+      } else if (task.stage == ACTIVATE) {
         const size_t base = expert_base(b, task.slot, task.expert);
         const int column = task.column + local_row;
         if (column < intermediate) {
@@ -741,7 +788,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         }
       }
       deep_gemm::ptx::tcgen05_before_thread_sync();
-      if (Fused || task.stage == ACTIVATE)
+      if (Fused || task.stage == ACTIVATE || data_stage(task.stage))
         s.accum_empty[index].arrive(0u);
       // Retire every store before publishing completion or reusing its SMEM.
       if (local_row == 0) {
@@ -753,18 +800,32 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       }
       cutlass::arch::NamedBarrier::sync(M, 0);
       if (local_row == 0) {
-        if (context.trace && sequence < context.trace_capacity)
-          context
-              .trace[static_cast<size_t>(blockIdx.x) * context.trace_capacity +
-                     sequence]
-              .finish_ns = now_ns();
         auto *state = b.states + task.slot;
         unsigned total = operation_tiles(state, task.stage);
         if (atomicAdd(&state->completed, 1U) == total * Cluster - 1) {
           state->completed = 0;
           __threadfence();
-          if (task.stage != DOWN && context.benchmark_stage == 0) {
-            Stage next = gate && !Fused ? ACTIVATE : DOWN;
+          Stage next = IDLE;
+          if (b.prefill_preprocess && b.packed[task.slot]) {
+            if (task.stage == SCATTER1) {
+              build_row_tiles<Cluster, Fused>(b, task.slot, context);
+              next = SCATTER2;
+            } else if (task.stage == SCATTER2) {
+              next = state->gate_tiles ? GATE : GATHER;
+            } else if (task.stage == GATE)
+              next = ACTIVATE;
+            else if (task.stage == ACTIVATE)
+              next = DOWN;
+            else if (task.stage == DOWN)
+              next = GATHER;
+
+          } else if (task.stage != DOWN && context.benchmark_stage == 0) {
+            next = gate && !Fused ? ACTIVATE : DOWN;
+          }
+          if (system_load(b.control + task.slot * kControlWords + ERROR))
+            next = IDLE;
+          if (next != IDLE) {
+            __threadfence();
             reset_queues(context, task.slot, task.epoch, next);
             queue_store(&state->queue, queue_value(task.epoch, next));
           } else {
@@ -778,6 +839,11 @@ __global__ __launch_bounds__(Threads, 1) void executor(
                          task.epoch);
           }
         }
+        if (context.trace && sequence < context.trace_capacity)
+          context
+              .trace[static_cast<size_t>(blockIdx.x) * context.trace_capacity +
+                     sequence]
+              .finish_ns = now_ns();
       }
       cutlass::arch::NamedBarrier::sync(M, 0);
       s.task_empty[index].arrive();
