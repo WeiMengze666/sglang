@@ -96,6 +96,8 @@ def commands(node, args):
             command += ["--enable-two-batch-overlap"]
         if args.skip_tokenizer_init:
             command += ["--skip-tokenizer-init"]
+        if args.tokenizer_path:
+            command += ["--tokenizer-path", args.tokenizer_path]
         if args.cuda_graph:
             command += ["--cuda-graph-max-bs-decode", str(min(32, capacity))]
         servers.append((client, command))
@@ -172,6 +174,7 @@ def main():
     parser.add_argument(
         "--cuda-graph", action="store_true", help="Capture decode forward"
     )
+    parser.add_argument("--tokenizer-path", help="Optional separate tokenizer directory")
     parser.add_argument(
         "--skip-tokenizer-init",
         action="store_true",

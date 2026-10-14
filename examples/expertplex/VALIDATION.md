@@ -16,7 +16,7 @@ Dependencies were installed in an isolated workspace venv; the original conda en
 
 | Scope | Evidence / result |
 |---|---|
-| CPU adapter, ownership, SLO, config and planner contracts | 36 passed; syntax and CLI checks passed |
+| CPU adapter, ownership, SLO, config and planner contracts | 37 passed; syntax and CLI checks passed |
 | CUDA IPC / native atomics | All 56 ordered pairs passed |
 | Device-generated epochs / CUDA graph | 20 replays with changing inputs/routes passed |
 | Full 62-layer 480B expert residency, synthetic BF16 | Four experts and four attention clients passed; initial masked version used about 227.65 GiB/E |
@@ -143,3 +143,50 @@ geometry. Hardware counters remain unavailable. Green Context allocations
 were tested directly: requested 112/32, 96/48, and 80/64 returned those counts
 (144 total); requesting 116/32 instead returned 120/28. Baselines must use
 actual returned counts, not assume the requested partition was granted.
+
+## Baseline and sharing checkpoint, 19:59 UTC
+
+All four eight-GPU baseline layouts completed 24 requests × 128 generated
+tokens with concurrency 12 on the same deterministic tiny BF16 checkpoint:
+DP8/EP8 colocated, chunked prefill, PDD (two DP4/EP4 instances), and TP8/EP8
+PDMux. These are functional tests, not full-480B performance measurements.
+PDD needed disjoint derived control-port blocks. PDMux needed independent
+P/D DeepEP buffers, CPU-group descriptor bootstrap, correct MoE extend
+metadata, and split-prefill padding/postprocessing only at the appropriate
+layer boundaries. PDMux uses measured Green Context counts and passes those
+counts to DeepGEMM. Failed startup/generation attempts are retained.
+
+DeepEP initialization required explicitly selecting active InfiniBand HCAs;
+the tested list and NVSHMEM environment are in the baseline summaries. Setting
+the remote transport to `none` alone did not fix initialization. No shared
+DeepEP installation or machine-wide GPU setting was modified.
+
+The sharing harness now measures **individual GateUp/Down grouped GEMMs**,
+as required by §7.3. A control GPU publishes P8192/D128 ready signals 10 us
+apart, and CUDA stream memory waits avoid E-side polling CTAs. Exclusive,
+priority-stream and actual Green Context partitions have completed both
+operations. A separate-process, task-private MPS daemon completed GateUp at
+100:100, 75:25, 50:50 and 25:75 active-thread percentages; client PIDs were
+verified through the daemon. Completion-ack times are control-clock upper
+bounds. The earlier `sharing-native-01` measures whole MoE and is supplementary,
+not the paper's grouped-GEMM experiment. APK grouped-GEMM-only comparison and
+full Pareto/latency-protection acceptance remain pending.
+
+Tile-prefix lookup and 32 queue shards passed the eight-round Coder numerical,
+concurrency, graph and timeout suite. However, 32 shards measured P2048 expert
+time ~1.17 ms and D128 ~1.00 ms, slower than the preceding eight-shard prefix
+version (~1.08/~0.92 ms). This experiment is retained, not called a speedup.
+Nsight Systems also confirmed native D128 uses M=128, while the APK currently
+uses M=32 for D: that template mismatch is being corrected.
+
+ShareGPT and official LooGLE longdep_qa were downloaded at pinned revisions
+with SHA256 records. With the common PDD per-rank KV cap of 24576 tokens,
+only 339 LooGLE records have at least two input/output tokens and fit the cap.
+The attempted 1000-record preparation explicitly failed; the subsequent
+workload contains 256 distinct eligible records. Context/question formatting
+is documented in `prepare_workloads.py`, because the paper does not publish
+the exact preprocessing. This is not a claim of identical original workloads.
+
+Raw reports, failed baseline logs and provenance are under
+`results/b300-20261015/checkpoint-1959/`. No real-weight accuracy or 1.5×
+end-to-end goodput claim follows from this checkpoint.

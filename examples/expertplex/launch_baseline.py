@@ -93,7 +93,9 @@ def commands(args):
     servers = []
     for role, gpu, port in [
         ("prefill", 0, args.port + 1),
-        ("decode", 4, args.port + 2),
+        # DP attention derives a block of control ports from the HTTP port.
+        # Adjacent HTTP ports therefore collide even with distinct NCCL ports.
+        ("decode", 4, args.port + 101),
     ]:
         command = common + [
             "--base-gpu-id",
@@ -123,7 +125,7 @@ def commands(args):
         f"http://127.0.0.1:{args.port + 1}",
         str(args.bootstrap_port),
         "--decode",
-        f"http://127.0.0.1:{args.port + 2}",
+        f"http://127.0.0.1:{args.port + 101}",
     ]
     return servers + [("router", router, args.port)]
 

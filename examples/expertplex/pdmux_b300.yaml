@@ -1,0 +1,9 @@
+# B300 driver 580.178.04: these divisions returned the requested SM counts.
+# Four of the 148 SMs are not assigned to either concurrent Green Context.
+# This is a reproducible starting configuration, not a tuned Pareto optimum.
+sm_group_num: 5
+manual_divisions:
+  - [112, 32, 1]
+  - [96, 48, 8]
+  - [80, 64, 16]
+split_forward_token_budget: 512

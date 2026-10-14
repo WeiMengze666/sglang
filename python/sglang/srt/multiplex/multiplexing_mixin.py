@@ -53,6 +53,7 @@ class SchedulerMultiplexMixin:
             decode_bs = running_batch.batch_size()
             manual_divisions = self.pdmux_config.manual_divisions
             if manual_divisions:
+                stream_idx = 1
                 for i in range(len(manual_divisions)):
                     _, _, threshold = manual_divisions[i]
                     if decode_bs >= threshold:
@@ -92,6 +93,9 @@ class SchedulerMultiplexMixin:
             batch.forward_mode = (
                 ForwardMode.SPLIT_PREFILL
             )  # Set forward mode for split prefill
+            # The PDMux loop bypasses the ordinary batch-selection path. MoE
+            # still needs its phase and token metadata, including attn-DP=1.
+            batch = self.dp_attn_adapter.maybe_prepare_mlp_sync_batch(batch)
             self.split_prefill_batch = batch
             return True, running_batch
         return False, running_batch
@@ -127,6 +131,10 @@ class SchedulerMultiplexMixin:
 
             with torch.cuda.stream(decode_stream):
                 running_batch = self.update_running_batch(running_batch)
+                if running_batch and not running_batch.is_empty():
+                    running_batch = self.dp_attn_adapter.maybe_prepare_mlp_sync_batch(
+                        running_batch
+                    )
                 self.running_batch = running_batch
                 adjust_stream_group = adjust_stream_group or (
                     stream_idx > 0 and running_batch.is_empty()

@@ -128,16 +128,26 @@ def initialize_stream_groups(gpu_id: int, config: PDMuxConfig):
 
     SM_COUNTS = []
     SM_COUNTS.append((total_sm_count, 0))  # Normal stream for prefill
-    SM_COUNTS.extend(divisions)  # Add the divided SM counts
-    SM_COUNTS.append((0, total_sm_count))  # Normal stream for decode
     STREAM_GROUPS = []
     STREAM_GROUPS.append(
         (torch.cuda.Stream(gpu_id), torch.cuda.Stream(gpu_id))
     )  # Normal stream for prefill
     for prefill_sm, decode_sm in divisions:
-        STREAM_GROUPS.append(
-            (spatial.create_greenctx_stream_by_value(prefill_sm, decode_sm, gpu_id))
+        # The driver may round the requested partition (for example B300's
+        # 116/32 request can return 120/28). Kernels must use granted counts.
+        prefill_ptr, decode_ptr, actual_prefill, actual_decode = (
+            torch.ops.sgl_kernel.create_greenctx_stream_by_value(
+                prefill_sm, decode_sm, gpu_id
+            )
         )
+        SM_COUNTS.append((actual_prefill, actual_decode))
+        STREAM_GROUPS.append(
+            (
+                torch.cuda.ExternalStream(prefill_ptr, device=gpu_id),
+                torch.cuda.ExternalStream(decode_ptr, device=gpu_id),
+            )
+        )
+    SM_COUNTS.append((0, total_sm_count))  # Normal stream for decode
     STREAM_GROUPS.append(
         (torch.cuda.Stream(gpu_id), torch.cuda.Stream(gpu_id))
     )  # Normal stream for decode

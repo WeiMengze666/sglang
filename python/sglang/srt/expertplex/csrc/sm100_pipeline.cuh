@@ -70,7 +70,7 @@ struct TraceRecord {
   U64 begin_ns, finish_ns, ready_seen_ns, epoch;
   U64 sequence, slot, phase, stage;
 };
-constexpr int QueueShards = 8;
+constexpr int QueueShards = 32;
 struct alignas(128) QueueHead {
   U64 word;
 };
@@ -80,6 +80,7 @@ struct Context {
   Maps *maps;
   WeightMaps *weights;
   int *policy;
+  int *tile_prefix;
   QueueHead *queues;
 };
 
@@ -137,6 +138,8 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
   result.weights = static_cast<WeightMaps *>(
       owner.allocate(weights.size() * sizeof(WeightMaps)));
   result.policy = static_cast<int *>(owner.allocate(ctas * sizeof(int)));
+  result.tile_prefix =
+      static_cast<int *>(owner.allocate(b.slots * 2 * b.experts * sizeof(int)));
   result.queues = static_cast<QueueHead *>(
       owner.allocate(b.slots * QueueShards * sizeof(QueueHead)));
   C10_CUDA_CHECK(
@@ -211,6 +214,11 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
       rows += (count + tile_m - 1) / tile_m;
       activation_rows += (count + 31) / 32;
     }
+    // Build once at admission, rather than serially loading all expert counts
+    // on every tile claim. The operation queue's release publishes these
+    // cumulative row-tile counts together with its fixed generation.
+    context.tile_prefix[(slot * 2) * b.experts + e] = rows;
+    context.tile_prefix[(slot * 2 + 1) * b.experts + e] = activation_rows;
   }
   U64 gate = rows * ((operation_columns<Fused>(b, GATE) + N * Cluster - 1) /
                      (N * Cluster));
@@ -238,7 +246,7 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
 template <int Cluster, bool Fused>
 __device__ __forceinline__ void
 update_policy(const DeviceBuffers &b, Context context, int layers,
-              int decode_budget, float expected, int cap) {
+              int decode_budget, float expected, int cap, int &previous_budget) {
   for (int s = 0; s < b.slots; ++s)
     initialize<Cluster, Fused>(b, s, layers, context);
   U64 footprint = 0;
@@ -257,6 +265,12 @@ update_policy(const DeviceBuffers &b, Context context, int layers,
                                 expected))))
           : 0;
   budget = min(cap, (budget + Cluster - 1) / Cluster * Cluster);
+  // The device policy describes a phase preference, not a task generation.
+  // Re-publish only when that preference changes; readiness/operation queues
+  // are independently acquired on every check epoch.
+  if (budget == previous_budget)
+    return;
+  previous_budget = budget;
   for (int i = 0; i < gridDim.x / Cluster; ++i)
     cuda::atomic_ref<int, cuda::thread_scope_device>(context.policy[i])
         .store(i * Cluster < budget, cuda::memory_order_release);
@@ -299,24 +313,30 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
     const int tile_m = tile_rows(phase, stage);
     const int tile_n =
         (operation_columns<Fused>(b, stage) + N * Cluster - 1) / (N * Cluster);
-    for (int e = 0; e < b.experts; ++e) {
-      int rows = b.counts[static_cast<size_t>(slot) * b.experts + e];
-      unsigned count = ((rows + tile_m - 1) / tile_m) * tile_n;
-      if (index < count) {
-        task = {slot,
-                stage,
-                state->layer,
-                e,
-                static_cast<int>(index / tile_n) * tile_m,
-                static_cast<int>(index % tile_n) * N * Cluster,
-                rows,
-                phase,
-                q >> 35};
-        return true;
-      }
-      index -= count;
+    const unsigned row_tile = index / tile_n;
+    const int *prefix = context.tile_prefix +
+                        (slot * 2 + (stage == ACTIVATE)) * b.experts;
+    int lo = 0, hi = b.experts;
+    while (lo < hi) {
+      int mid = (lo + hi) / 2;
+      if (static_cast<unsigned>(prefix[mid]) <= row_tile)
+        lo = mid + 1;
+      else
+        hi = mid;
     }
-    asm volatile("trap;");
+    if (lo >= b.experts)
+      asm volatile("trap;");
+    const unsigned previous = lo ? prefix[lo - 1] : 0;
+    task = {slot,
+            stage,
+            state->layer,
+            lo,
+            static_cast<int>(row_tile - previous) * tile_m,
+            static_cast<int>(index % tile_n) * N * Cluster,
+            b.counts[static_cast<size_t>(slot) * b.experts + lo],
+            phase,
+            q >> 35};
+    return true;
   }
   return false;
 }
@@ -369,6 +389,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
   if (warp == 0 && lane == 0) {
     int cursor = blockIdx.x % b.slots;
     int previous_phase = -1;
+    int previous_budget = -1;
     for (uint32_t sequence = 0;; ++sequence) {
       const int index = sequence % OutputStages,
                 parity = (sequence / OutputStages) & 1;
@@ -389,7 +410,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
           }
           if (blockIdx.x == 0)
             update_policy<Cluster, Fused>(b, context, layers, decode_budget,
-                                          expected, cap);
+                                          expected, cap, previous_budget);
           int preferred = cuda::atomic_ref<int, cuda::thread_scope_device>(
                               context.policy[blockIdx.x / Cluster])
                               .load(cuda::memory_order_acquire);

@@ -1944,7 +1944,24 @@ class ModelRunner:
             # forward all run the live batch and need this first — it sets
             # global_dp_buffer_len / padded token counts that graph eligibility
             # and the collectives depend on.
-            self._prepare_eager_forward_batch(forward_batch)
+            if (
+                forward_batch.forward_mode.is_split_prefill()
+                and forward_batch.split_index > 0
+            ):
+                # A split prefill keeps its padded tensors until the final
+                # layer. Decode may have changed the process-local MoE context
+                # between slices, so restore that context without padding the
+                # same batch again (which loses its original token count).
+                from sglang.srt.layers.dp_attention import (
+                    set_dp_buffer_len_from_batch,
+                    set_is_extend_in_batch,
+                )
+
+                if forward_batch.global_num_tokens_cpu is not None:
+                    set_dp_buffer_len_from_batch(forward_batch)
+                    set_is_extend_in_batch(forward_batch.is_extend_in_batch)
+            else:
+                self._prepare_eager_forward_batch(forward_batch)
 
             # Deferred mamba COW/clear on the forward stream, before the extend
             # dispatch below reads the pool.
@@ -1995,6 +2012,7 @@ class ModelRunner:
             if (
                 forward_batch.global_num_tokens_cpu is not None
                 and self.pp_group.is_last_rank
+                and ret is not None
             ):
                 forward_batch.post_forward_mlp_sync_batch(ret)
 

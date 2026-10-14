@@ -55,6 +55,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:31000")
     parser.add_argument("--model-path", required=True)
+    parser.add_argument("--tokenizer-path")
+    parser.add_argument(
+        "--weight-mode",
+        choices=("checkpoint", "synthetic", "unspecified"),
+        default="unspecified",
+    )
+    parser.add_argument("--sequence-cap", type=int, default=8192)
+    parser.add_argument(
+        "--token-id-prompts",
+        action="store_true",
+        help="Random dataset only; permits skip-tokenizer-init servers",
+    )
     parser.add_argument("--label", required=True)
     parser.add_argument("--rates", type=float, nargs="+", required=True)
     parser.add_argument("--ttft-slo-ms", type=float, required=True)
@@ -78,6 +90,17 @@ def main():
         parser.error("SLOs must be positive")
     if args.dataset_name != "random" and not args.dataset_path:
         parser.error("A local dataset path is required for ShareGPT/custom runs")
+    if args.sequence_cap < 3:
+        parser.error("Sequence cap must permit both prompt and output")
+    if (
+        args.dataset_name == "random"
+        and args.input_len + args.output_len > args.sequence_cap
+    ):
+        parser.error("Random input+output exceeds the common sequence cap")
+    if args.token_id_prompts and args.dataset_name != "random":
+        parser.error(
+            "The pinned SGLang ShareGPT/custom loader does not support token-ID prompts"
+        )
     output = Path(args.output_dir)
     results = []
     for index, rate in enumerate(sorted(set(args.rates))):
@@ -107,11 +130,18 @@ def main():
             "--seed",
             str(args.seed),
             "--output-details",
+            "--flush-cache",
             "--output-file",
             str(path),
         ]
         if args.dataset_path:
             command += ["--dataset-path", args.dataset_path]
+        if args.tokenizer_path:
+            command += ["--tokenizer", args.tokenizer_path]
+        if args.dataset_name != "random":
+            command += ["--sharegpt-context-len", str(args.sequence_cap)]
+        if args.token_id_prompts:
+            command += ["--tokenize-prompt"]
         print(shlex.join(command), flush=True)
         if args.dry_run:
             continue
@@ -126,9 +156,10 @@ def main():
             raise ValueError(
                 "Expected exactly one detailed benchmark record per arrival rate"
             )
-        measured = joint_slo(
-            json.loads(lines[0]), args.ttft_slo_ms / 1000, args.tpot_slo_ms / 1000
-        )
+        detailed = json.loads(lines[0])
+        if len(detailed["successes"]) != args.num_prompts:
+            raise ValueError("Dataset did not supply the requested number of requests")
+        measured = joint_slo(detailed, args.ttft_slo_ms / 1000, args.tpot_slo_ms / 1000)
         measured["details_file"] = str(path.resolve())
         results.append(measured)
     if args.dry_run:
@@ -137,6 +168,12 @@ def main():
     report = {
         "label": args.label,
         "model_path": args.model_path,
+        "tokenizer_path": args.tokenizer_path,
+        "weight_mode": args.weight_mode,
+        "sequence_cap": args.sequence_cap,
+        "dataset": args.dataset_name,
+        "dataset_path": args.dataset_path,
+        "seed": args.seed,
         "ttft_slo_ms": args.ttft_slo_ms,
         "tpot_slo_ms": args.tpot_slo_ms,
         "p90_goodput_max_tested_arrival_rps": max(feasible, default=None),
