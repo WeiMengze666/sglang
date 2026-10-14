@@ -96,6 +96,18 @@ NUMERIC_KEYS = {
     "fresh_owner_allocation",
     "native_reference",
     "slowdown_vs_full_gpu_isolated",
+    "history_tokens",
+    "common_scored_tokens",
+    "reference_mass_on_common_tokens",
+    "candidate_mass_on_common_tokens",
+    "max_abs_logprob_difference",
+    "rms_logprob_difference",
+    "total_variation_lower_bound",
+    "kl_reference_to_candidate",
+    "reference_top1_margin",
+    "top1_equal",
+    "flush_between_histories",
+    "requested_top_k",
 }
 CONTAINERS = {
     "settings",
@@ -113,6 +125,7 @@ CONTAINERS = {
     "timeout",
     "tolerances",
     "native_reference",
+    "comparisons",
 }
 ENUMS = {
     "status": {"passed", "failed", "running", "completed", "incomplete", "ready"},

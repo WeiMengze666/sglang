@@ -15,11 +15,14 @@ def main():
     sharing.add_argument("--mps", required=True, type=Path)
     intervals = sub.add_parser("intervals")
     intervals.add_argument("--input", required=True, type=Path)
+    ablation = sub.add_parser("interval-ablation")
+    ablation.add_argument("--input", required=True, type=Path)
+    ablation.add_argument("--reference", required=True, type=Path)
     overhead = sub.add_parser("overhead")
     overhead.add_argument("--input", required=True, type=Path)
     communication = sub.add_parser("communication")
     communication.add_argument("--inputs", required=True, type=Path, nargs="+")
-    for parser in (sharing, intervals, overhead, communication):
+    for parser in (sharing, intervals, ablation, overhead, communication):
         parser.add_argument("--output-dir", required=True, type=Path)
     args = p.parse_args()
     import matplotlib
@@ -118,6 +121,71 @@ def main():
                 }
                 for m, v, policy in points
             ],
+        }
+    elif args.kind == "interval-ablation":
+        before, after = [
+            json.loads(path.read_text()) for path in (args.reference, args.input)
+        ]
+        for report in (before, after):
+            if report["status"] != "passed":
+                raise ValueError("Both interval experiments must pass")
+        for field in ("expert_rows", "iterations", "delay_us"):
+            if before["settings"][field] != after["settings"][field]:
+                raise ValueError(f"Interval workload mismatch: {field}")
+        for field in (
+            "hidden",
+            "intermediate",
+            "ctas",
+            "cluster_size",
+            "pipelined_stores",
+            "prefill_tile_rows",
+            "decode_tile_rows",
+            "prefill_preprocess",
+        ):
+            if before["executor"][field] != after["executor"][field]:
+                raise ValueError(f"Interval executor mismatch: {field}")
+
+        def keys(report):
+            return {(v["operation"], v["expert_rows"]) for v in report["intervals"]}
+
+        if keys(before) != keys(after):
+            raise ValueError("Interval operation/size grids differ")
+        operations = list(dict.fromkeys(r["operation"] for r in after["intervals"]))
+        if len(operations) != 6:
+            raise ValueError("Expected all six persistent operations")
+        fig, axes = plt.subplots(2, 3, figsize=(11, 6), layout="constrained")
+        for ax, operation in zip(axes.flat, operations):
+            for report, label, color in (
+                (before, "Before prefetch", "#777777"),
+                (after, "After prefetch", "#1864ab"),
+            ):
+                series = sorted(
+                    (r for r in report["intervals"] if r["operation"] == operation),
+                    key=lambda r: r["expert_rows"],
+                )
+                x = [r["expert_rows"] for r in series]
+                y = [r["median_us"] for r in series]
+                ax.plot(x, y, "o-", color=color, label=label, markersize=3)
+                ax.fill_between(
+                    x, y, [r["max_us"] for r in series], color=color, alpha=0.15
+                )
+            ax.set_title(operation)
+            ax.set_xscale("log", base=2)
+            ax.set_xlabel("Prefill rows per expert")
+            ax.set_ylabel("Interval (µs)")
+            ax.grid(alpha=0.2)
+        axes[0, 0].legend(fontsize=8)
+        fig.suptitle(
+            "B300 BF16 data-load prefetch ablation | same tiles, pipelined stores enabled\n"
+            "Lines: median; shading: median to observed maximum, not confidence intervals\n"
+            "Producer handoff→store retirement includes pipeline waits; excludes A→E propagation",
+            fontsize=10,
+        )
+        data = {
+            "sources_sha256": provenance,
+            "before": before["intervals"],
+            "after": after["intervals"],
+            "scope": after["scope"],
         }
     elif args.kind == "intervals":
         report = json.loads(args.input.read_text())

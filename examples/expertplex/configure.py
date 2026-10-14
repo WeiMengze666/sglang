@@ -18,6 +18,9 @@ def main():
     parser.add_argument("--experts", type=int, default=4)
     parser.add_argument("--max-prefill-tokens", type=int, default=2048)
     parser.add_argument("--max-decode-tokens", type=int, default=256)
+    parser.add_argument("--decode-sm-budget", type=int, default=32)
+    parser.add_argument("--expected-decode-tiles", type=int, default=128)
+    parser.add_argument("--max-decode-sm-fraction", type=float, default=0.75)
     parser.add_argument("--rendezvous-dir", required=True)
     parser.add_argument("--overlap", choices=("none", "tbo"), default="none")
     parser.add_argument(
@@ -56,6 +59,9 @@ def main():
         expert_devices=tuple(range(attention, 8)),
         max_prefill_tokens=args.max_prefill_tokens,
         max_decode_tokens=args.max_decode_tokens,
+        decode_sm_budget=args.decode_sm_budget,
+        expected_decode_tiles=args.expected_decode_tiles,
+        max_decode_sm_fraction=args.max_decode_sm_fraction,
         rendezvous_dir=str(Path(args.rendezvous_dir).expanduser().resolve()),
         weight_mode="synthetic" if args.synthetic_weights else "checkpoint",
         overlap=args.overlap,

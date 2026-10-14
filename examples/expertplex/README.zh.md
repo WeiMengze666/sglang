@@ -220,15 +220,17 @@ python examples/expertplex/check_e2e.py \
 的比例，失败请求保留在分母中。分别比较两个 P90 百分位不等价于联合 90% attainment。
 报告最高**已测试**且联合 attainment≥90% 的 offered rate，以及观测 SLO goodput。
 
-以下 SLO 仅为 480B 初始实验参数，**并非论文 MiniMax/GLM 的同模型复现 SLO**：
+本次 ShareGPT 对比在测量前固定 TTFT=1s、TPOT=50ms；LooGLE 固定为 10s/100ms。
+这沿用论文的阈值，但模型和 BF16/B300 平台已经改变，仍须标为适配实验。
+所有方法都使用过滤后的同一数据文件，不能在看到结果后调整阈值：
 
 ```bash
 python examples/expertplex/bench_sweep.py \
   --model-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
   --label expertplex-coder480b-1p3d4e \
-  --rates 0.25 0.5 1 2 --num-prompts 1000 \
-  --input-len 1024 --output-len 256 \
-  --ttft-slo-ms 2000 --tpot-slo-ms 100 \
+  --rates 0.75 1 1.25 1.5 --num-prompts 256 \
+  --dataset-name custom --dataset-path /path/to/sharegpt-holdout-256.jsonl \
+  --ttft-slo-ms 1000 --tpot-slo-ms 50 \
   --output-dir /tmp/expertplex-goodput-seed42
 ```
 
@@ -277,7 +279,10 @@ profile 搜索结果要在 B300 上用同配置的端到端 sweep 重新验收�
 共置基线 61/64，ExpertPlex 45/64。**审计发现这些早期布局使用不同的随机初始化方式，
 只能作为诊断，不能作为速度比验收。** 当前没有达到 1.5×；保留全部原始结果。
 新增 `--canonical-synthetic-seed 1234` 在完整 HF 张量上统一初始化，再由正常 loader 分片；
-E worker 使用相同的全局专家名称。公平对照的新曲线正在采集，仍不代替真实模型结果。
+E worker 使用相同的全局专家名称。公平对照的 64 请求 pilot 已完成四个基线：
+1 req/s 时共置 54/64、Chunk2048 27/64、PDD 58/64、PDMux 初始预算 12/64、
+ExpertPlex 61/64。PDD 和 ExpertPlex 都通过同一已测到达率，不能据此声称 1.5×。
+PDMux 推进预算及更多边界点仍在调优，这些 pilot 不代替真实权重或独立留出集验收。
 这一服务测试配置使用 P24576 / D256、双 mailbox，实际固定 buffer 估算为 **17.291 GiB/E**，
 不能套用上方 P2048 单 mailbox 的容量数字。
 
@@ -294,6 +299,42 @@ logprob；top-k 子集不能当作完整词表的 TV/KL。所有脚本的输出�
 ### 存储流水线诊断
 
 `SGLANG_EXPERTPLEX_PIPELINED_STORES=1` 可启用 SM100 的延迟 store 退休实验。
-当前已通过多客户端、双 prefill、变化路由和图重放回归，但配对微基准比默认路径更慢，
-因此默认关闭，不作为已达成论文低开销目标的证据。`VALIDATION.md` 保留失败、修复和 A/B 结果。
+当前已通过多客户端、双 prefill、变化路由和图重放回归。分离 Task 元数据复用与 store
+退休后，原先明显的性能回退缩小到配对汇总约 0.73%；后续测试显式开启该选项，以保留
+原生 store pipeline。它仍不能作为已达成论文低开销目标的证据。
+`VALIDATION.md` 保留失败、修复和 A/B 结果。
 组件图由 `plot_components.py` 根据实际 JSON 数据绘制，并拒绝混用不同初始化算法或专家负载。
+
+### 全尺寸实验参数
+
+下面复原后期 1P3D4E 的容量和调度参数。q=96、期望 footprint=8 是被测配置，
+不表示完整跨栈优化器已求得全局最优。真实权重模式要求模型先完成下载；若使用
+`--synthetic-weights`，服务运行也必须选择 synthetic 并设置相同 canonical seed。
+
+```bash
+python examples/expertplex/configure.py \
+  --model-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
+  --prefill 1 --decode 3 --experts 4 --overlap tbo \
+  --max-prefill-tokens 24576 --max-decode-tokens 256 \
+  --decode-sm-budget 96 --expected-decode-tiles 8 \
+  --rendezvous-dir /tmp/expertplex-full480b \
+  --output /tmp/expertplex-full480b.json
+
+SGLANG_EXPERTPLEX_PIPELINED_STORES=1 \
+python examples/expertplex/run_serving_experiment.py \
+  --variant expertplex --config /tmp/expertplex-full480b.json \
+  --model-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
+  --tokenizer-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
+  --weight-mode checkpoint \
+  --dataset-path /path/to/sharegpt-holdout-256.jsonl \
+  --requests 256 --rates 0.75 1 1.25 1.5 \
+  --sequence-cap 24576 --decode-kv-tokens 196608 \
+  --ttft-slo-ms 1000 --tpot-slo-ms 50 \
+  --output-dir /tmp/expertplex-full480b-evaluation
+```
+
+`decode-kv-tokens` 是全部 D attention 的总容量。共置 DP8 分配为每 rank 24576；
+ExpertPlex 的 3D 分配为每 rank 65536。早期总量 98304 的 DP8 只有每 rank 12288，
+只覆盖已经完成的短请求 pilot；不能直接用于接近 24576 上限的长请求。
+`run_serving_experiment.py` 会复制 node/PDMux 配置到本次输出目录，并记录其哈希；
+后续调参不会覆盖该次实验的配置。

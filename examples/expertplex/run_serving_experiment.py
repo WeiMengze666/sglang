@@ -81,6 +81,13 @@ def main():
             args.canonical_synthetic_seed
         )
     args.output_dir.mkdir(parents=True, exist_ok=False)
+    # Freeze tuning inputs before launch. A later experiment may select another
+    # node/Green Context policy at the same source path.
+    for field, filename in (("config", "node.json"), ("pdmux_config", "pdmux.yaml")):
+        if original := getattr(args, field):
+            snapshot = args.output_dir.resolve() / filename
+            snapshot.write_bytes(Path(original).read_bytes())
+            setattr(args, field, str(snapshot))
     scripts = Path(__file__).resolve().parent
     common = [
         "--port",
@@ -197,7 +204,7 @@ def main():
     source_hashes = {
         str(p.relative_to(repo)): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in source_paths
-        if p.is_file()
+        if p.is_file() and not p.name.startswith(".")
     }
     hardware = subprocess.run(
         [
@@ -216,6 +223,8 @@ def main():
                 Path(args.dataset_path),
                 Path(args.model_path) / "config.json",
                 Path(args.tokenizer_path) / "tokenizer.json",
+                *([Path(args.config)] if args.config else []),
+                *([Path(args.pdmux_config)] if args.pdmux_config else []),
             )
             if path.is_file()
         },

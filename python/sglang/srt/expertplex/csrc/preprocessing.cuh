@@ -92,9 +92,23 @@ process_data_tile(const DeviceBuffers &b, const Task &task, int thread) {
       const U64 src = __shfl_sync(0xffffffff, source, i);
       if (dst == ~0ULL)
         continue;
-      for (int h = thread; h < hidden / 8; h += 128)
-        reinterpret_cast<uint4 *>(b.input + dst)[h] =
-            load_vector_cg(b.raw_input + src + h * 8);
+      if constexpr (Hidden > 0 && Hidden % 1024 == 0) {
+        // Fixed native route tile: overlap independent H-vector loads before
+        // consuming them. Tile geometry and dispatch order are unchanged.
+        uint4 values[Hidden / 1024];
+#pragma unroll
+        for (int segment = 0; segment < Hidden / 1024; ++segment)
+          values[segment] =
+              load_vector_cg(b.raw_input + src + (thread + segment * 128) * 8);
+#pragma unroll
+        for (int segment = 0; segment < Hidden / 1024; ++segment)
+          reinterpret_cast<uint4 *>(b.input + dst)[thread + segment * 128] =
+              values[segment];
+      } else {
+        for (int h = thread; h < hidden / 8; h += 128)
+          reinterpret_cast<uint4 *>(b.input + dst)[h] =
+              load_vector_cg(b.raw_input + src + h * 8);
+      }
     }
   } else {
     for (int i = 0; i < 4; ++i) {
@@ -118,40 +132,70 @@ process_data_tile(const DeviceBuffers &b, const Task &task, int thread) {
       for (int offset = 0; offset < hidden; offset += 128 * 8) {
         const int h = offset + thread * 8;
         float sum[8] = {};
-        for (int j = 0; j < k; ++j) {
-          U64 source;
-          float weight;
-          if (k <= 32) {
-            source = __shfl_sync(0xffffffff, cached_source, j);
-            weight = __shfl_sync(0xffffffff, cached_weight, j);
-            if (source == ~0ULL)
-              continue;
-            source += h;
-          } else {
-            const size_t index = (raw_base + token) * k + j;
-            const int row = uncached_load_int(b.raw_map + index);
-            if (row < 0 || row >= b.capacity[slot])
-              continue;
-            const int id = uncached_load_int(b.raw_ids + index);
-            weight = __int_as_float(uncached_load_int(
-                reinterpret_cast<const int *>(b.raw_weights + index)));
-            source =
-                (expert_base(b, slot, id / b.expert_world) + row) * hidden + h;
-          }
-          if (h >= hidden)
-            continue;
-          const uint4 vector = load_vector_cg(b.output + source);
-          const uint32_t words[4] = {vector.x, vector.y, vector.z, vector.w};
+        if (k == 8) {
+          // Coder top-8: issue independent route loads before weighted sums.
+          // Accumulation remains route-ordered FP32, with one BF16 rounding
+          // at the native EP gather boundary below.
+          uint4 vectors[8];
+          float weights[8];
 #pragma unroll
-          for (int pair = 0; pair < 4; ++pair) {
-            sum[pair * 2] +=
-                weight *
-                __bfloat162float(__ushort_as_bfloat16(words[pair] & 65535));
-            sum[pair * 2 + 1] +=
-                weight *
-                __bfloat162float(__ushort_as_bfloat16(words[pair] >> 16));
+          for (int j = 0; j < 8; ++j) {
+            const U64 source = __shfl_sync(0xffffffff, cached_source, j);
+            weights[j] = __shfl_sync(0xffffffff, cached_weight, j);
+            vectors[j] = source != ~0ULL && h < hidden
+                             ? load_vector_cg(b.output + source + h)
+                             : uint4{0, 0, 0, 0};
           }
-        }
+#pragma unroll
+          for (int j = 0; j < 8; ++j) {
+            const uint32_t words[4] = {vectors[j].x, vectors[j].y, vectors[j].z,
+                                       vectors[j].w};
+#pragma unroll
+            for (int pair = 0; pair < 4; ++pair) {
+              sum[pair * 2] +=
+                  weights[j] *
+                  __bfloat162float(__ushort_as_bfloat16(words[pair] & 65535));
+              sum[pair * 2 + 1] +=
+                  weights[j] *
+                  __bfloat162float(__ushort_as_bfloat16(words[pair] >> 16));
+            }
+          }
+        } else
+          for (int j = 0; j < k; ++j) {
+            U64 source;
+            float weight;
+            if (k <= 32) {
+              source = __shfl_sync(0xffffffff, cached_source, j);
+              weight = __shfl_sync(0xffffffff, cached_weight, j);
+              if (source == ~0ULL)
+                continue;
+              source += h;
+            } else {
+              const size_t index = (raw_base + token) * k + j;
+              const int row = uncached_load_int(b.raw_map + index);
+              if (row < 0 || row >= b.capacity[slot])
+                continue;
+              const int id = uncached_load_int(b.raw_ids + index);
+              weight = __int_as_float(uncached_load_int(
+                  reinterpret_cast<const int *>(b.raw_weights + index)));
+              source =
+                  (expert_base(b, slot, id / b.expert_world) + row) * hidden +
+                  h;
+            }
+            if (h >= hidden)
+              continue;
+            const uint4 vector = load_vector_cg(b.output + source);
+            const uint32_t words[4] = {vector.x, vector.y, vector.z, vector.w};
+#pragma unroll
+            for (int pair = 0; pair < 4; ++pair) {
+              sum[pair * 2] +=
+                  weight *
+                  __bfloat162float(__ushort_as_bfloat16(words[pair] & 65535));
+              sum[pair * 2 + 1] +=
+                  weight *
+                  __bfloat162float(__ushort_as_bfloat16(words[pair] >> 16));
+            }
+          }
         if (h >= hidden)
           continue;
         // Native normal-mode EP gather materializes BF16 before combine.

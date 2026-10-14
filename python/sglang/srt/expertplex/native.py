@@ -19,7 +19,7 @@ def source_fingerprint() -> str:
     root = Path(__file__).parent
     digest = hashlib.sha256()
     for path in (root / "native.py", *sorted((root / "csrc").glob("*"))):
-        if path.is_file():
+        if path.is_file() and not path.name.startswith("."):
             digest.update(path.name.encode() + b"\0" + path.read_bytes())
     return digest.hexdigest()
 

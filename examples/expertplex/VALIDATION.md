@@ -436,3 +436,22 @@ rate. Joint attainment was 19/64 at 0.5 req/s, 12/64 at 1 req/s, 5/64 at 1.5,
 and 3/64 at 2. Its TTFT fails the fixed 1-second target. Checkpoint-2235 adds
 this baseline to the canonical comparison and publishes filtered numerical
 evidence for the ring tests. No 1.5x goodput claim is supported by these pilots.
+
+## Independent data-vector prefetch, 22:48 UTC
+
+Scatter2 now issues the fixed H-vector loads before consuming them; top-8
+Gather loads independent route vectors before route-ordered FP32 accumulation.
+Route/token tile shapes, native GEMM geometry, and the BF16 gather rounding
+boundary are unchanged. The eight-round native-reference suite, four-E/two-P
+suite, and P257 four-client 30-round/20-graph replay suite pass.
+
+With pipelined stores enabled on both sides, the 2048-rows/expert diagnostic
+median decreases from 152.288 to 46.528 us for Scatter2 and from 336.256 to
+138.944 us for Gather. Maximum observed intervals remain 57.44 and 148.416 us.
+These are measured handoff-to-retirement intervals, including waits; they are
+neither full preemption bounds nor end-to-end throughput ratios. Registers
+increase from 104 to 111 per thread, with zero reported local-memory bytes.
+Paired GateUp/Down response ratios are 1.00170/0.99815, so the candidate was
+retained. Checkpoint-2248 includes a matched-policy interval ablation and
+filtered numerical results. The paper's low-overhead/preemption targets remain
+unmet; full serving and cached-history regression continue.
