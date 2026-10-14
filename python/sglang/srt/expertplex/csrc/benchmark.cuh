@@ -1,0 +1,120 @@
+// Diagnostic-only access to prebuilt operation buffers. Production clients use
+// the IPC dispatch/combine protocol above and never call these entrypoints.
+#pragma once
+
+// Communication-only fixture: copy the dispatched inputs to final output
+// buffers between (never inside) the dispatch/combine timed regions. There is
+// no persistent executor or receiver polling kernel during either transfer.
+__global__ void benchmark_echo_done(DeviceBuffers b) {
+  int slot = threadIdx.x;
+  if (slot < b.slots) {
+    auto *c = b.control + slot * kControlWords;
+    __threadfence_system();
+    system_store(c + DONE, system_load(c + READY));
+  }
+}
+static void benchmark_echo(std::shared_ptr<OwnedBuffers> owner) {
+  TORCH_CHECK(!owner->started, "Communication echo cannot run beside an executor");
+  c10::cuda::CUDAGuard guard(owner->device);
+  auto stream = at::cuda::getCurrentCUDAStream(owner->device);
+  auto b = owner->b;
+  size_t rows = b.base_rows[b.slots - 1] + b.storage_rows[b.slots - 1];
+  C10_CUDA_CHECK(cudaMemcpyAsync(b.output, b.input, rows * b.hidden * sizeof(BF16),
+                                 cudaMemcpyDeviceToDevice, stream));
+  benchmark_echo_done<<<1, 32, 0, stream>>>(b);
+  C10_CUDA_CHECK(cudaGetLastError());
+}
+
+static py::dict benchmark_views(std::shared_ptr<OwnedBuffers> owner, int slot) {
+  TORCH_CHECK(!owner->started, "Prepare diagnostic tensors before executor start");
+  TORCH_CHECK(slot >= 0 && slot < owner->b.slots, "Invalid diagnostic slot");
+  auto b = owner->b;
+  auto options = torch::TensorOptions().device(torch::kCUDA, owner->device);
+  auto keep_alive = [owner](void *) {};
+  auto matrix = [&](BF16 *ptr, int width) {
+    return torch::from_blob(ptr + b.base_rows[slot] * width,
+                            {b.storage_rows[slot], width}, keep_alive,
+                            options.dtype(torch::kBFloat16));
+  };
+  py::dict result;
+  result["input"] = matrix(b.input, b.hidden);
+  result["activation"] = matrix(b.activation, b.intermediate);
+  result["gateup"] = matrix(b.gateup, 2 * b.intermediate);
+  result["output"] = matrix(b.output, b.hidden);
+  result["counts"] = torch::from_blob(
+      b.counts + slot * b.experts, {b.experts}, keep_alive, options.dtype(torch::kInt32));
+  result["offsets"] = torch::from_blob(
+      b.offsets + slot * b.experts, {b.experts}, keep_alive, options.dtype(torch::kInt32));
+  return result;
+}
+
+__global__ void benchmark_publish_kernel(U64 *p, U64 *d, U64 delay_ns,
+                                         bool run_p, bool run_d, U64 *stamps) {
+  U64 *controls[2] = {p, d};
+  bool enabled[2] = {run_p, run_d};
+  U64 epochs[2] = {0, 0};
+  for (int phase = 0; phase < 2; ++phase) {
+    auto *c = controls[phase];
+    if (!enabled[phase])
+      continue;
+    auto pending = system_load(c + PENDING);
+    if (system_load(c + DONE) != pending || system_load(c + ERROR) ||
+        pending == kMaxEpoch) {
+      stamps[4 + phase] = 1;
+      return;
+    }
+    c[LAYER] = 0;
+    c[PHASE] = phase;
+    c[START_NS] = c[FINISH_NS] = 0;
+    epochs[phase] = pending + 1;
+    system_store(c + PENDING, epochs[phase]);
+  }
+  __threadfence_system();
+  stamps[0] = now_ns();
+  if (run_p)
+    system_store(p + READY, epochs[0]);
+  while (now_ns() - stamps[0] < delay_ns) {}
+  stamps[1] = now_ns();
+  if (run_d)
+    system_store(d + READY, epochs[1]);
+  const U64 limit = stamps[1] + 5000000000ULL;
+  bool finished[2] = {!run_p, !run_d};
+  while ((!finished[0] || !finished[1]) && now_ns() < limit) {
+    for (int phase = 0; phase < 2; ++phase) {
+      if (!finished[phase] && system_load(controls[phase] + DONE) == epochs[phase]) {
+        stamps[2 + phase] = now_ns();
+        stamps[4 + phase] = system_load(controls[phase] + ERROR);
+        finished[phase] = true;
+      }
+    }
+  }
+}
+
+static torch::Tensor benchmark_publish(std::shared_ptr<OwnedBuffers> owner,
+                                       int attention_device, bool run_p,
+                                       bool run_d, int delay_us) {
+  TORCH_CHECK(owner->active && owner->b.slots == 2,
+              "Diagnostic publication requires a live two-slot executor");
+  TORCH_CHECK(attention_device != owner->device && delay_us >= 0 &&
+                  delay_us <= 1000000 && (run_p || run_d),
+              "Invalid diagnostic publication arguments");
+  c10::cuda::CUDAGuard guard(attention_device);
+  int accessible = 0, atomics = 0;
+  C10_CUDA_CHECK(cudaDeviceCanAccessPeer(&accessible, attention_device, owner->device));
+  C10_CUDA_CHECK(cudaDeviceGetP2PAttribute(&atomics, cudaDevP2PAttrNativeAtomicSupported,
+                                         attention_device, owner->device));
+  TORCH_CHECK(accessible && atomics, "Benchmark requires NVLink peer atomics");
+  auto status = cudaDeviceEnablePeerAccess(owner->device, 0);
+  if (status == cudaErrorPeerAccessAlreadyEnabled)
+    cudaGetLastError();
+  else
+    C10_CUDA_CHECK(status);
+  auto stamps = torch::zeros({6}, torch::TensorOptions().dtype(torch::kInt64)
+                                     .device(torch::kCUDA, attention_device));
+  benchmark_publish_kernel<<<1, 1, 0, at::cuda::getCurrentCUDAStream(attention_device)>>>(
+      owner->b.control, owner->b.control + kControlWords,
+      static_cast<U64>(delay_us) * 1000, run_p, run_d,
+      reinterpret_cast<U64 *>(stamps.data_ptr<int64_t>()));
+  C10_CUDA_CHECK(cudaGetLastError());
+  return stamps;
+}

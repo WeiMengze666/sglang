@@ -18,13 +18,18 @@ from pathlib import Path
 from _bootstrap import module
 
 
-def attention(config_path, slot, iterations, rows, barrier, output):
+def attention(config_path, slot, iterations, rows, barrier, output, compare_group):
     try:
         import torch
 
         config = module("config").load_config(config_path)
         torch.cuda.set_device(config.client(slot).device)
         client = module("client").ExpertPlexClient(config_path, slot)
+        group_templates = (
+            [client.native.RemoteGroup(peers) for peers in client.mailboxes]
+            if compare_group
+            else client.groups
+        )
         spec = client.spec
         gen = torch.Generator(device=client.device).manual_seed(1234 + slot)
         x = torch.randn(
@@ -49,8 +54,12 @@ def attention(config_path, slot, iterations, rows, barrier, output):
             start = time.perf_counter()
             for layer in range(spec.num_layers):
                 if config.overlap == "tbo":
+                    if compare_group:
+                        client.groups = []
                     expected_a = client.run(layer, x, ids, weights)
                     expected_b = client.run(layer, x_other, ids_other, weights)
+                    if compare_group:
+                        client.groups = group_templates
                     a = client.begin(layer, x, ids, weights, mailbox=0)
                     b = client.begin(layer, x_other, ids_other, weights, mailbox=1)
                     actual_a, y = client.finish(a), client.finish(b)
@@ -73,8 +82,12 @@ def attention(config_path, slot, iterations, rows, barrier, output):
             for replay in range(10):
                 x.mul_(0.99)
                 x_other.mul_(1.01)
+                if compare_group:
+                    client.groups = []
                 expected_a = client.run(0, x, ids, weights)
                 expected_b = client.run(0, x_other, ids_other, weights)
+                if compare_group:
+                    client.groups = group_templates
                 graph.replay()
                 torch.testing.assert_close(graph_a, expected_a, rtol=0, atol=0)
                 torch.testing.assert_close(graph_b, expected_b, rtol=0, atol=0)
@@ -89,6 +102,7 @@ def attention(config_path, slot, iterations, rows, barrier, output):
                 full_moe_pass_ms=latencies,
                 exact_overlap_comparisons=overlap_checks,
                 exact_graph_comparisons=graph_checks,
+                group_vs_peer_reference=compare_group,
                 status="passed",
             )
         )
@@ -103,11 +117,14 @@ def main():
     p.add_argument("--prefill-rows", type=int, default=128)
     p.add_argument("--decode-rows", type=int, default=8)
     p.add_argument("--iterations", type=int, default=3)
+    p.add_argument("--compare-group-comm", action="store_true")
     p.add_argument("--output", required=True, type=Path)
     args = p.parse_args()
     config = module("config").load_config(args.config)
     if config.weight_mode != "synthetic":
         p.error("This standalone deployment test requires an explicit synthetic config")
+    if args.compare_group_comm and config.overlap != "tbo":
+        p.error("Group/reference comparison requires both TBO mailboxes")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     log = args.output.with_suffix(".workers.log").open("w")
     worker = subprocess.Popen(
@@ -139,7 +156,15 @@ def main():
             rows = args.prefill_rows if c.phase == "prefill" else args.decode_rows
             proc = ctx.Process(
                 target=attention,
-                args=(args.config, c.id, args.iterations, rows, barrier, output),
+                args=(
+                    args.config,
+                    c.id,
+                    args.iterations,
+                    rows,
+                    barrier,
+                    output,
+                    args.compare_group_comm,
+                ),
             )
             proc.start()
             children.append(proc)

@@ -435,8 +435,9 @@ __device__ __forceinline__ U64 now_ns() {
   return value;
 }
 
-__global__ void clear_slot(const __grid_constant__ DeviceBuffers b, int slot,
-                           U64 epoch, int layer, int phase) {
+__device__ __forceinline__ void clear_slot_body(const DeviceBuffers &b,
+                                                int slot, U64 epoch, int layer,
+                                                int phase) {
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
   if (threadIdx.x == 0) {
     U64 ready = system_load(c + READY), done = system_load(c + DONE);
@@ -463,11 +464,15 @@ __global__ void clear_slot(const __grid_constant__ DeviceBuffers b, int slot,
     b.counts[static_cast<size_t>(slot) * b.experts + e] = 0;
   __threadfence_system();
 }
+__global__ void clear_slot(const __grid_constant__ DeviceBuffers b, int slot,
+                           U64 epoch, int layer, int phase) {
+  clear_slot_body(b, slot, epoch, layer, phase);
+}
 
 template <typename Id>
-__global__ void count_routes(const __grid_constant__ DeviceBuffers b, int slot,
-                             const Id *ids, int *row_map, int routes, int rank,
-                             int world) {
+__device__ __forceinline__ void
+count_routes_body(const DeviceBuffers &b, int slot, const Id *ids, int *row_map,
+                  int routes, int rank, int world) {
   auto *c = b.control + static_cast<size_t>(slot) * kControlWords;
   if (system_load(c + ERROR))
     return;
@@ -476,7 +481,8 @@ __global__ void count_routes(const __grid_constant__ DeviceBuffers b, int slot,
     Id expert = ids[route];
     // SGLang marks CUDA Graph/TBO padding routes with -1.
     if (expert == -1) {
-      row_map[route] = -1;
+      if (rank == 0)
+        row_map[route] = -1;
       continue;
     }
     if (expert < 0 || expert >= static_cast<Id>(b.experts) * world) {
@@ -492,10 +498,16 @@ __global__ void count_routes(const __grid_constant__ DeviceBuffers b, int slot,
   }
   __threadfence_system();
 }
+template <typename Id>
+__global__ void count_routes(const __grid_constant__ DeviceBuffers b, int slot,
+                             const Id *ids, int *row_map, int routes, int rank,
+                             int world) {
+  count_routes_body(b, slot, ids, row_map, routes, rank, world);
+}
 
 // Runs on the attention GPU, before payload copies. No expert receive kernel.
-__global__ void pack_offsets(const __grid_constant__ DeviceBuffers b,
-                             int slot) {
+__device__ __forceinline__ void pack_offsets_body(const DeviceBuffers &b,
+                                                  int slot) {
   int offset = 0;
   for (int e = 0; e < b.experts; ++e) {
     b.offsets[slot * b.experts + e] = offset;
@@ -506,11 +518,16 @@ __global__ void pack_offsets(const __grid_constant__ DeviceBuffers b,
     set_error(b.control + slot * kControlWords, ROW_OVERFLOW);
   __threadfence_system();
 }
+__global__ void pack_offsets(const __grid_constant__ DeviceBuffers b,
+                             int slot) {
+  pack_offsets_body(b, slot);
+}
 
 template <typename Id>
-__global__ void dispatch_rows(const __grid_constant__ DeviceBuffers b, int slot,
-                              const BF16 *hidden, const Id *ids, int *row_map,
-                              int n, int k, int rank, int world) {
+__device__ __forceinline__ void
+dispatch_rows_body(const DeviceBuffers &b, int slot, const BF16 *hidden,
+                   const Id *ids, int *row_map, int n, int k, int rank,
+                   int world) {
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
   int route = blockIdx.x;
   Id routed_expert = ids[route];
@@ -554,13 +571,19 @@ __global__ void dispatch_rows(const __grid_constant__ DeviceBuffers b, int slot,
   // Every writer, rather than only the publishing thread, fences its peer data.
   __threadfence_system();
 }
+template <typename Id>
+__global__ void dispatch_rows(const __grid_constant__ DeviceBuffers b, int slot,
+                              const BF16 *hidden, const Id *ids, int *row_map,
+                              int n, int k, int rank, int world) {
+  dispatch_rows_body(b, slot, hidden, ids, row_map, n, k, rank, world);
+}
 
 // A mailbox has exactly one attention writer. Route counting and prefix sums
 // therefore use attention-local atomics; only the final metadata crosses
 // NVLink. Payloads already land in the final expert compute buffers.
-__global__ void push_metadata(const __grid_constant__ DeviceBuffers peer,
-                              const __grid_constant__ DeviceBuffers local,
-                              int slot) {
+__device__ __forceinline__ void push_metadata_body(const DeviceBuffers &peer,
+                                                   const DeviceBuffers &local,
+                                                   int slot) {
   if (system_load(peer.control + slot * kControlWords + ERROR))
     return;
   for (int e = threadIdx.x; e < peer.experts; e += blockDim.x) {
@@ -570,6 +593,11 @@ __global__ void push_metadata(const __grid_constant__ DeviceBuffers peer,
       peer.offsets[index] = local.offsets[index];
   }
   __threadfence_system();
+}
+__global__ void push_metadata(const __grid_constant__ DeviceBuffers peer,
+                              const __grid_constant__ DeviceBuffers local,
+                              int slot) {
+  push_metadata_body(peer, local, slot);
 }
 
 __global__ void publish_slot(const __grid_constant__ DeviceBuffers b, int slot,
@@ -583,8 +611,9 @@ __global__ void publish_slot(const __grid_constant__ DeviceBuffers b, int slot,
   system_store(c + READY, epoch ? epoch : uncached_load_u64(c + PENDING));
 }
 
-__global__ void wait_slot(const __grid_constant__ DeviceBuffers b, int slot,
-                          U64 epoch, U64 timeout_ns, int *status) {
+__device__ __forceinline__ void wait_slot_body(const DeviceBuffers &b, int slot,
+                                               U64 epoch, U64 timeout_ns,
+                                               int *status) {
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
   if (epoch == 0)
     epoch = uncached_load_u64(c + PENDING);
@@ -608,12 +637,16 @@ __global__ void wait_slot(const __grid_constant__ DeviceBuffers b, int slot,
     __nanosleep(128);
   }
 }
+__global__ void wait_slot(const __grid_constant__ DeviceBuffers b, int slot,
+                          U64 epoch, U64 timeout_ns, int *status) {
+  wait_slot_body(b, slot, epoch, timeout_ns, status);
+}
 
 template <typename Id>
-__global__ void combine_rows(const __grid_constant__ DeviceBuffers b, int slot,
-                             float *output, const Id *ids, const float *weights,
-                             const int *row_map, int n, int k, int rank,
-                             int world, const int *status) {
+__device__ __forceinline__ void
+combine_rows_body(const DeviceBuffers &b, int slot, float *output,
+                  const Id *ids, const float *weights, const int *row_map,
+                  int n, int k, int rank, int world, const int *status) {
   if (*status != OK)
     return;
   const int vectors = b.hidden / 8;
@@ -659,6 +692,14 @@ __global__ void combine_rows(const __grid_constant__ DeviceBuffers b, int slot,
     destination[0] = first;
     destination[1] = second;
   }
+}
+template <typename Id>
+__global__ void combine_rows(const __grid_constant__ DeviceBuffers b, int slot,
+                             float *output, const Id *ids, const float *weights,
+                             const int *row_map, int n, int k, int rank,
+                             int world, const int *status) {
+  combine_rows_body(b, slot, output, ids, weights, row_map, n, k, rank, world,
+                    status);
 }
 
 // Four warp tensor-core tile, with 128-wide asynchronous global/shared copies.
@@ -1001,7 +1042,8 @@ public:
                      torch::Tensor gateup, torch::Tensor down,
                      int decode_budget, double expected_tiles,
                      double max_decode_fraction, int requested_ctas,
-                     const std::string &backend, int trace_capacity)
+                     const std::string &backend, int trace_capacity,
+                     int benchmark_stage)
       : owner(std::move(buffers)), w13(std::move(gateup)), w2(std::move(down)) {
     TORCH_CHECK(!owner->active && !owner->started,
                 "A buffer set admits one executor lifetime; allocate fresh "
@@ -1040,6 +1082,10 @@ public:
     const bool sm100 = backend == "sm100" || backend == "sm100_cta1" || fused;
     const int cluster = backend == "sm100_cta1" ? 1 : 2;
     TORCH_CHECK(backend == "wmma" || sm100, "Unknown ExpertPlex kernel");
+    TORCH_CHECK(benchmark_stage == 0 ||
+                    (sm100 && !fused &&
+                     (benchmark_stage == GATE || benchmark_stage == DOWN)),
+                "Single-operation benchmarks require an unfused SM100 kernel");
     TORCH_CHECK(ctas % cluster == 0 && ctas >= 2 * cluster,
                 "CTA count must fit at least two complete clusters");
     max_decode_ctas =
@@ -1078,6 +1124,7 @@ public:
           *owner, reinterpret_cast<const BF16 *>(w13.data_ptr<at::BFloat16>()),
           reinterpret_cast<const BF16 *>(w2.data_ptr<at::BFloat16>()),
           w13.size(0), ctas, trace_capacity, cluster, fused);
+    native_context.benchmark_stage = benchmark_stage;
     cudaFuncAttributes attrs;
     C10_CUDA_CHECK(cudaFuncGetAttributes(&attrs, kernel));
     int optin = 0;
@@ -1164,6 +1211,7 @@ public:
     py::dict d;
     d["trace_capacity_per_cta"] = native_context.trace_capacity;
     d["backend"] = backend_name;
+    d["benchmark_stage"] = native_context.benchmark_stage;
     d["ctas"] = launch_ctas;
     d["cluster_size"] = cluster_size;
     d["operation_templates"] =
@@ -1180,7 +1228,8 @@ public:
     d["hidden"] = owner->b.hidden;
     d["intermediate"] = owner->b.intermediate;
     d["prefill_tile_rows"] = backend_name == "wmma" ? 64 : expertplex_sm100::M;
-    d["decode_tile_rows"] = backend_name == "wmma" ? 16 : 32;
+    d["decode_tile_rows"] =
+        backend_name == "wmma" ? 16 : expertplex_sm100::DecodeM;
     return d;
   }
   torch::Tensor read_trace() {
@@ -1441,6 +1490,9 @@ static torch::Tensor read_timing(std::shared_ptr<RemoteBuffers> r) {
   return result;
 }
 
+#include "benchmark.cuh"
+#include "group_communication.cuh"
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<OwnedBuffers, std::shared_ptr<OwnedBuffers>>(m, "OwnedBuffers")
       .def(py::init<int, int, int, int, int, int, std::vector<int>,
@@ -1452,15 +1504,22 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<PersistentExecutor, std::shared_ptr<PersistentExecutor>>(
       m, "PersistentExecutor")
       .def(py::init<std::shared_ptr<OwnedBuffers>, torch::Tensor, torch::Tensor,
-                    int, double, double, int, const std::string &, int>())
+                    int, double, double, int, const std::string &, int, int>())
       .def("stop", &PersistentExecutor::stop,
            py::call_guard<py::gil_scoped_release>())
       .def("describe", &PersistentExecutor::describe)
       .def("read_trace", &PersistentExecutor::read_trace)
       .def("check_error", &PersistentExecutor::check_error,
            py::call_guard<py::gil_scoped_release>());
+  py::class_<RemoteGroup, std::shared_ptr<RemoteGroup>>(m, "RemoteGroup")
+      .def(py::init<std::vector<std::shared_ptr<RemoteBuffers>>>())
+      .def("dispatch", &RemoteGroup::dispatch)
+      .def("combine", &RemoteGroup::combine);
   m.def("dispatch", &dispatch);
   m.def("read_timing", &read_timing);
   m.def("publish_pair", &publish_pair);
   m.def("combine", &combine, py::call_guard<py::gil_scoped_release>());
+  m.def("benchmark_views", &benchmark_views);
+  m.def("benchmark_publish", &benchmark_publish);
+  m.def("benchmark_echo", &benchmark_echo);
 }

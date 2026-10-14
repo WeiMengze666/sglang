@@ -190,3 +190,53 @@ the exact preprocessing. This is not a claim of identical original workloads.
 Raw reports, failed baseline logs and provenance are under
 `results/b300-20261015/checkpoint-1959/`. No real-weight accuracy or 1.5×
 end-to-end goodput claim follows from this checkpoint.
+
+## 2026-10-15 checkpoint: full serving pilot and exact operator fixtures
+
+M128 now matches both native GateUp/Down template heights; the eight-round
+native-reference, padding, concurrency, graph and timeout regression passed.
+The §7.3 APK fixture uses identical native DeepGEMM weights and inputs.
+GateUp and Down each matched the native output bit-for-bit in every tested
+P/D budget (8, 16, 32, 48, 64, 96). Nevertheless, isolated GateUp P8192/D128
+was about 1.85 ms/0.54 ms, versus native ~1.03 ms/0.42 ms. Down was about
+1.06 ms/0.34 ms versus ~0.55 ms/0.23 ms. Low scheduling overhead is NOT met.
+Native L2 traversal matching passed numerical tests but showed no clear gain.
+MPS Down also completed the four real daemon-controlled partition cases.
+
+The full 62-layer Coder BF16 synthetic serving pilot used 64 identical
+ShareGPT requests (seed 42), 24576 common sequence cap, aggregate decode KV
+98304, Triton attention, TBO, and fixed 1s/50ms TTFT/TPOT SLOs:
+
+| Offered req/s | Colocated joint attainment | ExpertPlex joint attainment |
+| --- | --- | --- |
+| 0.5 | 64/64 | 64/64 |
+| 1 | 61/64 | 45/64 |
+| 2 | 28/64 | 11/64 |
+
+ExpertPlex currently loses this pilot. The maximum *tested* feasible arrival
+rates are 1 and 0.5 respectively; this coarse grid does not locate either
+boundary exactly. The 1 req/s P90 TPOT was 47.72 ms versus 56.66 ms; P90 TTFT
+was 246.38 ms versus 355.30 ms. These are diagnostic synthetic-weight pilots,
+not trained-model performance or a claimed 1.5x gain. A DeepEP build overlapped
+part of the baseline pilot; final measurements must use an isolated machine.
+
+DeepEP v1.2.1 was independently built from official commit
+`9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee`; the existing DeepEP 2.1 package was
+not replaced. Both normal and low-latency eight-GPU identity fixtures passed.
+Eager timings contain host submission gaps and rank skew. Subsequent graph
+timings include uncached dynamic routing, with benchmark-only NCCL all-reduces
+outside the measured intervals; echo preparation is excluded. This remains an
+8-GPU NVLink adaptation, not the original 16-GPU hierarchical RDMA experiment.
+The first graph attempt used a host-blocking NCCL barrier and failed capture;
+its log is retained, and the working version uses preallocated all-reduces.
+
+The fixed-history tiny-model comparison scored the P/D-supported top-128
+logprobs: 24/24 top-1 choices matched, but a length-258 outlier reached 0.6283
+absolute logprob difference. This is unresolved numerical evidence, not an
+accuracy pass. Full-vocabulary `token_ids_logprob` for the first P/D token is
+not carried by the pinned SGLang transfer metadata. A separate serial,
+cache-flushed comparison is being run. Reports distinguish top-k mass coverage,
+TV lower bounds and full-vocabulary KL; missing probabilities are never zeroed.
+
+Completed reports and failed attempts are retained under
+`results/b300-20261015/checkpoint-2049/`.

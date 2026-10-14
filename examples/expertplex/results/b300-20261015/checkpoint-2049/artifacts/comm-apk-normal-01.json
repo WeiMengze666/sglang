@@ -1,0 +1,1261 @@
+{
+  "scope": "Single-node adaptation of paper section 7.5: dispatch/combine separately.\n\nRanks 0..3 are attention clients and 4..7 hold 40 active experts each. DeepEP\nrequires equal expert ranges on all ranks, so its first 160 expert IDs are\nunused and the 160 actual expert IDs are mapped onto ranks 4..7. Prefill uses\nclient 0; decode uses clients 1..3. This is an 8-GPU NVLink adaptation, not the\npaper's 16-GPU hierarchical RDMA experiment. Echo work is outside timing.\n",
+  "settings": {
+    "backend": "expertplex",
+    "mode": "normal",
+    "rows": [
+      128,
+      2048
+    ],
+    "hidden": 6144,
+    "experts": 40,
+    "top_k": 8,
+    "iterations": 10,
+    "seed": 20261015,
+    "port": 29650,
+    "deepep_revision": null,
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/comm-apk-normal-01.json"
+  },
+  "summary": [
+    {
+      "rows": 128,
+      "max_rank_samples": {
+        "dispatch_us": [
+          305.02399802207947,
+          333.2799971103668,
+          303.5840094089508,
+          489.8560047149658,
+          337.5999927520752,
+          292.86399483680725,
+          282.20799565315247,
+          282.0799946784973,
+          286.080002784729,
+          281.792014837265
+        ],
+        "combine_us": [
+          151.0079950094223,
+          153.50399911403656,
+          155.8080017566681,
+          334.0800106525421,
+          206.11199736595154,
+          164.8000031709671,
+          162.01600432395935,
+          152.48000621795654,
+          152.44799852371216,
+          153.4080058336258
+        ],
+        "dispatch_wall_us": [
+          383.7269905488938,
+          411.13499901257455,
+          379.8640100285411,
+          1040.8569942228496,
+          464.6150046028197,
+          455.13000804930925,
+          361.772021278739,
+          387.29701191186905,
+          366.94100708700716,
+          362.6089892350137
+        ],
+        "combine_wall_us": [
+          278.99601263925433,
+          266.3620107341558,
+          5326.49498200044,
+          539.3800092861056,
+          402.49701123684645,
+          305.126013699919,
+          256.5949980635196,
+          249.17800328694284,
+          248.7880119588226,
+          249.38202113844454
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 298.224002122879,
+        "combine_us": 154.65600043535233,
+        "dispatch_wall_us": 385.51200123038143,
+        "combine_wall_us": 272.67901168670505
+      }
+    },
+    {
+      "rows": 2048,
+      "max_rank_samples": {
+        "dispatch_us": [
+          601.535975933075,
+          604.7679781913757,
+          606.0799956321716,
+          614.3040060997009,
+          602.6880145072937,
+          603.5199761390686,
+          607.7439785003662,
+          599.4880199432373,
+          606.5599918365479,
+          598.7200140953064
+        ],
+        "combine_us": [
+          403.0719995498657,
+          404.00001406669617,
+          405.63198924064636,
+          401.3440012931824,
+          401.2799859046936,
+          405.91999888420105,
+          405.15199303627014,
+          399.58399534225464,
+          402.14401483535767,
+          394.6880102157593
+        ],
+        "dispatch_wall_us": [
+          682.3400035500526,
+          685.802020598203,
+          707.6789916027337,
+          696.7980007175356,
+          682.9180056229234,
+          682.3129951953888,
+          689.8809806443751,
+          675.1640175934881,
+          688.4839967824519,
+          676.7960148863494
+        ],
+        "combine_wall_us": [
+          496.8400171492249,
+          519.19199177064,
+          502.56800022907555,
+          498.1620004400611,
+          496.364024002105,
+          504.1559925302863,
+          494.9709982611239,
+          497.558998176828,
+          497.3379836883396,
+          502.2440163884312
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 604.1439771652222,
+        "combine_us": 402.6080071926117,
+        "dispatch_wall_us": 684.3600131105632,
+        "combine_wall_us": 497.86049930844456
+      }
+    }
+  ],
+  "ranks": [
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": true,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 305.02399802207947,
+            "combine_us": 151.0079950094223,
+            "dispatch_wall_us": 383.7269905488938,
+            "combine_wall_us": 243.27600840479136
+          },
+          {
+            "dispatch_us": 333.2799971103668,
+            "combine_us": 153.50399911403656,
+            "dispatch_wall_us": 411.13499901257455,
+            "combine_wall_us": 257.26098101586103
+          },
+          {
+            "dispatch_us": 303.5840094089508,
+            "combine_us": 155.8080017566681,
+            "dispatch_wall_us": 379.8640100285411,
+            "combine_wall_us": 5326.49498200044
+          },
+          {
+            "dispatch_us": 489.8560047149658,
+            "combine_us": 334.0800106525421,
+            "dispatch_wall_us": 1040.8569942228496,
+            "combine_wall_us": 539.3800092861056
+          },
+          {
+            "dispatch_us": 337.5999927520752,
+            "combine_us": 150.27199685573578,
+            "dispatch_wall_us": 464.6150046028197,
+            "combine_wall_us": 246.5000143274665
+          },
+          {
+            "dispatch_us": 292.86399483680725,
+            "combine_us": 147.45600521564484,
+            "dispatch_wall_us": 374.35299600474536,
+            "combine_wall_us": 235.67400057800114
+          },
+          {
+            "dispatch_us": 282.20799565315247,
+            "combine_us": 162.01600432395935,
+            "dispatch_wall_us": 361.772021278739,
+            "combine_wall_us": 256.5949980635196
+          },
+          {
+            "dispatch_us": 282.0799946784973,
+            "combine_us": 152.48000621795654,
+            "dispatch_wall_us": 387.29701191186905,
+            "combine_wall_us": 249.17800328694284
+          },
+          {
+            "dispatch_us": 286.080002784729,
+            "combine_us": 152.44799852371216,
+            "dispatch_wall_us": 366.94100708700716,
+            "combine_wall_us": 248.7880119588226
+          },
+          {
+            "dispatch_us": 281.792014837265,
+            "combine_us": 153.4080058336258,
+            "dispatch_wall_us": 362.6089892350137,
+            "combine_wall_us": 249.38202113844454
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": true,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 601.535975933075,
+            "combine_us": 403.0719995498657,
+            "dispatch_wall_us": 682.3400035500526,
+            "combine_wall_us": 496.8400171492249
+          },
+          {
+            "dispatch_us": 604.7679781913757,
+            "combine_us": 404.00001406669617,
+            "dispatch_wall_us": 685.802020598203,
+            "combine_wall_us": 519.19199177064
+          },
+          {
+            "dispatch_us": 606.0799956321716,
+            "combine_us": 405.63198924064636,
+            "dispatch_wall_us": 707.6789916027337,
+            "combine_wall_us": 502.56800022907555
+          },
+          {
+            "dispatch_us": 614.3040060997009,
+            "combine_us": 401.3440012931824,
+            "dispatch_wall_us": 696.7980007175356,
+            "combine_wall_us": 498.1620004400611
+          },
+          {
+            "dispatch_us": 602.6880145072937,
+            "combine_us": 401.2799859046936,
+            "dispatch_wall_us": 682.9180056229234,
+            "combine_wall_us": 496.364024002105
+          },
+          {
+            "dispatch_us": 603.5199761390686,
+            "combine_us": 405.91999888420105,
+            "dispatch_wall_us": 682.3129951953888,
+            "combine_wall_us": 504.1559925302863
+          },
+          {
+            "dispatch_us": 607.7439785003662,
+            "combine_us": 405.15199303627014,
+            "dispatch_wall_us": 689.8809806443751,
+            "combine_wall_us": 494.9709982611239
+          },
+          {
+            "dispatch_us": 599.4880199432373,
+            "combine_us": 399.58399534225464,
+            "dispatch_wall_us": 675.1640175934881,
+            "combine_wall_us": 497.558998176828
+          },
+          {
+            "dispatch_us": 606.5599918365479,
+            "combine_us": 402.14401483535767,
+            "dispatch_wall_us": 688.4839967824519,
+            "combine_wall_us": 497.3379836883396
+          },
+          {
+            "dispatch_us": 598.7200140953064,
+            "combine_us": 394.6880102157593,
+            "dispatch_wall_us": 676.7960148863494,
+            "combine_wall_us": 502.2440163884312
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 194.84800100326538,
+            "combine_us": 129.18399274349213,
+            "dispatch_wall_us": 324.3089886382222,
+            "combine_wall_us": 264.94800113141537
+          },
+          {
+            "dispatch_us": 172.7360039949417,
+            "combine_us": 124.1919994354248,
+            "dispatch_wall_us": 285.3429759852588,
+            "combine_wall_us": 266.3620107341558
+          },
+          {
+            "dispatch_us": 165.56799411773682,
+            "combine_us": 110.49599945545197,
+            "dispatch_wall_us": 270.21399000659585,
+            "combine_wall_us": 220.53701104596257
+          },
+          {
+            "dispatch_us": 173.0239987373352,
+            "combine_us": 119.64800208806992,
+            "dispatch_wall_us": 262.8799993544817,
+            "combine_wall_us": 243.23101388290524
+          },
+          {
+            "dispatch_us": 156.8640023469925,
+            "combine_us": 112.92800307273865,
+            "dispatch_wall_us": 253.44701134599745,
+            "combine_wall_us": 228.07001369073987
+          },
+          {
+            "dispatch_us": 159.42400693893433,
+            "combine_us": 100.96000134944916,
+            "dispatch_wall_us": 248.555006692186,
+            "combine_wall_us": 208.3939907606691
+          },
+          {
+            "dispatch_us": 158.62399339675903,
+            "combine_us": 97.82399982213974,
+            "dispatch_wall_us": 248.8020109012723,
+            "combine_wall_us": 199.6869978029281
+          },
+          {
+            "dispatch_us": 178.3359944820404,
+            "combine_us": 87.42400258779526,
+            "dispatch_wall_us": 283.1990132108331,
+            "combine_wall_us": 184.849021025002
+          },
+          {
+            "dispatch_us": 150.78400075435638,
+            "combine_us": 107.58399963378906,
+            "dispatch_wall_us": 230.25699192658067,
+            "combine_wall_us": 201.59099949523807
+          },
+          {
+            "dispatch_us": 149.82399344444275,
+            "combine_us": 88.76799792051315,
+            "dispatch_wall_us": 229.54397718422115,
+            "combine_wall_us": 184.51499636285007
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 156.95999562740326,
+            "combine_us": 88.48000317811966,
+            "dispatch_wall_us": 234.8409907426685,
+            "combine_wall_us": 182.4999926611781
+          },
+          {
+            "dispatch_us": 173.72800409793854,
+            "combine_us": 86.71999722719193,
+            "dispatch_wall_us": 254.37399744987488,
+            "combine_wall_us": 197.0719895325601
+          },
+          {
+            "dispatch_us": 173.72800409793854,
+            "combine_us": 84.99199897050858,
+            "dispatch_wall_us": 252.4650190025568,
+            "combine_wall_us": 180.4509956855327
+          },
+          {
+            "dispatch_us": 153.85599434375763,
+            "combine_us": 88.92799913883209,
+            "dispatch_wall_us": 233.0490096937865,
+            "combine_wall_us": 181.3929993659258
+          },
+          {
+            "dispatch_us": 158.27199816703796,
+            "combine_us": 112.89600282907486,
+            "dispatch_wall_us": 235.29099416919053,
+            "combine_wall_us": 206.7039895337075
+          },
+          {
+            "dispatch_us": 156.89599514007568,
+            "combine_us": 88.83199840784073,
+            "dispatch_wall_us": 235.00702809542418,
+            "combine_wall_us": 182.48800188302994
+          },
+          {
+            "dispatch_us": 156.3519984483719,
+            "combine_us": 86.91199868917465,
+            "dispatch_wall_us": 235.17900262959301,
+            "combine_wall_us": 199.21199418604374
+          },
+          {
+            "dispatch_us": 172.38399386405945,
+            "combine_us": 105.05600273609161,
+            "dispatch_wall_us": 251.3060171622783,
+            "combine_wall_us": 197.7680076379329
+          },
+          {
+            "dispatch_us": 152.0320028066635,
+            "combine_us": 107.13600367307663,
+            "dispatch_wall_us": 231.067999266088,
+            "combine_wall_us": 202.85198115743697
+          },
+          {
+            "dispatch_us": 154.14400398731232,
+            "combine_us": 87.93599903583527,
+            "dispatch_wall_us": 232.22999880090356,
+            "combine_wall_us": 181.443989276886
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 184.06400084495544,
+            "combine_us": 140.00000059604645,
+            "dispatch_wall_us": 300.97499256953597,
+            "combine_wall_us": 278.99601263925433
+          },
+          {
+            "dispatch_us": 167.84000396728516,
+            "combine_us": 120.12799829244614,
+            "dispatch_wall_us": 274.8700208030641,
+            "combine_wall_us": 242.14599397964776
+          },
+          {
+            "dispatch_us": 179.07199263572693,
+            "combine_us": 106.75200074911118,
+            "dispatch_wall_us": 279.4009924400598,
+            "combine_wall_us": 216.79000928997993
+          },
+          {
+            "dispatch_us": 141.92000031471252,
+            "combine_us": 93.12000125646591,
+            "dispatch_wall_us": 218.55600061826408,
+            "combine_wall_us": 191.75800844095647
+          },
+          {
+            "dispatch_us": 141.82400703430176,
+            "combine_us": 105.72800040245056,
+            "dispatch_wall_us": 222.68100292421877,
+            "combine_wall_us": 217.64199482277036
+          },
+          {
+            "dispatch_us": 144.44799721240997,
+            "combine_us": 117.24799871444702,
+            "dispatch_wall_us": 234.29800057783723,
+            "combine_wall_us": 222.45498257689178
+          },
+          {
+            "dispatch_us": 146.11199498176575,
+            "combine_us": 94.7519987821579,
+            "dispatch_wall_us": 229.4850128237158,
+            "combine_wall_us": 193.06200556457043
+          },
+          {
+            "dispatch_us": 165.3759926557541,
+            "combine_us": 93.82399916648865,
+            "dispatch_wall_us": 246.1749827489257,
+            "combine_wall_us": 191.16699695587158
+          },
+          {
+            "dispatch_us": 138.91200721263885,
+            "combine_us": 91.80799871683121,
+            "dispatch_wall_us": 237.11498943157494,
+            "combine_wall_us": 185.19398872740567
+          },
+          {
+            "dispatch_us": 141.27999544143677,
+            "combine_us": 90.01599997282028,
+            "dispatch_wall_us": 221.67499992065132,
+            "combine_wall_us": 201.59600535407662
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 141.53599739074707,
+            "combine_us": 89.82399851083755,
+            "dispatch_wall_us": 218.93199300393462,
+            "combine_wall_us": 183.82200505584478
+          },
+          {
+            "dispatch_us": 152.0639955997467,
+            "combine_us": 87.13600039482117,
+            "dispatch_wall_us": 227.3760037496686,
+            "combine_wall_us": 181.5269934013486
+          },
+          {
+            "dispatch_us": 147.39200472831726,
+            "combine_us": 89.47200328111649,
+            "dispatch_wall_us": 225.2369886264205,
+            "combine_wall_us": 183.64700372330844
+          },
+          {
+            "dispatch_us": 172.31999337673187,
+            "combine_us": 92.6079973578453,
+            "dispatch_wall_us": 249.8800167813897,
+            "combine_wall_us": 186.3189972937107
+          },
+          {
+            "dispatch_us": 153.21600437164307,
+            "combine_us": 90.97599983215332,
+            "dispatch_wall_us": 229.70797726884484,
+            "combine_wall_us": 185.02501188777387
+          },
+          {
+            "dispatch_us": 191.52000546455383,
+            "combine_us": 88.128000497818,
+            "dispatch_wall_us": 296.95499688386917,
+            "combine_wall_us": 183.69100871495903
+          },
+          {
+            "dispatch_us": 148.6400067806244,
+            "combine_us": 89.56799656152725,
+            "dispatch_wall_us": 225.1779951620847,
+            "combine_wall_us": 183.48899902775884
+          },
+          {
+            "dispatch_us": 150.7200002670288,
+            "combine_us": 90.36800265312195,
+            "dispatch_wall_us": 228.62499463371933,
+            "combine_wall_us": 183.62398259341717
+          },
+          {
+            "dispatch_us": 140.83200693130493,
+            "combine_us": 95.23200243711472,
+            "dispatch_wall_us": 219.35501717962325,
+            "combine_wall_us": 212.7659972757101
+          },
+          {
+            "dispatch_us": 169.95200514793396,
+            "combine_us": 86.97599917650223,
+            "dispatch_wall_us": 248.1279952917248,
+            "combine_wall_us": 180.3319901227951
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 180.4800033569336,
+            "combine_us": 133.88800621032715,
+            "dispatch_wall_us": 301.6419941559434,
+            "combine_wall_us": 270.7630046643317
+          },
+          {
+            "dispatch_us": 161.6639941930771,
+            "combine_us": 136.99199259281158,
+            "dispatch_wall_us": 268.1929909158498,
+            "combine_wall_us": 255.800987360999
+          },
+          {
+            "dispatch_us": 170.01600563526154,
+            "combine_us": 115.29599875211716,
+            "dispatch_wall_us": 267.31399702839553,
+            "combine_wall_us": 224.39498570747674
+          },
+          {
+            "dispatch_us": 145.9839940071106,
+            "combine_us": 108.22399705648422,
+            "dispatch_wall_us": 236.40101426281035,
+            "combine_wall_us": 226.37599613517523
+          },
+          {
+            "dispatch_us": 146.68799936771393,
+            "combine_us": 206.11199736595154,
+            "dispatch_wall_us": 241.8830117676407,
+            "combine_wall_us": 402.49701123684645
+          },
+          {
+            "dispatch_us": 286.20800375938416,
+            "combine_us": 164.8000031709671,
+            "dispatch_wall_us": 455.13000804930925,
+            "combine_wall_us": 305.126013699919
+          },
+          {
+            "dispatch_us": 219.42399442195892,
+            "combine_us": 112.38399893045425,
+            "dispatch_wall_us": 340.733997290954,
+            "combine_wall_us": 225.66900588572025
+          },
+          {
+            "dispatch_us": 145.60000598430634,
+            "combine_us": 101.6319990158081,
+            "dispatch_wall_us": 261.2899988889694,
+            "combine_wall_us": 206.96999854408205
+          },
+          {
+            "dispatch_us": 145.4080045223236,
+            "combine_us": 85.37600189447403,
+            "dispatch_wall_us": 224.14399427361786,
+            "combine_wall_us": 182.39402561448514
+          },
+          {
+            "dispatch_us": 144.70399916172028,
+            "combine_us": 103.87200117111206,
+            "dispatch_wall_us": 224.31701654568315,
+            "combine_wall_us": 199.60201461799443
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 146.7519998550415,
+            "combine_us": 97.21600264310837,
+            "dispatch_wall_us": 224.10298697650433,
+            "combine_wall_us": 194.34597925283015
+          },
+          {
+            "dispatch_us": 147.039994597435,
+            "combine_us": 87.71199733018875,
+            "dispatch_wall_us": 224.29099772125483,
+            "combine_wall_us": 183.06399579159915
+          },
+          {
+            "dispatch_us": 145.63199877738953,
+            "combine_us": 83.5840031504631,
+            "dispatch_wall_us": 221.67101269587874,
+            "combine_wall_us": 178.94900520332158
+          },
+          {
+            "dispatch_us": 159.7760021686554,
+            "combine_us": 87.93599903583527,
+            "dispatch_wall_us": 238.6739943176508,
+            "combine_wall_us": 182.36099276691675
+          },
+          {
+            "dispatch_us": 141.31200313568115,
+            "combine_us": 87.45600283145905,
+            "dispatch_wall_us": 220.52001440897584,
+            "combine_wall_us": 181.81101768277586
+          },
+          {
+            "dispatch_us": 153.43999862670898,
+            "combine_us": 101.6639992594719,
+            "dispatch_wall_us": 231.71099019236863,
+            "combine_wall_us": 196.83499704115093
+          },
+          {
+            "dispatch_us": 144.6080058813095,
+            "combine_us": 105.05600273609161,
+            "dispatch_wall_us": 221.9360030721873,
+            "combine_wall_us": 200.81200636923313
+          },
+          {
+            "dispatch_us": 146.7839926481247,
+            "combine_us": 87.10400015115738,
+            "dispatch_wall_us": 224.0590110886842,
+            "combine_wall_us": 181.5670111682266
+          },
+          {
+            "dispatch_us": 154.4959992170334,
+            "combine_us": 87.90399879217148,
+            "dispatch_wall_us": 234.31499721482396,
+            "combine_wall_us": 184.4269863795489
+          },
+          {
+            "dispatch_us": 148.22399616241455,
+            "combine_us": 88.28800171613693,
+            "dispatch_wall_us": 225.85599799640477,
+            "combine_wall_us": 183.11099847778678
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 38.015998899936676,
+            "combine_us": 45.184001326560974,
+            "dispatch_wall_us": 153.4799812361598,
+            "combine_wall_us": 186.24300719238818
+          },
+          {
+            "dispatch_us": 33.72799977660179,
+            "combine_us": 35.711999982595444,
+            "dispatch_wall_us": 139.28901171311736,
+            "combine_wall_us": 158.3239936735481
+          },
+          {
+            "dispatch_us": 31.136000528931618,
+            "combine_us": 53.75999957323074,
+            "dispatch_wall_us": 150.96800052560866,
+            "combine_wall_us": 166.21602117083967
+          },
+          {
+            "dispatch_us": 29.85600009560585,
+            "combine_us": 37.50399872660637,
+            "dispatch_wall_us": 123.6709940712899,
+            "combine_wall_us": 157.7950024511665
+          },
+          {
+            "dispatch_us": 30.6560005992651,
+            "combine_us": 33.24799984693527,
+            "dispatch_wall_us": 130.08600217290223,
+            "combine_wall_us": 150.51898662932217
+          },
+          {
+            "dispatch_us": 28.351999819278717,
+            "combine_us": 30.559999868273735,
+            "dispatch_wall_us": 124.30801871232688,
+            "combine_wall_us": 138.0849862471223
+          },
+          {
+            "dispatch_us": 25.887999683618546,
+            "combine_us": 30.559999868273735,
+            "dispatch_wall_us": 112.96599404886365,
+            "combine_wall_us": 145.1769785489887
+          },
+          {
+            "dispatch_us": 25.407999753952026,
+            "combine_us": 48.287998884916306,
+            "dispatch_wall_us": 108.98502659983933,
+            "combine_wall_us": 152.1199883427471
+          },
+          {
+            "dispatch_us": 23.16799946129322,
+            "combine_us": 27.264000847935677,
+            "dispatch_wall_us": 108.6479751393199,
+            "combine_wall_us": 125.67598605528474
+          },
+          {
+            "dispatch_us": 21.15200087428093,
+            "combine_us": 25.631999596953392,
+            "dispatch_wall_us": 99.5559967122972,
+            "combine_wall_us": 122.08402040414512
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 34.88000109791756,
+            "combine_us": 42.59200021624565,
+            "dispatch_wall_us": 161.15998732857406,
+            "combine_wall_us": 196.21499814093113
+          },
+          {
+            "dispatch_us": 26.176000013947487,
+            "combine_us": 29.503999277949333,
+            "dispatch_wall_us": 112.43802146054804,
+            "combine_wall_us": 136.40799443237484
+          },
+          {
+            "dispatch_us": 22.52800017595291,
+            "combine_us": 27.904000133275986,
+            "dispatch_wall_us": 102.25200094282627,
+            "combine_wall_us": 148.31300359219313
+          },
+          {
+            "dispatch_us": 20.06400004029274,
+            "combine_us": 26.240000501275063,
+            "dispatch_wall_us": 108.9060097001493,
+            "combine_wall_us": 131.56799832358956
+          },
+          {
+            "dispatch_us": 21.888000890612602,
+            "combine_us": 24.671999737620354,
+            "dispatch_wall_us": 117.63698421418667,
+            "combine_wall_us": 115.3889752458781
+          },
+          {
+            "dispatch_us": 20.38400061428547,
+            "combine_us": 23.80800060927868,
+            "dispatch_wall_us": 95.32400872558355,
+            "combine_wall_us": 115.27698370628059
+          },
+          {
+            "dispatch_us": 34.01599824428558,
+            "combine_us": 44.12800073623657,
+            "dispatch_wall_us": 109.5089828595519,
+            "combine_wall_us": 136.11098984256387
+          },
+          {
+            "dispatch_us": 19.519999623298645,
+            "combine_us": 23.552000522613525,
+            "dispatch_wall_us": 94.08401092514396,
+            "combine_wall_us": 114.64199633337557
+          },
+          {
+            "dispatch_us": 19.74399946630001,
+            "combine_us": 23.455999791622162,
+            "dispatch_wall_us": 92.66799315810204,
+            "combine_wall_us": 141.38899859972298
+          },
+          {
+            "dispatch_us": 19.61600035429001,
+            "combine_us": 24.09599907696247,
+            "dispatch_wall_us": 93.6900032684207,
+            "combine_wall_us": 113.87199629098177
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 46.23999819159508,
+            "combine_us": 42.33599826693535,
+            "dispatch_wall_us": 187.70599854178727,
+            "combine_wall_us": 189.72600810229778
+          },
+          {
+            "dispatch_us": 34.97600182890892,
+            "combine_us": 38.24000060558319,
+            "dispatch_wall_us": 150.62998863868415,
+            "combine_wall_us": 201.78998238407075
+          },
+          {
+            "dispatch_us": 27.807999402284622,
+            "combine_us": 31.488001346588135,
+            "dispatch_wall_us": 129.25799819640815,
+            "combine_wall_us": 152.1439990028739
+          },
+          {
+            "dispatch_us": 26.079999282956123,
+            "combine_us": 34.272000193595886,
+            "dispatch_wall_us": 118.29999857582152,
+            "combine_wall_us": 159.35901319608092
+          },
+          {
+            "dispatch_us": 41.50399938225746,
+            "combine_us": 33.08799862861633,
+            "dispatch_wall_us": 143.63601803779602,
+            "combine_wall_us": 153.48498709499836
+          },
+          {
+            "dispatch_us": 27.904000133275986,
+            "combine_us": 31.647998839616776,
+            "dispatch_wall_us": 123.7379910890013,
+            "combine_wall_us": 169.66401017270982
+          },
+          {
+            "dispatch_us": 25.95200017094612,
+            "combine_us": 28.351999819278717,
+            "dispatch_wall_us": 115.18498649820685,
+            "combine_wall_us": 137.88900105282664
+          },
+          {
+            "dispatch_us": 25.407999753952026,
+            "combine_us": 26.11199952661991,
+            "dispatch_wall_us": 112.99800826236606,
+            "combine_wall_us": 131.96299551054835
+          },
+          {
+            "dispatch_us": 22.016000002622604,
+            "combine_us": 25.280000641942024,
+            "dispatch_wall_us": 106.414983747527,
+            "combine_wall_us": 131.24299584887922
+          },
+          {
+            "dispatch_us": 20.06400004029274,
+            "combine_us": 25.66399984061718,
+            "dispatch_wall_us": 102.35898662358522,
+            "combine_wall_us": 128.6939950659871
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 35.32800078392029,
+            "combine_us": 33.63199904561043,
+            "dispatch_wall_us": 154.79500871151686,
+            "combine_wall_us": 156.22097998857498
+          },
+          {
+            "dispatch_us": 29.440000653266907,
+            "combine_us": 27.871999889612198,
+            "dispatch_wall_us": 130.1199954468757,
+            "combine_wall_us": 144.1999920643866
+          },
+          {
+            "dispatch_us": 25.312000885605812,
+            "combine_us": 29.24799919128418,
+            "dispatch_wall_us": 118.13399032689631,
+            "combine_wall_us": 146.580976434052
+          },
+          {
+            "dispatch_us": 23.93599972128868,
+            "combine_us": 24.25600029528141,
+            "dispatch_wall_us": 111.69500066898763,
+            "combine_wall_us": 126.89697905443609
+          },
+          {
+            "dispatch_us": 22.272000089287758,
+            "combine_us": 24.57600086927414,
+            "dispatch_wall_us": 106.33899364620447,
+            "combine_wall_us": 125.07900828495622
+          },
+          {
+            "dispatch_us": 20.864000543951988,
+            "combine_us": 24.000000208616257,
+            "dispatch_wall_us": 104.73799193277955,
+            "combine_wall_us": 126.31798745132983
+          },
+          {
+            "dispatch_us": 22.143999114632607,
+            "combine_us": 26.079999282956123,
+            "dispatch_wall_us": 104.61901547387242,
+            "combine_wall_us": 128.85499745607376
+          },
+          {
+            "dispatch_us": 21.27999998629093,
+            "combine_us": 24.768000468611717,
+            "dispatch_wall_us": 104.28900714032352,
+            "combine_wall_us": 127.05699191428721
+          },
+          {
+            "dispatch_us": 21.536000072956085,
+            "combine_us": 24.480000138282776,
+            "dispatch_wall_us": 104.66898675076663,
+            "combine_wall_us": 125.89100515469909
+          },
+          {
+            "dispatch_us": 20.160000771284103,
+            "combine_us": 24.927999824285507,
+            "dispatch_wall_us": 104.84899394214153,
+            "combine_wall_us": 126.63999223150313
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 32.735999673604965,
+            "combine_us": 33.28000009059906,
+            "dispatch_wall_us": 125.84999785758555,
+            "combine_wall_us": 141.72500232234597
+          },
+          {
+            "dispatch_us": 32.22399950027466,
+            "combine_us": 25.407999753952026,
+            "dispatch_wall_us": 127.94201029464602,
+            "combine_wall_us": 113.62199438735843
+          },
+          {
+            "dispatch_us": 22.84800074994564,
+            "combine_us": 27.168000116944313,
+            "dispatch_wall_us": 94.24600284546614,
+            "combine_wall_us": 127.67399311996996
+          },
+          {
+            "dispatch_us": 20.160000771284103,
+            "combine_us": 24.992000311613083,
+            "dispatch_wall_us": 84.87000013701618,
+            "combine_wall_us": 107.48000931926072
+          },
+          {
+            "dispatch_us": 19.007999449968338,
+            "combine_us": 40.76800122857094,
+            "dispatch_wall_us": 91.92500147037208,
+            "combine_wall_us": 127.6130205951631
+          },
+          {
+            "dispatch_us": 23.16799946129322,
+            "combine_us": 24.000000208616257,
+            "dispatch_wall_us": 95.21699394099414,
+            "combine_wall_us": 112.8290023189038
+          },
+          {
+            "dispatch_us": 22.463999688625336,
+            "combine_us": 24.671999737620354,
+            "dispatch_wall_us": 96.29700798541307,
+            "combine_wall_us": 110.42499681934714
+          },
+          {
+            "dispatch_us": 20.959999412298203,
+            "combine_us": 24.831999093294144,
+            "dispatch_wall_us": 94.87898205406964,
+            "combine_wall_us": 125.49798702821136
+          },
+          {
+            "dispatch_us": 50.27199909090996,
+            "combine_us": 20.99199965596199,
+            "dispatch_wall_us": 123.23301052674651,
+            "combine_wall_us": 105.74297630228102
+          },
+          {
+            "dispatch_us": 22.5600004196167,
+            "combine_us": 22.655999287962914,
+            "dispatch_wall_us": 94.60901492275298,
+            "combine_wall_us": 107.78699652291834
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 23.04000034928322,
+            "combine_us": 25.50400048494339,
+            "dispatch_wall_us": 99.51399988494813,
+            "combine_wall_us": 123.5819945577532
+          },
+          {
+            "dispatch_us": 24.992000311613083,
+            "combine_us": 26.1439997702837,
+            "dispatch_wall_us": 101.06401168741286,
+            "combine_wall_us": 117.63800284825265
+          },
+          {
+            "dispatch_us": 30.49599938094616,
+            "combine_us": 21.43999934196472,
+            "dispatch_wall_us": 108.62399358302355,
+            "combine_wall_us": 109.7189961001277
+          },
+          {
+            "dispatch_us": 23.96799996495247,
+            "combine_us": 25.82399919629097,
+            "dispatch_wall_us": 100.31400597654283,
+            "combine_wall_us": 116.65700003504753
+          },
+          {
+            "dispatch_us": 23.584000766277313,
+            "combine_us": 64.19199705123901,
+            "dispatch_wall_us": 101.55298514291644,
+            "combine_wall_us": 200.0669774133712
+          },
+          {
+            "dispatch_us": 34.143999218940735,
+            "combine_us": 38.176000118255615,
+            "dispatch_wall_us": 134.75600280798972,
+            "combine_wall_us": 155.14198457822204
+          },
+          {
+            "dispatch_us": 35.64799949526787,
+            "combine_us": 31.615998595952988,
+            "dispatch_wall_us": 135.5190179310739,
+            "combine_wall_us": 158.63700537011027
+          },
+          {
+            "dispatch_us": 21.023999899625778,
+            "combine_us": 27.35999971628189,
+            "dispatch_wall_us": 97.87900489754975,
+            "combine_wall_us": 119.79899136349559
+          },
+          {
+            "dispatch_us": 22.52800017595291,
+            "combine_us": 25.79200081527233,
+            "dispatch_wall_us": 94.98701547272503,
+            "combine_wall_us": 111.57701374031603
+          },
+          {
+            "dispatch_us": 22.6879995316267,
+            "combine_us": 22.431999444961548,
+            "dispatch_wall_us": 92.70600276067853,
+            "combine_wall_us": 107.11001232266426
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 47.68000170588493,
+            "combine_us": 44.16000097990036,
+            "dispatch_wall_us": 176.1780004017055,
+            "combine_wall_us": 181.82100029662251
+          },
+          {
+            "dispatch_us": 39.93599861860275,
+            "combine_us": 37.47199848294258,
+            "dispatch_wall_us": 155.39501328021288,
+            "combine_wall_us": 160.53399303928018
+          },
+          {
+            "dispatch_us": 30.14400042593479,
+            "combine_us": 33.08799862861633,
+            "dispatch_wall_us": 126.41798821277916,
+            "combine_wall_us": 142.46799401007593
+          },
+          {
+            "dispatch_us": 33.59999880194664,
+            "combine_us": 40.64000025391579,
+            "dispatch_wall_us": 124.90898370742798,
+            "combine_wall_us": 176.18099809624255
+          },
+          {
+            "dispatch_us": 34.304000437259674,
+            "combine_us": 34.752000123262405,
+            "dispatch_wall_us": 143.55999883264303,
+            "combine_wall_us": 146.6080138925463
+          },
+          {
+            "dispatch_us": 32.3840007185936,
+            "combine_us": 35.0399985909462,
+            "dispatch_wall_us": 127.27000284940004,
+            "combine_wall_us": 145.61600983142853
+          },
+          {
+            "dispatch_us": 28.960000723600388,
+            "combine_us": 30.400000512599945,
+            "dispatch_wall_us": 119.56100934185088,
+            "combine_wall_us": 136.02498802356422
+          },
+          {
+            "dispatch_us": 27.03999914228916,
+            "combine_us": 28.79999950528145,
+            "dispatch_wall_us": 110.6899871956557,
+            "combine_wall_us": 125.45700883492827
+          },
+          {
+            "dispatch_us": 25.21600015461445,
+            "combine_us": 27.936000376939774,
+            "dispatch_wall_us": 106.28497693687677,
+            "combine_wall_us": 124.51698421500623
+          },
+          {
+            "dispatch_us": 24.064000695943832,
+            "combine_us": 26.72000043094158,
+            "dispatch_wall_us": 103.73399709351361,
+            "combine_wall_us": 120.45400217175484
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 37.98399865627289,
+            "combine_us": 40.672000497579575,
+            "dispatch_wall_us": 146.96799917146564,
+            "combine_wall_us": 165.45699327252805
+          },
+          {
+            "dispatch_us": 35.64799949526787,
+            "combine_us": 32.607998698949814,
+            "dispatch_wall_us": 141.22200082056224,
+            "combine_wall_us": 139.57699411548674
+          },
+          {
+            "dispatch_us": 29.440000653266907,
+            "combine_us": 29.823999851942062,
+            "dispatch_wall_us": 120.59000437147915,
+            "combine_wall_us": 130.72800356894732
+          },
+          {
+            "dispatch_us": 26.464000344276428,
+            "combine_us": 27.295999228954315,
+            "dispatch_wall_us": 110.89199688285589,
+            "combine_wall_us": 122.37898772582412
+          },
+          {
+            "dispatch_us": 25.05600079894066,
+            "combine_us": 26.11199952661991,
+            "dispatch_wall_us": 104.51400885358453,
+            "combine_wall_us": 116.03900929912925
+          },
+          {
+            "dispatch_us": 22.048000246286392,
+            "combine_us": 24.191999807953835,
+            "dispatch_wall_us": 98.02199201658368,
+            "combine_wall_us": 110.37799413315952
+          },
+          {
+            "dispatch_us": 21.247999742627144,
+            "combine_us": 24.064000695943832,
+            "dispatch_wall_us": 91.9559970498085,
+            "combine_wall_us": 107.97401773743331
+          },
+          {
+            "dispatch_us": 20.320000126957893,
+            "combine_us": 23.711999878287315,
+            "dispatch_wall_us": 104.97300536371768,
+            "combine_wall_us": 106.92098294384778
+          },
+          {
+            "dispatch_us": 19.648000597953796,
+            "combine_us": 23.19999970495701,
+            "dispatch_wall_us": 92.06999675370753,
+            "combine_wall_us": 107.38000855781138
+          },
+          {
+            "dispatch_us": 20.800000056624413,
+            "combine_us": 22.39999920129776,
+            "dispatch_wall_us": 90.37097333930433,
+            "combine_wall_us": 106.09900346025825
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "d71a4a0bff26264acf3b1d9264cf60ad5f99f1436c449f088566aa1369921fba"
+      }
+    ]
+  ]
+}

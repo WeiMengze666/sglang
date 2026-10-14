@@ -23,15 +23,31 @@ def main():
     p.add_argument(
         "--variants",
         nargs="+",
-        choices=("colocated", "chunked", "pdd", "pdmux"),
+        choices=("colocated", "chunked", "pdd", "pdmux", "expertplex"),
         default=["colocated", "chunked", "pdd", "pdmux"],
     )
     p.add_argument("--port", type=int, default=32000)
     p.add_argument("--pdmux-config")
+    p.add_argument("--expertplex-config")
+    p.add_argument("--teacher-reference")
+    p.add_argument("--teacher-flush-between", action="store_true")
+    p.add_argument(
+        "--teacher-histories",
+        help="Also record fixed-history full-vocabulary diagnostics",
+    )
     p.add_argument("--startup-timeout", type=int, default=600)
     args = p.parse_args()
     if "pdmux" in args.variants and not args.pdmux_config:
         p.error("PDMux requires an explicit tested partition file")
+    if "expertplex" in args.variants and not args.expertplex_config:
+        p.error("ExpertPlex requires its node configuration")
+    for path in (
+        args.teacher_histories,
+        args.teacher_reference,
+        args.expertplex_config,
+    ):
+        if path and not Path(path).is_file():
+            p.error(f"Missing input file: {path}")
     args.output_dir.mkdir(parents=True, exist_ok=False)
     scripts = Path(__file__).parent
     report = {
@@ -42,6 +58,8 @@ def main():
         },
         "cases": [],
     }
+    if args.teacher_histories:
+        report["settings"]["teacher_histories"] = str(args.teacher_histories)
     child = None
 
     def stop(*_):
@@ -75,6 +93,36 @@ def main():
             ]
             if variant == "pdmux":
                 command += ["--pdmux-config", args.pdmux_config]
+            if variant == "expertplex":
+                node = json.loads(Path(args.expertplex_config).read_text())
+                if (
+                    node["model_path"] != args.model_path
+                    or node["weight_mode"] != "checkpoint"
+                ):
+                    raise ValueError("ExpertPlex must use the same real BF16 fixture")
+                node["rendezvous_dir"] = str((args.output_dir / "rendezvous").resolve())
+                node_path = args.output_dir / "node.json"
+                node_path.write_text(json.dumps(node, indent=2) + "\n")
+                command = [
+                    sys.executable,
+                    str(scripts / "launch.py"),
+                    "--config",
+                    str(node_path.resolve()),
+                    "--attention-backend",
+                    "triton",
+                    "--sampling-backend",
+                    "pytorch",
+                    "--skip-tokenizer-init",
+                    "--cuda-graph",
+                    "--sequence-cap",
+                    "4096",
+                    "--kv-tokens",
+                    "8192",
+                    "--port",
+                    str(args.port),
+                    "--log-dir",
+                    str(args.output_dir / variant),
+                ]
             row = {"variant": variant, "command": command, "status": "starting"}
             report["cases"].append(row)
             print(f"Starting {variant}", flush=True)
@@ -127,6 +175,41 @@ def main():
                             check=True,
                         )
                     row["status"] = "functional_pass"
+                    if args.teacher_histories:
+                        teacher = [
+                            sys.executable,
+                            str(scripts / "check_teacher_forcing.py"),
+                            "--base-url",
+                            f"http://127.0.0.1:{args.port}",
+                            "--model-path",
+                            args.model_path,
+                            "--histories",
+                            args.teacher_histories,
+                            "--output",
+                            str(args.output_dir / f"{variant}-teacher.json"),
+                            "--top-k",
+                            "128",
+                        ]
+                        reference = (
+                            Path(args.teacher_reference)
+                            if args.teacher_reference
+                            else args.output_dir / "colocated-teacher.json"
+                        )
+                        if args.teacher_flush_between:
+                            teacher += ["--flush-between"]
+                        if variant != "colocated" and reference.exists():
+                            teacher += ["--reference", str(reference)]
+                        with (args.output_dir / f"{variant}-teacher.log").open(
+                            "w"
+                        ) as output:
+                            subprocess.run(
+                                teacher,
+                                stdout=output,
+                                stderr=subprocess.STDOUT,
+                                timeout=240,
+                                check=True,
+                            )
+                        row["teacher_forcing_recorded"] = True
                 except (
                     RuntimeError,
                     TimeoutError,

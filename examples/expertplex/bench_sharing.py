@@ -15,7 +15,7 @@ import statistics
 from pathlib import Path
 
 
-def workload(args, rows, phase, w13, w2):
+def workload(args, rows, phase, w13, w2, *, return_buffers=False):
     import deep_gemm
     import torch
 
@@ -30,6 +30,21 @@ def workload(args, rows, phase, w13, w2):
         .indices
     )
     counts = [int((ids == e * args.world).sum()) for e in range(experts)]
+    forced = False
+    if phase == 0 and getattr(args, "prefill_expert_rows", None) is not None:
+        counts = [args.prefill_expert_rows] * experts
+        forced = True
+    if phase == 1 and getattr(args, "decode_active_experts", None) is not None:
+        counts = [1] * args.decode_active_experts + [0] * (
+            experts - args.decode_active_experts
+        )
+        forced = True
+
+    def source_rows(expert, count):
+        if forced:
+            return torch.arange(count, device=args.device) % rows
+        return (ids == expert * args.world).nonzero()[:, 0]
+
     if phase == 0:
         padded = [(c + 127) // 128 * 128 for c in counts]
         total = max(128, sum(padded))
@@ -37,7 +52,7 @@ def workload(args, rows, phase, w13, w2):
         layout = torch.full((total,), -1, dtype=torch.int32, device="cuda")
         cursor = 0
         for expert, (count, size) in enumerate(zip(counts, padded)):
-            a[cursor : cursor + count] = x[(ids == expert * args.world).nonzero()[:, 0]]
+            a[cursor : cursor + count] = x[source_rows(expert, count)]
             layout[cursor : cursor + size] = expert
             cursor += size
         gateup = torch.empty(total, 2 * inner, dtype=torch.bfloat16, device="cuda")
@@ -64,7 +79,7 @@ def workload(args, rows, phase, w13, w2):
         capacity = max(128, (max(counts) + 127) // 128 * 128)
         a = torch.zeros(experts, capacity, h, dtype=torch.bfloat16, device="cuda")
         for expert, count in enumerate(counts):
-            a[expert, :count] = x[(ids == expert * args.world).nonzero()[:, 0]]
+            a[expert, :count] = x[source_rows(expert, count)]
         layout = torch.tensor(counts, dtype=torch.int32, device="cuda")
         gateup = torch.zeros(
             experts, capacity, 2 * inner, dtype=torch.bfloat16, device="cuda"
@@ -98,6 +113,8 @@ def workload(args, rows, phase, w13, w2):
                     activated, w2, out, layout, expected
                 )
 
+    if return_buffers:
+        return invoke, out, counts, {"input": a, "activation": activated}
     return invoke, out, counts
 
 
@@ -114,6 +131,19 @@ def main():
     p.add_argument("--decode-rows", type=int, default=128)
     p.add_argument("--delay-us", type=int, default=10)
     p.add_argument("--iterations", type=int, default=20)
+    p.add_argument(
+        "--prefill-expert-rows",
+        type=int,
+        help="Controlled per-expert P rows for section 7.4",
+    )
+    p.add_argument(
+        "--decode-active-experts",
+        type=int,
+        help="Controlled active D experts, one row each",
+    )
+    p.add_argument(
+        "--num-sms", type=int, help="Native kernel SM limit for offline profiles"
+    )
     p.add_argument(
         "--operation",
         choices=("gateup", "down", "moe"),
@@ -133,6 +163,17 @@ def main():
     )
     p.add_argument("--output", required=True, type=Path)
     args = p.parse_args()
+    if args.prefill_expert_rows is not None and args.prefill_expert_rows <= 0:
+        p.error("Prefill expert rows must be positive")
+    if (
+        args.decode_active_experts is not None
+        and not 1 <= args.decode_active_experts <= args.experts
+    ):
+        p.error("Invalid decode active expert count")
+    if args.num_sms is not None and (
+        args.num_sms < 2 or args.num_sms % 2 or args.modes != ["exclusive"]
+    ):
+        p.error("SM-limited profiles require an even SM count and --modes exclusive")
     if (
         args.device == args.control_device
         or min(args.iterations, args.prefill_rows, args.decode_rows) <= 0
@@ -172,11 +213,16 @@ def main():
     flags = torch.zeros(4, dtype=torch.int32, device=args.device)
     stamps = torch.zeros(4, dtype=torch.int64, device=args.control_device)
     total_sms = torch.cuda.get_device_properties(args.device).multi_processor_count
+    if args.num_sms is not None:
+        if args.num_sms > total_sms:
+            p.error("SM limit exceeds the device")
+        total_sms = args.num_sms
     original_sms = deep_gemm.get_num_sms()
     report = {
         "scope": __doc__,
         "settings": vars(args) | {"output": str(args.output)},
         "gpu": torch.cuda.get_device_name(),
+        "native_kernel_sm_limit": total_sms,
         "expert_rows": [w[2] for w in works],
         "cases": [],
     }
@@ -290,7 +336,7 @@ def main():
                 "requested_sms": division,
                 "actual_sms": sms,
                 "response_upper_bound_us": response,
-                "slowdown_vs_full_gpu_isolated": [
+                "slowdown_vs_isolated_at_same_sm_limit": [
                     a / b for a, b in zip(response, reference)
                 ],
                 "samples": samples,

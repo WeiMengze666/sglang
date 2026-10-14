@@ -48,8 +48,8 @@ BF16 routed expert 权重按 `expert_id % E_count` 分片，每张 E 卡持有�
 | 默认配置的每卡项目 | GiB |
 | --- | ---: |
 | E 卡 routed expert 权重 | 217.969 |
-| E 卡全部 mailbox 和中间缓冲区（连续 P / masked D） | 1.374 |
-| E 卡计入 16 GiB 预留后的容量估算 | 235.342 |
+| E 卡全部 mailbox 和中间缓冲区（默认单 mailbox，P2048 / D256） | 1.942 |
+| E 卡计入 16 GiB 预留后的容量估算 | 235.911 |
 | A 卡 attention/router/embedding/head 权重 | 22.483 |
 | A 卡 65,536-token BF16 KV pool | 15.5 |
 
@@ -58,10 +58,10 @@ BF16 routed expert 权重按 `expert_id % E_count` 分片，每张 E 卡持有�
 worker 会使用 `cudaMemGetInfo` 对专家权重、固定 mailbox 和至少 8 GiB 运行时预留做
 启动检查。规划器默认预留 16 GiB；GPU 测试仍需记录实际 allocated/reserved HBM。
 
-buffer 不按层复制。P 为按专家连续打包的 routed rows，专家起点按 64 行对齐；
+buffer 不按层复制。P 为按专家连续打包的 routed rows，专家起点按 128 行对齐；
 D 为 `[local_experts, max_decode_tokens, H/I]` masked 布局。每个 mailbox 各有
-BF16 input、activation、output；TBO 分配两套。P 的最坏情况行数按
-`max_prefill_tokens * min(top_k, local_experts) + 63 * local_experts` 向上对齐，
+BF16 input、gate/up、activation、output；TBO 分配两套。P 的最坏情况行数按
+`max_prefill_tokens * min(top_k, local_experts) + 127 * local_experts` 向上对齐，
 而非为所有专家预留最大 prefill 长度。`configure.py` 和优化器计算同一分配公式。
 attention 直接写远端最终 buffer，没有额外完整本地 packing buffer。
 
@@ -243,7 +243,7 @@ python -m sglang.srt.expertplex.optimizer \
 
 不提供 `--profiles` 时仅估算容量，不产生任何 latency/goodput 数字。提供 profile 时，
 schema 要求 `units="seconds_per_layer"`、非空 `provenance`、真实 `total_sms`、
-`tile_rows={"prefill":64,"decode":32}`、实测 `nvlink_bytes_per_second`，以及 prefill/decode 各自的
+`tile_rows={"prefill":128,"decode":128}`、实测 `nvlink_bytes_per_second`，以及 prefill/decode 各自的
 `attention` 系数 `{alpha,beta,gamma,delta}`、`moe_by_sm_count` 和逐专家激活概率
 `expert_probabilities`（总和为 top-k）。`fit_coefficients` 接受实测
 `{x,sequence_length,latency_s}` 样本；MoE 的 x 必须是 tile footprint。只有实际测量过的
@@ -252,3 +252,21 @@ SM 预算进入搜索。测试里的人工系数仅验证代数，不作为 B300
 当前关键路径模型是近似，未计入完整排队、KV 迁移和服务 CPU 开销。`--overlap tbo`
 需要实测 TBO profiles；client 路径支持该选项，完整服务验收仍待完成。
 profile 搜索结果要在 B300 上用同配置的端到端 sweep 重新验收。
+
+
+## 实测检查点（2026-10-15，仍未验收）
+
+完整 480B **随机权重**，ShareGPT 64 请求、1P3D4E、相同 24576 长度上限，
+固定 TTFT=1s / TPOT=50ms，第一轮 1 req/s 的 joint attainment：
+共置基线 61/64，ExpertPlex 45/64。当前没有达到 1.5×；保留全部结果供后续优化对照。
+这一服务测试配置使用 P24576 / D256、双 mailbox，实际固定 buffer 估算为 **17.291 GiB/E**，
+不能套用上方 P2048 单 mailbox 的容量数字。
+
+`run_serving_experiment.py` 会记录启动参数、环境、完整逐请求结果，并自动生成独立的
+rendezvous。`bench_apk_sharing.py` 对 GateUp/Down 分别执行 §7.3 对照；
+`profile_operations.py` 扫 §7.4 的 per-expert rows / active experts；
+`bench_communication.py --cuda-graph` 用 GPU 同步隔离 dispatch 与 combine，
+支持单独构建的固定 DeepEP v1。`--group-transfers` 测试预建整组 attention 通信模板；
+服务端目前以 `SGLANG_EXPERTPLEX_GROUP_COMM=1` 显式选择。
+`check_teacher_forcing.py --top-k 128 --flush-between` 比较同一历史、无前缀缓存复用的
+logprob；top-k 子集不能当作完整词表的 TV/KL。所有脚本的输出均明确实验范围。

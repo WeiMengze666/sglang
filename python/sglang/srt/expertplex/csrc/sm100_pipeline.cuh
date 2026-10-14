@@ -15,6 +15,9 @@ namespace expertplex_sm100 {
 using Barrier = cutlass::arch::ClusterTransactionBarrier;
 using Element = cutlass::bfloat16_t;
 constexpr int M = 128, N = 128, K = 64, OutputStages = 2;
+// Nsight Systems confirms the pinned native BF16 masked and contiguous
+// Coder templates both use M=128 (including D128). Keep this startup constant.
+constexpr int DecodeM = M;
 constexpr int Threads = 128 + M;
 
 struct alignas(128) Maps {
@@ -70,11 +73,14 @@ struct TraceRecord {
   U64 begin_ns, finish_ns, ready_seen_ns, epoch;
   U64 sequence, slot, phase, stage;
 };
-constexpr int QueueShards = 32;
+constexpr int QueueShards = 8;
 struct alignas(128) QueueHead {
   U64 word;
 };
 struct Context {
+  int benchmark_stage =
+      0; // Diagnostic single-operation execution; 0 = full MoE.
+  int column_group = 0;
   TraceRecord *trace = nullptr;
   int trace_capacity = 0;
   Maps *maps;
@@ -96,7 +102,7 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
   std::vector<Maps> maps(b.slots);
   for (int slot = 0; slot < b.slots; ++slot) {
     for (int phase = 0; phase < 2; ++phase) {
-      int tile_m = phase == 0 ? M : 32;
+      int tile_m = phase == 0 ? M : DecodeM;
       size_t base = b.base_rows[slot];
       int rows = b.storage_rows[slot];
       encode_map(maps[slot].input[phase], b.input + base * b.hidden, b.hidden,
@@ -127,6 +133,10 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
   encode_map(weights[0].down, const_cast<BF16 *>(w2), b.intermediate,
              layers * b.experts * b.hidden, N);
   Context result;
+  // Native DeepGEMM's get_num_1d_blocks_per_group, with M=N=128 and
+  // multicast on A. Convert its CTA columns to our cluster task columns.
+  const int group_ctas = 16 + (ctas + 15) / 16 < 8 + (ctas + 7) / 8 ? 16 : 8;
+  result.column_group = group_ctas / cluster;
   result.trace_capacity = trace_capacity;
   if (trace_capacity) {
     size_t bytes =
@@ -165,7 +175,7 @@ __device__ __forceinline__ void reset_queues(Context context, int slot,
 }
 
 __device__ __forceinline__ int tile_rows(int phase, int stage) {
-  return stage == ACTIVATE ? 32 : (phase == 0 ? M : 32);
+  return stage == ACTIVATE ? 32 : (phase == 0 ? M : DecodeM);
 }
 
 __device__ __forceinline__ bool active_stage(int stage) {
@@ -203,7 +213,7 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
     set_error(c, BAD_LAYER);
   if (s->phase < 0 || s->phase > 1)
     set_error(c, BAD_PHASE);
-  const int tile_m = s->phase == 0 ? M : 32;
+  const int tile_m = s->phase == 0 ? M : DecodeM;
   U64 rows = 0, activation_rows = 0;
   for (int e = 0; e < b.experts; ++e) {
     int count =
@@ -236,17 +246,19 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
     c[FINISH_NS] = now_ns();
     system_store(c + DONE, epoch);
   } else {
-    reset_queues(context, slot, epoch, GATE);
-    queue_store(&s->queue, queue_value(epoch, GATE));
+    Stage first = context.benchmark_stage == DOWN ? DOWN : GATE;
+    reset_queues(context, slot, epoch, first);
+    queue_store(&s->queue, queue_value(epoch, first));
   }
 }
 
 // Only CTA0 reads attention readiness words. Other CTAs consume device-scope
 // policies; no SM is reserved for a separate receiver/polling kernel.
 template <int Cluster, bool Fused>
-__device__ __forceinline__ void
-update_policy(const DeviceBuffers &b, Context context, int layers,
-              int decode_budget, float expected, int cap, int &previous_budget) {
+__device__ __forceinline__ void update_policy(const DeviceBuffers &b,
+                                              Context context, int layers,
+                                              int decode_budget, float expected,
+                                              int cap, int &previous_budget) {
   for (int s = 0; s < b.slots; ++s)
     initialize<Cluster, Fused>(b, s, layers, context);
   U64 footprint = 0;
@@ -254,8 +266,11 @@ update_policy(const DeviceBuffers &b, Context context, int layers,
     auto *s = b.states + i;
     auto stage = (queue_load(&s->queue) >> 32) & 7;
     if (active_stage(stage) && s->phase == 1)
-      footprint += operation_tiles(s, stage) /
-                   ((operation_columns<Fused>(b, stage) + N * Cluster - 1) /
+      // Equation 3 measures the routed GEMM row-tile footprint. The finer
+      // activation scheduling unit must not inflate the same MoE batch's
+      // estimated load merely because it is currently at the activation stage.
+      footprint += s->gate_tiles /
+                   ((operation_columns<Fused>(b, GATE) + N * Cluster - 1) /
                     (N * Cluster));
   }
   int budget =
@@ -313,9 +328,23 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
     const int tile_m = tile_rows(phase, stage);
     const int tile_n =
         (operation_columns<Fused>(b, stage) + N * Cluster - 1) / (N * Cluster);
-    const unsigned row_tile = index / tile_n;
-    const int *prefix = context.tile_prefix +
-                        (slot * 2 + (stage == ACTIVATE)) * b.experts;
+    unsigned row_tile = index / tile_n;
+    unsigned column_tile = index % tile_n;
+    const int *prefix =
+        context.tile_prefix + (slot * 2 + (stage == ACTIVATE)) * b.experts;
+    if (phase == 0 && stage != ACTIVATE) {
+      // Match native contiguous GEMM's L2 traversal: a small N-column
+      // group over all row tiles before moving to the next N group. Row-major
+      // traversal rereads large expert weights after they leave L2.
+      const unsigned rows = prefix[b.experts - 1];
+      const unsigned group_size = rows * context.column_group;
+      const unsigned first_column = index / group_size * context.column_group;
+      const unsigned columns = min(static_cast<unsigned>(context.column_group),
+                                   tile_n - first_column);
+      const unsigned within = index % group_size;
+      row_tile = within / columns;
+      column_tile = first_column + within % columns;
+    }
     int lo = 0, hi = b.experts;
     while (lo < hi) {
       int mid = (lo + hi) / 2;
@@ -327,12 +356,27 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
     if (lo >= b.experts)
       asm volatile("trap;");
     const unsigned previous = lo ? prefix[lo - 1] : 0;
+    unsigned local_row = row_tile - previous;
+    if (phase == 1 && stage != ACTIVATE) {
+      // Native masked GEMM applies the same swizzle independently to each
+      // expert's row range rather than the concatenated prefill range.
+      const unsigned rows = prefix[lo] - previous;
+      const unsigned within_expert = index - previous * tile_n;
+      const unsigned group_size = rows * context.column_group;
+      const unsigned first_column =
+          within_expert / group_size * context.column_group;
+      const unsigned columns = min(static_cast<unsigned>(context.column_group),
+                                   tile_n - first_column);
+      const unsigned within = within_expert % group_size;
+      local_row = within / columns;
+      column_tile = first_column + within % columns;
+    }
     task = {slot,
             stage,
             state->layer,
             lo,
-            static_cast<int>(row_tile - previous) * tile_m,
-            static_cast<int>(index % tile_n) * N * Cluster,
+            static_cast<int>(local_row) * tile_m,
+            static_cast<int>(column_tile) * N * Cluster,
             b.counts[static_cast<size_t>(slot) * b.experts + lo],
             phase,
             q >> 35};
@@ -481,9 +525,9 @@ __global__ __launch_bounds__(Threads, 1) void executor(
               a, &s.full[stage], s.a[stage], k, map_row + rank * (M / Cluster),
               Cluster);
         else
-          deep_gemm::tma::copy<K, 32 / Cluster, 128, Element>(
-              a, &s.full[stage], s.a[stage], k, map_row + rank * (32 / Cluster),
-              Cluster);
+          deep_gemm::tma::copy<K, DecodeM / Cluster, 128, Element>(
+              a, &s.full[stage], s.a[stage], k,
+              map_row + rank * (DecodeM / Cluster), Cluster);
         deep_gemm::tma::copy<K, N, 128, Element>(g, &s.full[stage], s.g[stage],
                                                  k, weight_row, Cluster);
         if (Fused && gate)
@@ -504,12 +548,28 @@ __global__ __launch_bounds__(Threads, 1) void executor(
                                     cute::UMMA::Major::K,
                                     cute::UMMA::Major::K>();
     auto decode_descriptor =
-        cute::UMMA::make_instr_desc<Element, Element, float, N * Cluster, 32,
-                                    cute::UMMA::Major::K,
+        cute::UMMA::make_instr_desc<Element, Element, float, N * Cluster,
+                                    DecodeM, cute::UMMA::Major::K,
                                     cute::UMMA::Major::K>();
     using Mma =
         cute::conditional_t<Cluster == 1, deep_gemm::ptx::SM100_MMA_F16BF16_SS,
                             deep_gemm::ptx::SM100_MMA_F16BF16_2x1SM_SS>;
+    // Preserve the native MMA issue pipeline: stage descriptors live in warp
+    // lanes and are selected with a shuffle. Rebuilding a shared-memory
+    // descriptor in the issuing lane on every K step lengthens that pipeline.
+    auto a =
+        deep_gemm::mma::sm100::make_umma_desc<cute::UMMA::Major::K, M / Cluster,
+                                              K, 128>(s.a[0], 0, 0);
+    auto g =
+        deep_gemm::mma::sm100::make_umma_desc<cute::UMMA::Major::K, N, K, 128>(
+            s.g[0], 0, 0);
+    auto u =
+        deep_gemm::mma::sm100::make_umma_desc<cute::UMMA::Major::K, N, K, 128>(
+            Fused ? s.u[0] : s.g[0], 0, 0);
+    const uint32_t a_stage_lo = a.lo + lane * sizeof(s.a[0]) / 16;
+    const uint32_t g_stage_lo = g.lo + lane * sizeof(s.g[0]) / 16;
+    const uint32_t u_stage_lo =
+        u.lo + lane * (Fused ? sizeof(s.u[0]) : sizeof(s.g[0])) / 16;
     for (uint32_t sequence = 0;; ++sequence) {
       const int index = sequence % OutputStages,
                 parity = (sequence / OutputStages) & 1;
@@ -532,17 +592,10 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       for (int k = 0; k < reduction; k += K, advance()) {
         s.full[stage].wait(phase);
         deep_gemm::ptx::tcgen05_after_thread_sync();
+        const uint32_t a_base = __shfl_sync(0xffffffff, a_stage_lo, stage);
+        const uint32_t g_base = __shfl_sync(0xffffffff, g_stage_lo, stage);
+        const uint32_t u_base = __shfl_sync(0xffffffff, u_stage_lo, stage);
         if (lane == 0) {
-          auto a =
-              deep_gemm::mma::sm100::make_umma_desc<cute::UMMA::Major::K, M, K,
-                                                    128>(s.a[stage], 0, 0);
-          auto g =
-              deep_gemm::mma::sm100::make_umma_desc<cute::UMMA::Major::K, N, K,
-                                                    128>(s.g[stage], 0, 0);
-          auto u = deep_gemm::mma::sm100::make_umma_desc<cute::UMMA::Major::K,
-                                                         N, K, 128>(
-              Fused ? s.u[stage] : s.g[stage], 0, 0);
-          const uint32_t a_base = a.lo, g_base = g.lo, u_base = u.lo;
 #pragma unroll
           for (int inner = 0; inner < K; inner += 16) {
             a.lo = a_base + inner * 2 / 16;
@@ -710,7 +763,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         if (atomicAdd(&state->completed, 1U) == total * Cluster - 1) {
           state->completed = 0;
           __threadfence();
-          if (task.stage != DOWN) {
+          if (task.stage != DOWN && context.benchmark_stage == 0) {
             Stage next = gate && !Fused ? ACTIVATE : DOWN;
             reset_queues(context, task.slot, task.epoch, next);
             queue_store(&state->queue, queue_value(task.epoch, next));

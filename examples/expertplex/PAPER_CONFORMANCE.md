@@ -18,6 +18,7 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
 |---|---|---|---|
 | §3 | P、D attention 独占 GPU；E 共享完整专家权重 | 62 层 480B 随机权重完整 HTTP/NVLink KV/TBO/graph 路径通过 24×128 token；小 checkpoint 严格 token 对齐仍有差异 | 同权重基线逐 token / logprob 对照，真实 KV 移交 |
 | §4.2、§7.1 | 一个长驻 kernel 融合两个 grouped GEMM、激活、数据处理、cluster scheduler | 默认 SM100 长驻融合 TMA/TCGEN05；当前性能明显落后于原生 DeepGEMM，不能验收调度开销 | 对照原生 BF16 GEMM，并记录融合前后开销 |
+| §7.1、§7.6 Fig.15 | MoE 预处理/后处理也是 APK 中的 tile operation，包含 EP Scatter 两阶段与 EP Gather | 当前路由打包及加权归约在 attention 端，尚未复现 E 端 scatter/gather operation templates；直接写 GEMM 输入不等同于完整的数据处理流水线复现 | 补齐独立 operation、数值舍入边界与抢占间隔测试 |
 | §4.2 | 启动前固定 operation templates、buffer、TMA descriptors；shape 在启动时编译为常量 | buffers / TMA descriptors 已固定；Coder/30B 的 H/I 已做编译期特化，小调试模型保留通用形状 | 多层、动态 batch、图 replay 的地址与描述符检查 |
 | §4.2 | 保留原生 CTA/cluster shape、TMA multicast、warp specialization | 默认双 CTA、2SM MMA、9-stage TMA、原生 STSM/TMA epilogue 已通过回归；GateUp/ACT/Down 独立调度。Nsight Systems 确认对应 native GEMM 几何；性能仍落后 | 原生算子形状及流水线代码审计，数值测试 |
 | §4.3 Fig.4 | system P → CTA0 → device p_i → cluster DSMEM → warp broadcast → mbarrier | 默认后端已实现 CTA0→device policy→leader DSMEM→mbarrier；抢占 trace 与上界尚未验证 | 可控时刻注入 urgent decode，记录各级 epoch/timestamp |
@@ -57,7 +58,7 @@ Coder BF16 的 SLO 必须在对比前固定，不能在看到结果后改阈值�
 新增 COMM stream 与双 mailbox 路径：4 个 attention 客户端同时访问 4E，各自 12 次重叠结果对照及
 20 次 graph 输出对照均与串行路径 bitwise 一致。这是 client 协议测试，完整 SGLang TBO 随后完成 24×128 token，并确认实际图回放。
 Triton 小模型基线已完成 8 个请求、每个 32 个输出 token；分离部署用 INTRA_NODE_NVLINK 后也完成 8×32 token；严格对齐未全部通过。
-尚无真实模型完整精度、HTTP 端到端 goodput 或相对 SGLang 基线 1.5× 的验收证据。
+尚无真实模型完整精度或相对 SGLang 基线 1.5× 的验收证据。后续已完成随机权重 HTTP goodput 诊断，结果落后基线，见 VALIDATION.md 的完整记录。
 
 2026-10-15 后续修正：prefill 使用连续 routed rows，decode 独立 masked 容量；
 当时默认 Coder mailbox 数据分配估算降至 1.374 GiB/E；后续为保证 TMA tile 对齐，改为 128-row 对齐后为 1.444 GiB/E（均不含 TMA descriptors/运行时开销）。

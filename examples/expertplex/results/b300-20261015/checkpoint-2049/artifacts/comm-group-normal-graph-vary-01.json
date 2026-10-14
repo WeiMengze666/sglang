@@ -1,0 +1,1094 @@
+{
+  "scope": "Single-node adaptation of paper section 7.5: dispatch/combine separately.\n\nRanks 0..3 are attention clients and 4..7 hold 40 active experts each. DeepEP\nrequires equal expert ranges on all ranks, so its first 160 expert IDs are\nunused and the 160 actual expert IDs are mapped onto ranks 4..7. Prefill uses\nclient 0; decode uses clients 1..3. This is an 8-GPU NVLink adaptation, not the\npaper's 16-GPU hierarchical RDMA experiment. Echo work is outside timing.\n",
+  "settings": {
+    "backend": "expertplex",
+    "mode": "normal",
+    "rows": [
+      128,
+      2048
+    ],
+    "hidden": 6144,
+    "experts": 40,
+    "top_k": 8,
+    "iterations": 10,
+    "group_transfers": true,
+    "vary_routes": true,
+    "cuda_graph": true,
+    "seed": 20261015,
+    "port": 29650,
+    "deepep_revision": null,
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/comm-group-normal-graph-vary-01.json"
+  },
+  "summary": [
+    {
+      "rows": 128,
+      "max_rank_samples": {
+        "dispatch_us": [
+          68.03199648857117,
+          96.00000083446503,
+          98.75199943780899,
+          69.023996591568,
+          96.28800302743912,
+          99.55199807882309,
+          67.00800359249115,
+          68.92800331115723,
+          98.24000298976898,
+          67.45599955320358
+        ],
+        "combine_us": [
+          36.639999598264694,
+          61.11999973654747,
+          64.92800265550613,
+          36.38400137424469,
+          61.055999249219894,
+          65.0240033864975,
+          36.448001861572266,
+          60.864001512527466,
+          63.32799792289734,
+          36.70400008559227
+        ],
+        "step_wall_us": [
+          490.2420041617006,
+          537.0650033000857,
+          525.8849996607751,
+          475.4599940497428,
+          517.9309810046107,
+          513.1879879627377,
+          471.4459937531501,
+          483.0569960176945,
+          511.48197962902486,
+          463.1119954865426
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 82.51199871301651,
+        "combine_us": 60.96000038087368,
+        "step_wall_us": 500.86199189536273
+      }
+    },
+    {
+      "rows": 2048,
+      "max_rank_samples": {
+        "dispatch_us": [
+          82.04799890518188,
+          333.72798562049866,
+          370.0160086154938,
+          82.07999914884567,
+          333.8559865951538,
+          368.80001425743103,
+          81.85599744319916,
+          333.8879942893982,
+          368.4479892253876,
+          81.60000294446945
+        ],
+        "combine_us": [
+          98.14400225877762,
+          298.7520098686218,
+          327.7440071105957,
+          97.75999933481216,
+          298.94399642944336,
+          329.18399572372437,
+          98.01600128412247,
+          298.5279858112335,
+          329.50401306152344,
+          97.95200079679489
+        ],
+        "step_wall_us": [
+          935.0980108138174,
+          1388.0709884688258,
+          1461.6329863201827,
+          936.9780018460006,
+          1382.743997965008,
+          1451.6689989250153,
+          931.6669893451035,
+          1383.8470040354878,
+          1446.713984478265,
+          926.962005905807
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 333.79198610782623,
+        "combine_us": 298.6399978399277,
+        "step_wall_us": 1383.295501000248
+      }
+    }
+  ],
+  "ranks": [
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": true,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 68.03199648857117,
+            "combine_us": 36.639999598264694,
+            "step_wall_us": 288.4139830712229
+          },
+          {
+            "dispatch_us": 96.00000083446503,
+            "combine_us": 61.11999973654747,
+            "step_wall_us": 334.3739954289049
+          },
+          {
+            "dispatch_us": 98.75199943780899,
+            "combine_us": 64.92800265550613,
+            "step_wall_us": 338.30400207079947
+          },
+          {
+            "dispatch_us": 69.023996591568,
+            "combine_us": 36.38400137424469,
+            "step_wall_us": 293.5619850177318
+          },
+          {
+            "dispatch_us": 96.28800302743912,
+            "combine_us": 61.055999249219894,
+            "step_wall_us": 330.94699028879404
+          },
+          {
+            "dispatch_us": 99.55199807882309,
+            "combine_us": 65.0240033864975,
+            "step_wall_us": 340.9770142752677
+          },
+          {
+            "dispatch_us": 67.00800359249115,
+            "combine_us": 36.448001861572266,
+            "step_wall_us": 287.94098761864007
+          },
+          {
+            "dispatch_us": 68.92800331115723,
+            "combine_us": 60.864001512527466,
+            "step_wall_us": 305.0730156246573
+          },
+          {
+            "dispatch_us": 98.24000298976898,
+            "combine_us": 63.32799792289734,
+            "step_wall_us": 335.8319809194654
+          },
+          {
+            "dispatch_us": 67.45599955320358,
+            "combine_us": 36.70400008559227,
+            "step_wall_us": 281.82900859974325
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": true,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 82.04799890518188,
+            "combine_us": 98.14400225877762,
+            "step_wall_us": 593.2450003456324
+          },
+          {
+            "dispatch_us": 333.72798562049866,
+            "combine_us": 298.7520098686218,
+            "step_wall_us": 1039.1149844508618
+          },
+          {
+            "dispatch_us": 370.0160086154938,
+            "combine_us": 327.7440071105957,
+            "step_wall_us": 1110.761018935591
+          },
+          {
+            "dispatch_us": 82.07999914884567,
+            "combine_us": 97.75999933481216,
+            "step_wall_us": 591.0219915676862
+          },
+          {
+            "dispatch_us": 333.8559865951538,
+            "combine_us": 298.94399642944336,
+            "step_wall_us": 1040.6289948150516
+          },
+          {
+            "dispatch_us": 368.80001425743103,
+            "combine_us": 329.18399572372437,
+            "step_wall_us": 1119.950000429526
+          },
+          {
+            "dispatch_us": 81.85599744319916,
+            "combine_us": 98.01600128412247,
+            "step_wall_us": 592.878001043573
+          },
+          {
+            "dispatch_us": 333.8879942893982,
+            "combine_us": 298.5279858112335,
+            "step_wall_us": 1040.8810048829764
+          },
+          {
+            "dispatch_us": 368.4479892253876,
+            "combine_us": 329.50401306152344,
+            "step_wall_us": 1112.9390040878206
+          },
+          {
+            "dispatch_us": 81.60000294446945,
+            "combine_us": 97.95200079679489,
+            "step_wall_us": 593.6530069448054
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 36.67199984192848,
+            "combine_us": 30.527999624609947,
+            "step_wall_us": 488.2889916189015
+          },
+          {
+            "dispatch_us": 34.591998904943466,
+            "combine_us": 32.19199925661087,
+            "step_wall_us": 537.0650033000857
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 30.46399913728237,
+            "step_wall_us": 521.5669807512313
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 32.70399942994118,
+            "step_wall_us": 471.9680000562221
+          },
+          {
+            "dispatch_us": 36.83200106024742,
+            "combine_us": 30.49599938094616,
+            "step_wall_us": 517.0029762666672
+          },
+          {
+            "dispatch_us": 36.83200106024742,
+            "combine_us": 30.527999624609947,
+            "step_wall_us": 512.8459888510406
+          },
+          {
+            "dispatch_us": 36.67199984192848,
+            "combine_us": 32.70399942994118,
+            "step_wall_us": 470.613973448053
+          },
+          {
+            "dispatch_us": 36.896001547575,
+            "combine_us": 32.44800120592117,
+            "step_wall_us": 481.11099749803543
+          },
+          {
+            "dispatch_us": 35.00799834728241,
+            "combine_us": 30.33600002527237,
+            "step_wall_us": 511.48197962902486
+          },
+          {
+            "dispatch_us": 34.36800092458725,
+            "combine_us": 30.6560005992651,
+            "step_wall_us": 463.1119954865426
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 36.896001547575,
+            "combine_us": 32.92800113558769,
+            "step_wall_us": 934.7989980597049
+          },
+          {
+            "dispatch_us": 39.264000952243805,
+            "combine_us": 32.416000962257385,
+            "step_wall_us": 1378.2029855065048
+          },
+          {
+            "dispatch_us": 38.91199827194214,
+            "combine_us": 32.80000016093254,
+            "step_wall_us": 1458.742015529424
+          },
+          {
+            "dispatch_us": 38.88000175356865,
+            "combine_us": 32.735999673604965,
+            "step_wall_us": 935.104995733127
+          },
+          {
+            "dispatch_us": 38.816001266241074,
+            "combine_us": 32.67199918627739,
+            "step_wall_us": 1382.743997965008
+          },
+          {
+            "dispatch_us": 36.80000081658363,
+            "combine_us": 32.735999673604965,
+            "step_wall_us": 1449.2349873762578
+          },
+          {
+            "dispatch_us": 38.62399980425835,
+            "combine_us": 33.28000009059906,
+            "step_wall_us": 929.5299823861569
+          },
+          {
+            "dispatch_us": 38.816001266241074,
+            "combine_us": 32.735999673604965,
+            "step_wall_us": 1383.8470040354878
+          },
+          {
+            "dispatch_us": 38.59199956059456,
+            "combine_us": 32.92800113558769,
+            "step_wall_us": 1443.978981114924
+          },
+          {
+            "dispatch_us": 39.07199949026108,
+            "combine_us": 32.51200169324875,
+            "step_wall_us": 917.2889986075461
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 30.912000685930252,
+            "combine_us": 26.496000587940216,
+            "step_wall_us": 487.0569973718375
+          },
+          {
+            "dispatch_us": 32.67199918627739,
+            "combine_us": 28.416000306606293,
+            "step_wall_us": 528.1269841361791
+          },
+          {
+            "dispatch_us": 32.67199918627739,
+            "combine_us": 26.655999943614006,
+            "step_wall_us": 517.8209976293147
+          },
+          {
+            "dispatch_us": 32.76799991726875,
+            "combine_us": 28.64000014960766,
+            "step_wall_us": 472.4909958895296
+          },
+          {
+            "dispatch_us": 32.83200040459633,
+            "combine_us": 28.48000079393387,
+            "step_wall_us": 516.7899944353849
+          },
+          {
+            "dispatch_us": 32.70399942994118,
+            "combine_us": 26.335999369621277,
+            "step_wall_us": 510.8879995532334
+          },
+          {
+            "dispatch_us": 32.575998455286026,
+            "combine_us": 28.511999174952507,
+            "step_wall_us": 468.53398089297116
+          },
+          {
+            "dispatch_us": 32.86400064826012,
+            "combine_us": 26.623999699950218,
+            "step_wall_us": 481.08198097907007
+          },
+          {
+            "dispatch_us": 32.896000891923904,
+            "combine_us": 26.464000344276428,
+            "step_wall_us": 510.28700545430183
+          },
+          {
+            "dispatch_us": 32.70399942994118,
+            "combine_us": 28.76799926161766,
+            "step_wall_us": 462.1270054485649
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 32.76799991726875,
+            "combine_us": 28.60799990594387,
+            "step_wall_us": 933.7850206065923
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 28.704000636935234,
+            "step_wall_us": 1387.338008498773
+          },
+          {
+            "dispatch_us": 34.591998904943466,
+            "combine_us": 28.64000014960766,
+            "step_wall_us": 1458.9949860237539
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 28.511999174952507,
+            "step_wall_us": 929.2920003645122
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 28.60799990594387,
+            "step_wall_us": 1381.060981657356
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 28.672000393271446,
+            "step_wall_us": 1451.6689989250153
+          },
+          {
+            "dispatch_us": 32.86400064826012,
+            "combine_us": 29.472000896930695,
+            "step_wall_us": 889.3079939298332
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 28.672000393271446,
+            "step_wall_us": 1364.3470010720193
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 28.575999662280083,
+            "step_wall_us": 1446.188020054251
+          },
+          {
+            "dispatch_us": 32.80000016093254,
+            "combine_us": 28.31999957561493,
+            "step_wall_us": 919.8540064971894
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 26.815999299287796,
+            "step_wall_us": 489.336991449818
+          },
+          {
+            "dispatch_us": 32.83200040459633,
+            "combine_us": 28.351999819278717,
+            "step_wall_us": 523.340015206486
+          },
+          {
+            "dispatch_us": 32.99200162291527,
+            "combine_us": 28.48000079393387,
+            "step_wall_us": 521.3879921939224
+          },
+          {
+            "dispatch_us": 32.86400064826012,
+            "combine_us": 28.543999418616295,
+            "step_wall_us": 475.4599940497428
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 28.255999088287354,
+            "step_wall_us": 510.98602125421166
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 28.511999174952507,
+            "step_wall_us": 511.5109961479902
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 28.511999174952507,
+            "step_wall_us": 468.4409941546619
+          },
+          {
+            "dispatch_us": 34.591998904943466,
+            "combine_us": 26.623999699950218,
+            "step_wall_us": 477.50602243468165
+          },
+          {
+            "dispatch_us": 32.96000137925148,
+            "combine_us": 28.351999819278717,
+            "step_wall_us": 511.02100405842066
+          },
+          {
+            "dispatch_us": 32.83200040459633,
+            "combine_us": 26.72000043094158,
+            "step_wall_us": 459.60102579556406
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 32.86400064826012,
+            "combine_us": 28.863999992609024,
+            "step_wall_us": 935.0830223411322
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 29.023999348282814,
+            "step_wall_us": 1381.9460000377148
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 28.48000079393387,
+            "step_wall_us": 1458.892016671598
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 28.672000393271446,
+            "step_wall_us": 933.7009978480637
+          },
+          {
+            "dispatch_us": 36.83200106024742,
+            "combine_us": 28.672000393271446,
+            "step_wall_us": 1376.1890004388988
+          },
+          {
+            "dispatch_us": 34.88000109791756,
+            "combine_us": 28.48000079393387,
+            "step_wall_us": 1449.1489855572581
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 28.79999950528145,
+            "step_wall_us": 928.6499989684671
+          },
+          {
+            "dispatch_us": 34.71999987959862,
+            "combine_us": 28.64000014960766,
+            "step_wall_us": 1377.025997499004
+          },
+          {
+            "dispatch_us": 34.65599939227104,
+            "combine_us": 28.64000014960766,
+            "step_wall_us": 1442.562002921477
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 28.255999088287354,
+            "step_wall_us": 921.1470023728907
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 3.5200000274926424,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 489.52398356050253
+          },
+          {
+            "dispatch_us": 3.456000005826354,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 526.624993653968
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 523.5940043348819
+          },
+          {
+            "dispatch_us": 3.456000005826354,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 471.74800420179963
+          },
+          {
+            "dispatch_us": 3.648000070825219,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 517.134991241619
+          },
+          {
+            "dispatch_us": 3.5520000383257866,
+            "combine_us": 3.135999897494912,
+            "step_wall_us": 511.3589868415147
+          },
+          {
+            "dispatch_us": 3.488000016659498,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 471.4459937531501
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 3.135999897494912,
+            "step_wall_us": 481.9449968636036
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 508.70899576693773
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 3.135999897494912,
+            "step_wall_us": 461.5150101017207
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 3.5520000383257866,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 935.0980108138174
+          },
+          {
+            "dispatch_us": 3.5200000274926424,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 1388.0709884688258
+          },
+          {
+            "dispatch_us": 3.6800000816583633,
+            "combine_us": 3.1679999083280563,
+            "step_wall_us": 1460.981002310291
+          },
+          {
+            "dispatch_us": 3.456000005826354,
+            "combine_us": 3.1679999083280563,
+            "step_wall_us": 931.7779913544655
+          },
+          {
+            "dispatch_us": 3.488000016659498,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 1381.9840096402913
+          },
+          {
+            "dispatch_us": 3.488000016659498,
+            "combine_us": 3.135999897494912,
+            "step_wall_us": 1447.7600052487105
+          },
+          {
+            "dispatch_us": 3.7440001033246517,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 929.3399925809354
+          },
+          {
+            "dispatch_us": 3.456000005826354,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 1383.2759868819267
+          },
+          {
+            "dispatch_us": 3.7120000924915075,
+            "combine_us": 3.2319999299943447,
+            "step_wall_us": 1446.713984478265
+          },
+          {
+            "dispatch_us": 3.6800000816583633,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 925.3879834432155
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 3.3599999733269215,
+            "combine_us": 2.848000032827258,
+            "step_wall_us": 488.80401300266385
+          },
+          {
+            "dispatch_us": 3.584000049158931,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 524.2899933364242
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 521.7549914959818
+          },
+          {
+            "dispatch_us": 2.976000076159835,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 474.4280013255775
+          },
+          {
+            "dispatch_us": 2.9440000653266907,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 517.4419784452766
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 3.103999886661768,
+            "step_wall_us": 510.74798102490604
+          },
+          {
+            "dispatch_us": 3.42399999499321,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 470.5179890152067
+          },
+          {
+            "dispatch_us": 3.3279999624937773,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 482.80900227837265
+          },
+          {
+            "dispatch_us": 3.5200000274926424,
+            "combine_us": 2.848000032827258,
+            "step_wall_us": 509.9960253573954
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 462.14001486077905
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 3.456000005826354,
+            "combine_us": 3.103999886661768,
+            "step_wall_us": 931.292976019904
+          },
+          {
+            "dispatch_us": 3.3279999624937773,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 1381.5639831591398
+          },
+          {
+            "dispatch_us": 3.295999951660633,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 1457.7989932149649
+          },
+          {
+            "dispatch_us": 3.3279999624937773,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 934.6769948024303
+          },
+          {
+            "dispatch_us": 3.42399999499321,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 1381.025998853147
+          },
+          {
+            "dispatch_us": 3.9679999463260174,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 1437.4379825312644
+          },
+          {
+            "dispatch_us": 2.976000076159835,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 927.1070011891425
+          },
+          {
+            "dispatch_us": 3.871999913826585,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 1381.9059822708368
+          },
+          {
+            "dispatch_us": 3.5520000383257866,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 1446.5530111920089
+          },
+          {
+            "dispatch_us": 2.9440000653266907,
+            "combine_us": 3.103999886661768,
+            "step_wall_us": 914.5009971689433
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 3.936000168323517,
+            "combine_us": 3.903999924659729,
+            "step_wall_us": 488.90599282458425
+          },
+          {
+            "dispatch_us": 3.2319999299943447,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 527.783005964011
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 3.5200000274926424,
+            "step_wall_us": 523.2660041656345
+          },
+          {
+            "dispatch_us": 3.7440001033246517,
+            "combine_us": 3.648000070825219,
+            "step_wall_us": 470.91901069507
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 517.8870051167905
+          },
+          {
+            "dispatch_us": 3.263999940827489,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 512.807018822059
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 468.60898146405816
+          },
+          {
+            "dispatch_us": 3.7440001033246517,
+            "combine_us": 3.5200000274926424,
+            "step_wall_us": 481.2059924006462
+          },
+          {
+            "dispatch_us": 3.871999913826585,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 510.411016875878
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 460.98200255073607
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 3.5520000383257866,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 923.7960039172322
+          },
+          {
+            "dispatch_us": 3.936000168323517,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 1357.223984086886
+          },
+          {
+            "dispatch_us": 3.295999951660633,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 1459.38599598594
+          },
+          {
+            "dispatch_us": 3.1679999083280563,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 935.2759807370603
+          },
+          {
+            "dispatch_us": 3.903999924659729,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 1377.9870059806854
+          },
+          {
+            "dispatch_us": 3.936000168323517,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 1438.5769900400192
+          },
+          {
+            "dispatch_us": 3.456000005826354,
+            "combine_us": 3.903999924659729,
+            "step_wall_us": 931.6669893451035
+          },
+          {
+            "dispatch_us": 4.000000189989805,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 1382.2309847455472
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.903999924659729,
+            "step_wall_us": 1445.4239862971008
+          },
+          {
+            "dispatch_us": 2.976000076159835,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 923.3059827238321
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 490.2420041617006
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 524.3479972705245
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 525.8849996607751
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 472.9609936475754
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 517.9309810046107
+          },
+          {
+            "dispatch_us": 3.1679999083280563,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 513.1879879627377
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 468.82499009370804
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 483.0569960176945
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 511.4619852975011
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 461.96000766940415
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 934.5599974039942
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 1385.4250137228519
+          },
+          {
+            "dispatch_us": 2.9440000653266907,
+            "combine_us": 3.135999897494912,
+            "step_wall_us": 1461.6329863201827
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 3.616000059992075,
+            "step_wall_us": 936.9780018460006
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 1381.8959996569902
+          },
+          {
+            "dispatch_us": 2.9440000653266907,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 1439.6999904420227
+          },
+          {
+            "dispatch_us": 2.976000076159835,
+            "combine_us": 3.1679999083280563,
+            "step_wall_us": 927.9799996875226
+          },
+          {
+            "dispatch_us": 2.9440000653266907,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 1380.529982270673
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 1445.961999706924
+          },
+          {
+            "dispatch_us": 2.9440000653266907,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 926.962005905807
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ]
+  ]
+}

@@ -1,0 +1,219 @@
+"""Run one isolated serving deployment and a frozen Poisson/SLO sweep.
+
+Synthetic checkpoints establish execution/performance diagnostics only. They
+cannot establish pretrained-model accuracy, realistic routing or acceptance.
+Every launch/benchmark command and failure is saved; only owned processes are
+stopped. Use separate output directories for tuning and held-out evaluation.
+"""
+
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--variant",
+        choices=("expertplex", "colocated", "chunked", "pdd", "pdmux"),
+        required=True,
+    )
+    p.add_argument("--model-path", required=True)
+    p.add_argument("--tokenizer-path", required=True)
+    p.add_argument("--config", help="ExpertPlex node configuration")
+    p.add_argument("--pdmux-config")
+    p.add_argument("--weight-mode", choices=("checkpoint", "synthetic"), required=True)
+    p.add_argument("--dataset-path", required=True)
+    p.add_argument("--requests", type=int, default=256)
+    p.add_argument("--rates", type=float, nargs="+", required=True)
+    p.add_argument("--ttft-slo-ms", type=float, required=True)
+    p.add_argument("--tpot-slo-ms", type=float, required=True)
+    p.add_argument("--sequence-cap", type=int, default=24576)
+    p.add_argument("--decode-kv-tokens", type=int, default=98304)
+    p.add_argument(
+        "--attention-backend", choices=("triton", "flashinfer"), default="triton"
+    )
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--port", type=int, default=31000)
+    p.add_argument("--startup-timeout", type=int, default=900)
+    p.add_argument("--benchmark-timeout", type=int, default=3600)
+    p.add_argument("--output-dir", required=True, type=Path)
+    args = p.parse_args()
+    if args.variant == "expertplex" and not args.config:
+        p.error("ExpertPlex requires --config")
+    if args.variant == "pdmux" and not args.pdmux_config:
+        p.error("PDMux requires tested --pdmux-config")
+    args.output_dir.mkdir(parents=True, exist_ok=False)
+    scripts = Path(__file__).resolve().parent
+    common = [
+        "--port",
+        str(args.port),
+        "--tokenizer-path",
+        args.tokenizer_path,
+        "--attention-backend",
+        args.attention_backend,
+        "--sequence-cap",
+        str(args.sequence_cap),
+        "--log-dir",
+        str(args.output_dir / "service"),
+    ]
+    if args.variant == "expertplex":
+        node = json.loads(Path(args.config).read_text())
+        if (
+            node["model_path"] != args.model_path
+            or node["weight_mode"] != args.weight_mode
+        ):
+            p.error("Node config must match model path and weight mode")
+        decode_count = sum(c["phase"] == "decode" for c in node["clients"])
+        if args.decode_kv_tokens % decode_count:
+            p.error("Aggregate KV capacity must divide across D workers")
+        if node["max_prefill_tokens"] < args.sequence_cap:
+            p.error("P mailbox must cover the common input+output length cap")
+        node["rendezvous_dir"] = str((args.output_dir / "rendezvous").resolve())
+        node_path = args.output_dir / "node.json"
+        node_path.write_text(json.dumps(node, indent=2) + "\n")
+        launch = [
+            sys.executable,
+            str(scripts / "launch.py"),
+            "--config",
+            str(node_path.resolve()),
+            "--kv-tokens",
+            str(args.decode_kv_tokens // decode_count),
+            "--sampling-backend",
+            "pytorch",
+            "--cuda-graph",
+            *common,
+        ]
+    else:
+        launch = [
+            sys.executable,
+            str(scripts / "launch_baseline.py"),
+            "--variant",
+            args.variant,
+            "--model-path",
+            args.model_path,
+            "--load-format",
+            "dummy" if args.weight_mode == "synthetic" else "safetensors",
+            "--max-prefill-tokens",
+            str(args.sequence_cap),
+            "--decode-kv-tokens",
+            str(args.decode_kv_tokens),
+            "--startup-timeout",
+            str(args.startup_timeout),
+            *common,
+        ]
+        if args.pdmux_config:
+            launch += ["--pdmux-config", args.pdmux_config]
+    bench = [
+        sys.executable,
+        str(scripts / "bench_sweep.py"),
+        "--base-url",
+        f"http://127.0.0.1:{args.port}",
+        "--model-path",
+        args.model_path,
+        "--tokenizer-path",
+        args.tokenizer_path,
+        "--weight-mode",
+        args.weight_mode,
+        "--label",
+        args.variant,
+        "--dataset-name",
+        "custom",
+        "--dataset-path",
+        args.dataset_path,
+        "--sequence-cap",
+        str(args.sequence_cap),
+        "--num-prompts",
+        str(args.requests),
+        "--rates",
+        *map(str, args.rates),
+        "--ttft-slo-ms",
+        str(args.ttft_slo_ms),
+        "--tpot-slo-ms",
+        str(args.tpot_slo_ms),
+        "--seed",
+        str(args.seed),
+        "--output-dir",
+        str(args.output_dir / "sweep"),
+    ]
+    report = {
+        "scope": __doc__,
+        "settings": vars(args) | {"output_dir": str(args.output_dir)},
+        "launch_command": launch,
+        "benchmark_command": bench,
+        "environment": {
+            k: v
+            for k, v in os.environ.items()
+            if k.startswith(("NVSHMEM_", "NCCL_", "SGLANG_", "DG_"))
+        },
+        "status": "starting",
+    }
+
+    def save():
+        (args.output_dir / "experiment.json").write_text(
+            json.dumps(report, indent=2) + "\n"
+        )
+
+    def stop(*_):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+    service = benchmark = None
+    save()
+    try:
+        with (args.output_dir / "launcher.log").open("w") as log:
+            service = subprocess.Popen(launch, stdout=log, stderr=subprocess.STDOUT)
+            report["launcher_pid"] = service.pid
+            save()
+            deadline = time.monotonic() + args.startup_timeout
+            while time.monotonic() < deadline:
+                if service.poll() is not None:
+                    raise RuntimeError(f"Service launcher exited {service.returncode}")
+                if (
+                    f"Ready: http://127.0.0.1:{args.port}"
+                    in (args.output_dir / "launcher.log").read_text()
+                ):
+                    break
+                time.sleep(1)
+            else:
+                raise TimeoutError("Startup deadline exceeded")
+            report["status"] = "benchmarking"
+            save()
+            with (args.output_dir / "benchmark.log").open("w") as bench_log:
+                benchmark = subprocess.Popen(
+                    bench,
+                    stdout=bench_log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                code = benchmark.wait(timeout=args.benchmark_timeout)
+                if code:
+                    raise RuntimeError(f"Benchmark exited {code}")
+            report["status"] = "completed"
+    except BaseException as exc:
+        report["status"] = "failed"
+        report["error"] = repr(exc)
+        raise
+    finally:
+        if benchmark is not None and benchmark.poll() is None:
+            os.killpg(benchmark.pid, signal.SIGTERM)
+            try:
+                benchmark.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(benchmark.pid, signal.SIGKILL)
+                benchmark.wait(timeout=10)
+        if service is not None and service.poll() is None:
+            service.terminate()  # Launcher cleans its own worker groups.
+            service.wait(timeout=90)
+        save()
+    print(json.dumps(report, indent=2))
+
+
+if __name__ == "__main__":
+    main()

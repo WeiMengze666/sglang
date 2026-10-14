@@ -55,6 +55,11 @@ class ExpertPlexClient:
             self.close()
             raise
         self.native = native
+        self.groups = (
+            [native.RemoteGroup(peers) for peers in self.mailboxes]
+            if os.environ.get("SGLANG_EXPERTPLEX_GROUP_COMM") == "1"
+            else []
+        )
         self.epoch = 0
         self.failed = False
         self.lock = threading.Lock()
@@ -67,6 +72,7 @@ class ExpertPlexClient:
         # clients before experts; synchronize our own streams before IPC close.
         for stream in getattr(self, "streams", []):
             stream.synchronize()
+        self.groups = []
         for peer in self.peers:
             peer.close()
         self.peers.clear()
@@ -132,33 +138,47 @@ class ExpertPlexClient:
                 output = torch.zeros(
                     (rows, hidden), dtype=torch.float32, device=hidden_states.device
                 )
-                for rank, peer in enumerate(peers):
-                    self.native.dispatch(
-                        peer,
-                        hidden_states,
-                        topk_ids,
-                        row_map,
-                        0,
-                        layer_id,
-                        phase,
-                        rank,
-                        world,
+                if self.groups:
+                    self.groups[mailbox].dispatch(
+                        hidden_states, topk_ids, row_map, layer_id, phase
                     )
+                else:
+                    for rank, peer in enumerate(peers):
+                        self.native.dispatch(
+                            peer,
+                            hidden_states,
+                            topk_ids,
+                            row_map,
+                            0,
+                            layer_id,
+                            phase,
+                            rank,
+                            world,
+                        )
                 # WaitDone is a one-thread GPU kernel on COMM. COMPUTE remains
                 # available to another microbatch until finish() adds its edge.
-                for rank, peer in enumerate(peers):
-                    self.native.combine(
-                        peer,
+                if self.groups:
+                    self.groups[mailbox].combine(
                         output,
                         topk_ids,
                         topk_weights,
                         row_map,
-                        0,
-                        rank,
-                        world,
                         timeout_ms=int(self.config.operation_timeout_s * 1000),
-                        synchronize=False,
                     )
+                else:
+                    for rank, peer in enumerate(peers):
+                        self.native.combine(
+                            peer,
+                            output,
+                            topk_ids,
+                            topk_weights,
+                            row_map,
+                            0,
+                            rank,
+                            world,
+                            timeout_ms=int(self.config.operation_timeout_s * 1000),
+                            synchronize=False,
+                        )
                 output = output.to(dtype=hidden_states.dtype)
                 done = torch.cuda.Event()
                 done.record(comm_stream)

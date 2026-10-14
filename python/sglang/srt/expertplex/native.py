@@ -151,6 +151,24 @@ class RemoteBuffers:
         self._impl.close()
 
 
+class RemoteGroup:
+    """Prebuilt attention-side templates spanning all expert peers of a slot.
+
+    The caller retains mappings through every replay and synchronizes its COMM
+    stream before closing them. Results accumulate in the original rank order.
+    """
+
+    def __init__(self, peers: list[RemoteBuffers]):
+        self.peers = peers
+        self._impl = load_extension().RemoteGroup([peer._impl for peer in peers])
+
+    def dispatch(self, hidden, ids, row_map, layer, phase):
+        self._impl.dispatch(hidden, ids, row_map, layer, phase)
+
+    def combine(self, output, ids, weights, row_map, timeout_ms=30000):
+        self._impl.combine(output, ids, weights, row_map, timeout_ms)
+
+
 class PersistentExecutor:
     """One long-lived expert executor per GPU.
 
@@ -174,10 +192,13 @@ class PersistentExecutor:
         ctas: int = 0,
         kernel: str | None = None,
         trace_capacity: int = 0,
+        benchmark_operation: str = "moe",
     ) -> None:
         self._buffers = buffers
         self._weights = (w13, w2)
         self.kernel = kernel or os.environ.get("SGLANG_EXPERTPLEX_KERNEL", "sm100")
+        if benchmark_operation not in ("moe", "gateup", "down"):
+            raise ValueError("Unknown diagnostic operation")
         self._impl = load_extension().PersistentExecutor(
             buffers._impl,
             w13,
@@ -188,6 +209,7 @@ class PersistentExecutor:
             ctas,
             self.kernel,
             trace_capacity,
+            {"moe": 0, "gateup": 1, "down": 2}[benchmark_operation],
         )
 
     def stop(self) -> None:
