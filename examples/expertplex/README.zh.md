@@ -22,10 +22,12 @@
 - expert 进程：每张 E 卡一个长期运行的 CUDA executor，P/D 共享一份专家权重
 
 论文原实验使用 H800/SM90 与 FP8；本适配使用 B300/SM103 的 BF16 TMA/TCGEN05。
-默认 `sm100` 后端采用双 CTA cluster、producer/MMA/epilogue warp 分工、4-stage TMA
-与双 accumulator 流水线。CTA0 读取系统 ready word，cluster leader 读取 device policy，
+默认 `sm100` 后端采用双 CTA cluster、producer/MMA/epilogue warp 分工、9-stage TMA
+与双 accumulator 流水线；GateUp、激活、Down 是独立调度的 operation templates，
+GEMM 直接复用原生 DeepGEMM 的 STSM/TMA epilogue。CTA0 读取系统 ready word，cluster leader 读取 device policy，
 通过 DSMEM 分发 tile 决策，mbarrier 向后续 warp 交接；共享输入使用 TMA multicast。
-`sm100_cta1` 保留单 CTA 消融后端，`wmma` 保留功能参考。它们不能混作论文性能结果。
+`sm100_cta1` 保留单 CTA 消融后端，`sm100_fused` 保留早期 4-stage 融合 gate/up/激活后端，
+`wmma` 保留功能参考。它们不能混作论文性能结果。
 
 当前仍缺完整的原生流水线性能校准、抢占上界测量、跨栈策略覆盖与跨节点 RDMA MoE。
 TBO 的双 mailbox client/graph 路径已通过；小 checkpoint 的 24×128-token 完整服务测试

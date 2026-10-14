@@ -99,3 +99,47 @@ cases, using the unchanged existing tolerances and an explicit FP32 weighted com
 This isolates expert arithmetic; it does not reproduce DeepEP's distributed reduction
 order. The H=2048 full-model comparison against native DP4/EP4 completed but did not
 pass strict greedy-token equality. That end-to-end discrepancy remains open.
+
+## Independent native operation templates, 19:15–19:20 UTC checkpoint
+
+The default SM100 executor now schedules GateUp GEMM, activation, and Down GEMM
+as separate operations inside the persistent kernel. GateUp/Down use native
+DeepGEMM's transposed STSM/TMA epilogue and nine loading stages for two-CTA
+clusters. The earlier fused version remains the explicitly named `sm100_fused`
+ablation. Activation tiles cover 32 tokens × 128 columns per CTA; an earlier
+128-token activation tile exceeded 200 us and is retained as a failed latency
+design in `preemption-nativeops-01.json`.
+
+Attention-side metadata is now prepared locally before publishing it to E;
+payload stores and output pulls use 16-byte vectors. The additional BF16 GateUp
+buffer raises the default mailbox estimate to 2,085,619,332 bytes per E
+(about 1.943 GiB, excluding descriptors/runtime allocations).
+
+Eight-round Coder-shape native-reference regression passed after the native
+epilogue change (`native-epilogue-02.json`). P2048 expert time remains about
+1.16 ms and total dispatch/compute/pull about 1.40 ms; this still exceeds the
+native compute baseline (~0.65 ms). D128 expert time is about 0.99 ms.
+These are single-E microbenchmarks, not equal-resource serving comparisons.
+
+The complete 62-layer 480B-geometry HTTP deployment then passed 8×32 and
+24×128 output-token checks with concurrency 4 and 12 respectively, using
+1P3D4E, TBO, decode graphs and NVLink KV transfer. E allocations were
+227815 MiB/GPU; attention GPUs used about 33060 MiB each. Weights are explicitly
+synthetic small-uniform dummy values and logits are nearly uniform: these runs
+test capacity, protocol and finite generation, not pretrained accuracy or
+realistic routing performance. Raw token/logprob reports are compressed under
+`results/b300-20261015/full480-tbo-e2e-*.json.gz`.
+
+Software tile traces with the 32-token activation tile measured maxima of
+52.896 us (P GateUp), 25.632 us (P Down), and 21.888 us (activation) in one run.
+The attention-clock publication-to-admission-ack roundtrip upper bound for D
+was 28–63 us. It includes ack visibility/polling, is not a cross-GPU clock
+subtraction, and does not alone prove the paper's complete preemption bound.
+Concurrent P8192/D128 still showed about 4× D slowdown with the tested q=32;
+low-interference acceptance remains open.
+
+Nsight Systems confirmed native DeepGEMM's two-CTA, 128×128×64, nine-stage
+geometry. Hardware counters remain unavailable. Green Context allocations
+were tested directly: requested 112/32, 96/48, and 80/64 returned those counts
+(144 total); requesting 116/32 instead returned 120/28. Baselines must use
+actual returned counts, not assume the requested partition was granted.

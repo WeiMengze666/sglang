@@ -133,6 +133,8 @@ def main():
                         "Concurrent output differs from isolated operation"
                     )
                 timestamps = publication.cpu().tolist()
+                if len(timestamps) != 4 or any(t <= 0 for t in timestamps):
+                    raise AssertionError("Missing expert admission acknowledgement")
                 report["cases"].append(
                     {
                         "prefill_rows": rows,
@@ -148,6 +150,10 @@ def main():
                             decode["start_ns"] - prefill["start_ns"]
                         )
                         / 1000,
+                        "admission_roundtrip_upper_bound_us": {
+                            "prefill": (timestamps[2] - timestamps[0]) / 1000,
+                            "decode": (timestamps[3] - timestamps[1]) / 1000,
+                        },
                         "exact_isolated_output": exact,
                         "decode_slowdown": decode["expert_ms"]
                         / isolated[1]["expert_ms"],
@@ -215,7 +221,7 @@ def main():
             ]
         )
         for phase in (0, 1)
-        for stage in (1, 2)
+        for stage in sorted({r["stage"] for r in records})
     }
     for case in report["cases"]:
         first = {}
@@ -228,6 +234,7 @@ def main():
     report["trace_interpretation"] = (
         "begin is the producer handoff after phase-switch drain; finish is epilogue retirement. "
         "Lifetime includes pipelining waits. Admission is CTA0's observation, not A publication. "
+        "Admission roundtrip bounds use only A's clock and include the return visibility/poll delay. "
         "First-D-tile statistics cover only CTAs that received D work; they do not prove "
         "the full system-scope propagation bound. Raw trace preserves all records."
     )

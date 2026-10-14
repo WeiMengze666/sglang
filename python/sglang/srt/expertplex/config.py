@@ -214,8 +214,8 @@ class NodeConfig:
             return cls.from_dict(json.load(source))
 
     def validate(self, model_spec: ModelSpec | None = None) -> None:
-        if self.kernel not in ("sm100", "sm100_cta1", "wmma"):
-            raise ValueError("kernel must be sm100, sm100_cta1 or wmma")
+        if self.kernel not in ("sm100", "sm100_cta1", "sm100_fused", "wmma"):
+            raise ValueError("kernel must be sm100, sm100_cta1, sm100_fused or wmma")
         if self.overlap not in ("none", "tbo"):
             raise ValueError("overlap must be none or tbo")
         if self.weight_mode not in ("checkpoint", "synthetic"):

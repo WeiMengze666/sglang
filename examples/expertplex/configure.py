@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--rendezvous-dir", required=True)
     parser.add_argument("--overlap", choices=("none", "tbo"), default="none")
     parser.add_argument(
-        "--kernel", choices=("sm100", "sm100_cta1", "wmma"), default="sm100"
+        "--kernel", choices=("sm100", "sm100_cta1", "sm100_fused", "wmma"), default="sm100"
     )
     parser.add_argument(
         "--synthetic-weights",

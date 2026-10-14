@@ -58,6 +58,7 @@ def estimate_buffer_bytes(
     result = {
         "input": rows * hidden * 2,
         "activation": rows * intermediate * 2,
+        "gateup": rows * intermediate * 4,
         "output": rows * hidden * 2,
         "counts": slot_count * local_experts * 4,
         "offsets": slot_count * local_experts * 4,
@@ -230,7 +231,7 @@ def dispatch(
     hidden is contiguous BF16[N,H]; IDs are int32/int64[N,K]; row_map is
     int32[N,K]. Each peer writes only entries belonging to that expert rank.
     phase is 0 for prefill and 1 for decode. Epochs increase monotonically and
-    are restricted to [1, 2**30) for generation-tagged task queue safety.
+    are restricted to [1, 2**29) for generation-tagged task queue safety.
     """
     load_extension().dispatch(
         remote._impl,

@@ -218,7 +218,7 @@ class OptimizerTests(unittest.TestCase):
         packed_rows = (2048 * 8 + 40 * 127 + 127) // 128 * 128
         decode_rows = 3 * 40 * node.max_decode_tokens
         expected = (
-            (packed_rows + decode_rows) * (2 * 6144 + 2560) * 2
+            (packed_rows + decode_rows) * (2 * 6144 + 3 * 2560) * 2
             + 4 * 40 * 8
             + 4 * 64
             + 4 * 32

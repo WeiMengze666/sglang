@@ -16,10 +16,10 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
 
 | 原文 | 必须保留的机制 | 当前证据或差距 | 验收方式 |
 |---|---|---|---|
-| §3 | P、D attention 独占 GPU；E 共享完整专家权重 | 62 层合成专家通信通过；小 checkpoint 完整 HTTP/NVLink KV 路径通过，严格 token 对齐仍有差异 | 同权重基线逐 token / logprob 对照，真实 KV 移交 |
+| §3 | P、D attention 独占 GPU；E 共享完整专家权重 | 62 层 480B 随机权重完整 HTTP/NVLink KV/TBO/graph 路径通过 24×128 token；小 checkpoint 严格 token 对齐仍有差异 | 同权重基线逐 token / logprob 对照，真实 KV 移交 |
 | §4.2、§7.1 | 一个长驻 kernel 融合两个 grouped GEMM、激活、数据处理、cluster scheduler | 默认 SM100 长驻融合 TMA/TCGEN05；当前性能明显落后于原生 DeepGEMM，不能验收调度开销 | 对照原生 BF16 GEMM，并记录融合前后开销 |
 | §4.2 | 启动前固定 operation templates、buffer、TMA descriptors；shape 在启动时编译为常量 | buffers / TMA descriptors 已固定；Coder/30B 的 H/I 已做编译期特化，小调试模型保留通用形状 | 多层、动态 batch、图 replay 的地址与描述符检查 |
-| §4.2 | 保留原生 CTA/cluster shape、TMA multicast、warp specialization | 双 CTA、2SM MMA、TMA、warp specialization 已通过回归；融合 gate/up 的 4-stage 流水线尚未对齐原生最优配置 | 原生算子形状及流水线代码审计，数值测试 |
+| §4.2 | 保留原生 CTA/cluster shape、TMA multicast、warp specialization | 默认双 CTA、2SM MMA、9-stage TMA、原生 STSM/TMA epilogue 已通过回归；GateUp/ACT/Down 独立调度。Nsight Systems 确认对应 native GEMM 几何；性能仍落后 | 原生算子形状及流水线代码审计，数值测试 |
 | §4.3 Fig.4 | system P → CTA0 → device p_i → cluster DSMEM → warp broadcast → mbarrier | 默认后端已实现 CTA0→device policy→leader DSMEM→mbarrier；抢占 trace 与上界尚未验证 | 可控时刻注入 urgent decode，记录各级 epoch/timestamp |
 | §4.3 | 决策在 check epoch 内固定；观察切换后不得再领取旧 phase tile | leader 是唯一领取者并向所有成员分发同一 Task；压力与 trace 验证仍待补齐 | 有预取、多 warp、多 CTA 的长时间压力测试 |
 | §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 使用双 accumulator，只有 phase 切换等待前一个 tile 退休；普通 tile 继续流水 | pipeline 轨迹、吞吐及 phase 切换边界检查 |

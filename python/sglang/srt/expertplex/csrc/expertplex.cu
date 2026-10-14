@@ -44,14 +44,15 @@ enum Error {
   TIMEOUT = 7,
   STOPPED = 8
 };
-enum Stage { IDLE = 0, GATE = 1, DOWN = 2, INITIALIZING = 3 };
-constexpr U64 kMaxEpoch = (1ULL << 30) - 1;
+enum Stage { IDLE = 0, GATE = 1, DOWN = 2, ACTIVATE = 3, INITIALIZING = 4 };
+constexpr U64 kMaxEpoch = (1ULL << 29) - 1;
 
 struct SlotState {
-  U64 queue; // epoch[63:34], stage[33:32], next task[31:0]
+  U64 queue; // epoch[63:35], stage[34:32], next task[31:0]
   unsigned int completed;
   unsigned int gate_tiles;
   unsigned int down_tiles;
+  unsigned int activation_tiles;
   int phase;
   int layer;
 };
@@ -59,7 +60,7 @@ static_assert(sizeof(SlotState) == 32,
               "Update the Python memory estimator for changed state layout");
 
 struct DeviceBuffers {
-  BF16 *input, *activation, *output;
+  BF16 *input, *activation, *output, *gateup;
   int *counts, *offsets;
   U64 *control;
   SlotState *states;
@@ -71,9 +72,10 @@ struct DeviceBuffers {
 
 __device__ __forceinline__ size_t expert_base(const DeviceBuffers &b, int slot,
                                               int expert) {
-  return b.base_rows[slot] +
-         (b.packed[slot] ? b.offsets[slot * b.experts + expert]
-                         : static_cast<size_t>(expert) * ((b.capacity[slot] + 127) / 128 * 128));
+  return b.base_rows[slot] + (b.packed[slot]
+                                  ? b.offsets[slot * b.experts + expert]
+                                  : static_cast<size_t>(expert) *
+                                        ((b.capacity[slot] + 127) / 128 * 128));
 }
 
 static std::string encode_handle(void *pointer) {
@@ -171,7 +173,8 @@ public:
           packed[s]
               ? static_cast<int64_t>(capacities[s]) * std::min(top_k, experts) +
                     127LL * experts
-              : static_cast<int64_t>((capacities[s] + 127) / 128 * 128) * experts;
+              : static_cast<int64_t>((capacities[s] + 127) / 128 * 128) *
+                    experts;
       // Descriptor dimensions must admit a full 128-row zero-padded tile.
       storage = (storage + 127) / 128 * 128;
       TORCH_CHECK(storage <= INT_MAX, "Mailbox exceeds TMA row indexing range");
@@ -184,6 +187,8 @@ public:
     try {
       b.input = static_cast<BF16 *>(allocate(
           checked_product({static_cast<int64_t>(total_rows), hidden, 2})));
+      b.gateup = static_cast<BF16 *>(allocate(checked_product(
+          {static_cast<int64_t>(total_rows), intermediate, 4})));
       b.activation = static_cast<BF16 *>(allocate(checked_product(
           {static_cast<int64_t>(total_rows), intermediate, 2})));
       b.output = static_cast<BF16 *>(allocate(
@@ -238,7 +243,7 @@ public:
   }
   py::dict descriptor() const {
     py::dict d;
-    d["version"] = 3;
+    d["version"] = 4;
     d["device"] = device;
     d["slot_count"] = b.slots;
     d["local_experts"] = b.experts;
@@ -266,10 +271,11 @@ public:
   std::vector<void *> mappings;
   int *status = nullptr;
   int *host_status = nullptr;
+  int *local_counts = nullptr, *local_offsets = nullptr;
   bool closed = false;
 
   RemoteBuffers(py::dict d, int slot_id, int dev) : device(dev), slot(slot_id) {
-    TORCH_CHECK(py::cast<int>(d["version"]) == 3,
+    TORCH_CHECK(py::cast<int>(d["version"]) == 4,
                 "Unsupported IPC descriptor version");
     b.slots = py::cast<int>(d["slot_count"]);
     b.experts = py::cast<int>(d["local_experts"]);
@@ -316,6 +322,10 @@ public:
       b.control =
           static_cast<U64 *>(map(py::cast<std::string>(d["control_handle"])));
       C10_CUDA_CHECK(cudaMalloc(&status, sizeof(int)));
+      const size_t metadata_bytes = b.slots * b.experts * sizeof(int);
+      C10_CUDA_CHECK(cudaMalloc(&local_counts, metadata_bytes));
+      C10_CUDA_CHECK(cudaMalloc(&local_offsets, metadata_bytes));
+      C10_CUDA_CHECK(cudaMemset(local_offsets, 0, metadata_bytes));
       C10_CUDA_CHECK(
           cudaHostAlloc(&host_status, sizeof(int), cudaHostAllocDefault));
     } catch (...) {
@@ -324,6 +334,12 @@ public:
     }
   }
   ~RemoteBuffers() { close_noexcept(); }
+  DeviceBuffers attention_metadata() const {
+    auto transfer = b;
+    transfer.counts = local_counts;
+    transfer.offsets = local_offsets;
+    return transfer;
+  }
   void *map(const std::string &h) {
     void *p = open_handle(h);
     mappings.push_back(p);
@@ -350,9 +366,14 @@ public:
     mappings.clear();
     if (status)
       cudaFree(status);
+    if (local_counts)
+      cudaFree(local_counts);
+    if (local_offsets)
+      cudaFree(local_offsets);
     if (host_status)
       cudaFreeHost(host_status);
     status = nullptr;
+    local_counts = local_offsets = nullptr;
     host_status = nullptr;
     closed = true;
     cudaSetDevice(old);
@@ -406,7 +427,7 @@ __device__ __forceinline__ U64 uncached_load_u64(const U64 *p) {
 }
 __device__ __forceinline__ U64 queue_value(U64 epoch, Stage stage,
                                            unsigned task = 0) {
-  return (epoch << 34) | (static_cast<U64>(stage) << 32) | task;
+  return (epoch << 35) | (static_cast<U64>(stage) << 32) | task;
 }
 __device__ __forceinline__ U64 now_ns() {
   U64 value;
@@ -414,8 +435,8 @@ __device__ __forceinline__ U64 now_ns() {
   return value;
 }
 
-__global__ void clear_slot(DeviceBuffers b, int slot, U64 epoch, int layer,
-                           int phase) {
+__global__ void clear_slot(const __grid_constant__ DeviceBuffers b, int slot,
+                           U64 epoch, int layer, int phase) {
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
   if (threadIdx.x == 0) {
     U64 ready = system_load(c + READY), done = system_load(c + DONE);
@@ -431,6 +452,8 @@ __global__ void clear_slot(DeviceBuffers b, int slot, U64 epoch, int layer,
       c[LAYER] = layer;
       c[PHASE] = phase;
       c[PENDING] = epoch;
+      c[START_NS] = 0;
+      c[FINISH_NS] = 0;
     }
   }
   __syncthreads();
@@ -442,8 +465,9 @@ __global__ void clear_slot(DeviceBuffers b, int slot, U64 epoch, int layer,
 }
 
 template <typename Id>
-__global__ void count_routes(DeviceBuffers b, int slot, const Id *ids,
-                             int *row_map, int routes, int rank, int world) {
+__global__ void count_routes(const __grid_constant__ DeviceBuffers b, int slot,
+                             const Id *ids, int *row_map, int routes, int rank,
+                             int world) {
   auto *c = b.control + static_cast<size_t>(slot) * kControlWords;
   if (system_load(c + ERROR))
     return;
@@ -461,7 +485,7 @@ __global__ void count_routes(DeviceBuffers b, int slot, const Id *ids,
     }
     if (expert % world != rank)
       continue;
-    int row = atomicAdd_system(b.counts + slot * b.experts + expert / world, 1);
+    int row = atomicAdd(b.counts + slot * b.experts + expert / world, 1);
     row_map[route] = row;
     if (row >= b.capacity[slot])
       set_error(c, ROW_OVERFLOW);
@@ -470,7 +494,8 @@ __global__ void count_routes(DeviceBuffers b, int slot, const Id *ids,
 }
 
 // Runs on the attention GPU, before payload copies. No expert receive kernel.
-__global__ void pack_offsets(DeviceBuffers b, int slot) {
+__global__ void pack_offsets(const __grid_constant__ DeviceBuffers b,
+                             int slot) {
   int offset = 0;
   for (int e = 0; e < b.experts; ++e) {
     b.offsets[slot * b.experts + e] = offset;
@@ -483,12 +508,10 @@ __global__ void pack_offsets(DeviceBuffers b, int slot) {
 }
 
 template <typename Id>
-__global__ void dispatch_rows(DeviceBuffers b, int slot, const BF16 *hidden,
-                              const Id *ids, int *row_map, int n, int k,
-                              int rank, int world) {
+__global__ void dispatch_rows(const __grid_constant__ DeviceBuffers b, int slot,
+                              const BF16 *hidden, const Id *ids, int *row_map,
+                              int n, int k, int rank, int world) {
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
-  if (system_load(c + ERROR))
-    return;
   int route = blockIdx.x;
   Id routed_expert = ids[route];
   if (routed_expert == -1) {
@@ -509,26 +532,48 @@ __global__ void dispatch_rows(DeviceBuffers b, int slot, const BF16 *hidden,
   __shared__ int row;
   if (threadIdx.x == 0) {
     row =
-        b.packed[slot]
+        system_load(c + ERROR) ? -1
+        : b.packed[slot]
             ? row_map[route]
-            : atomicAdd_system(
+            : atomicAdd(
                   b.counts + static_cast<size_t>(slot) * b.experts + local, 1);
     row_map[route] = row;
     if (row >= b.capacity[slot])
       set_error(c, ROW_OVERFLOW);
   }
   __syncthreads();
-  if (row >= b.capacity[slot])
+  if (row < 0 || row >= b.capacity[slot])
     return;
   size_t base = (expert_base(b, slot, local) + row) * b.hidden;
   int token = route / k;
-  for (int h = threadIdx.x; h < b.hidden; h += blockDim.x)
-    b.input[base + h] = hidden[static_cast<size_t>(token) * b.hidden + h];
+  auto *destination = reinterpret_cast<uint4 *>(b.input + base);
+  auto *source = reinterpret_cast<const uint4 *>(
+      hidden + static_cast<size_t>(token) * b.hidden);
+  for (int h = threadIdx.x; h < b.hidden / 8; h += blockDim.x)
+    destination[h] = source[h];
   // Every writer, rather than only the publishing thread, fences its peer data.
   __threadfence_system();
 }
 
-__global__ void publish_slot(DeviceBuffers b, int slot, U64 epoch) {
+// A mailbox has exactly one attention writer. Route counting and prefix sums
+// therefore use attention-local atomics; only the final metadata crosses
+// NVLink. Payloads already land in the final expert compute buffers.
+__global__ void push_metadata(const __grid_constant__ DeviceBuffers peer,
+                              const __grid_constant__ DeviceBuffers local,
+                              int slot) {
+  if (system_load(peer.control + slot * kControlWords + ERROR))
+    return;
+  for (int e = threadIdx.x; e < peer.experts; e += blockDim.x) {
+    int index = slot * peer.experts + e;
+    peer.counts[index] = local.counts[index];
+    if (peer.packed[slot])
+      peer.offsets[index] = local.offsets[index];
+  }
+  __threadfence_system();
+}
+
+__global__ void publish_slot(const __grid_constant__ DeviceBuffers b, int slot,
+                             U64 epoch) {
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
   // A failed clear must not replace the READY epoch of an active invocation.
   // Errors are fail-closed; the worker/client report them and must restart.
@@ -538,8 +583,8 @@ __global__ void publish_slot(DeviceBuffers b, int slot, U64 epoch) {
   system_store(c + READY, epoch ? epoch : uncached_load_u64(c + PENDING));
 }
 
-__global__ void wait_slot(DeviceBuffers b, int slot, U64 epoch, U64 timeout_ns,
-                          int *status) {
+__global__ void wait_slot(const __grid_constant__ DeviceBuffers b, int slot,
+                          U64 epoch, U64 timeout_ns, int *status) {
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
   if (epoch == 0)
     epoch = uncached_load_u64(c + PENDING);
@@ -565,32 +610,54 @@ __global__ void wait_slot(DeviceBuffers b, int slot, U64 epoch, U64 timeout_ns,
 }
 
 template <typename Id>
-__global__ void combine_rows(DeviceBuffers b, int slot, float *output,
-                             const Id *ids, const float *weights,
+__global__ void combine_rows(const __grid_constant__ DeviceBuffers b, int slot,
+                             float *output, const Id *ids, const float *weights,
                              const int *row_map, int n, int k, int rank,
                              int world, const int *status) {
   if (*status != OK)
     return;
+  const int vectors = b.hidden / 8;
   size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   size_t stride = static_cast<size_t>(gridDim.x) * blockDim.x;
-  for (; i < static_cast<size_t>(n) * b.hidden; i += stride) {
-    int token = i / b.hidden, h = i % b.hidden;
-    float sum = 0;
+  for (; i < static_cast<size_t>(n) * vectors; i += stride) {
+    int token = i / vectors, h = (i % vectors) * 8;
+    float sum[8] = {};
     for (int j = 0; j < k; ++j) {
       size_t route = static_cast<size_t>(token) * k + j;
       int expert = static_cast<int>(ids[route]);
-      if (expert < 0 || expert >= b.experts * world)
-        continue;
-      if (expert % world != rank)
+      if (expert < 0 || expert >= b.experts * world || expert % world != rank)
         continue;
       int row = row_map[route];
       if (row < 0 || row >= b.capacity[slot])
-        continue; // dispatch errors surfaced by wait.
-      size_t base = (expert_base(b, slot, expert / world) + row) * b.hidden;
-      sum +=
-          weights[route] * __bfloat162float(uncached_load(b.output + base + h));
+        continue;
+      size_t base = (expert_base(b, slot, expert / world) + row) * b.hidden + h;
+      uint32_t words[4];
+      asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
+                   : "=r"(words[0]), "=r"(words[1]), "=r"(words[2]),
+                     "=r"(words[3])
+                   : "l"(b.output + base)
+                   : "memory");
+      float weight = weights[route];
+#pragma unroll
+      for (int pair = 0; pair < 4; ++pair) {
+        float low = __bfloat162float(__ushort_as_bfloat16(words[pair] & 65535));
+        float high = __bfloat162float(__ushort_as_bfloat16(words[pair] >> 16));
+        sum[2 * pair] += weight * low;
+        sum[2 * pair + 1] += weight * high;
+      }
     }
-    output[i] += sum;
+    auto *destination = reinterpret_cast<float4 *>(output + i * 8);
+    float4 first = destination[0], second = destination[1];
+    first.x += sum[0];
+    first.y += sum[1];
+    first.z += sum[2];
+    first.w += sum[3];
+    second.x += sum[4];
+    second.y += sum[5];
+    second.z += sum[6];
+    second.w += sum[7];
+    destination[0] = first;
+    destination[1] = second;
   }
 }
 
@@ -741,14 +808,14 @@ __device__ void initialize_slot(DeviceBuffers b, int slot, int layers) {
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
   SlotState *s = b.states + slot;
   U64 q = queue_load(&s->queue);
-  if (((q >> 32) & 3) != IDLE)
+  if (((q >> 32) & 7) != IDLE)
     return;
   U64 epoch = system_load(c + READY);
-  if (epoch <= (q >> 34))
+  if (epoch <= (q >> 35))
     return;
   if (!queue_cas(&s->queue, q, queue_value(epoch, INITIALIZING)))
     return;
-  c[START_NS] = now_ns();
+  system_store(c + START_NS, now_ns());
   s->layer = static_cast<int>(uncached_load_u64(c + LAYER));
   s->phase = static_cast<int>(uncached_load_u64(c + PHASE));
   if (s->layer < 0 || s->layer >= layers)
@@ -794,7 +861,7 @@ __device__ bool claim_slot(DeviceBuffers b, int phase, int cursor, int &slot,
                     ERROR))
       continue;
     U64 q = queue_load(&s->queue);
-    Stage st = static_cast<Stage>((q >> 32) & 3);
+    Stage st = static_cast<Stage>((q >> 32) & 7);
     if ((st != GATE && st != DOWN) || s->phase != phase)
       continue;
     unsigned t = static_cast<unsigned>(q);
@@ -806,14 +873,14 @@ __device__ bool claim_slot(DeviceBuffers b, int phase, int cursor, int &slot,
     slot = candidate;
     stage = st;
     task = t;
-    epoch = q >> 34;
+    epoch = q >> 35;
     return true;
   }
   return false;
 }
 
-__global__ void persistent_executor(DeviceBuffers b, const BF16 *w13,
-                                    const BF16 *w2, int layers,
+__global__ void persistent_executor(const __grid_constant__ DeviceBuffers b,
+                                    const BF16 *w13, const BF16 *w2, int layers,
                                     int decode_budget, float expected_tiles,
                                     int max_decode_ctas) {
   extern __shared__ __align__(128) unsigned char workspace[];
@@ -846,7 +913,7 @@ __global__ void persistent_executor(DeviceBuffers b, const BF16 *w13,
         for (int i = 0; i < b.slots; ++i) {
           SlotState *s = b.states + i;
           U64 q = queue_load(&s->queue);
-          int st = (q >> 32) & 3;
+          int st = (q >> 32) & 7;
           if ((st == GATE || st == DOWN) && s->phase == 1)
             decode_tiles += st == GATE
                                 ? s->gate_tiles / ((b.intermediate + 127) / 128)
@@ -969,8 +1036,9 @@ public:
         ctas - 1, static_cast<int>(std::floor(ctas * max_decode_fraction)));
     TORCH_CHECK(max_decode_ctas >= 1,
                 "Decode cap must admit at least one decode CTA");
-    const bool sm100 = backend == "sm100" || backend == "sm100_cta1";
-    const int cluster = backend == "sm100" ? 2 : 1;
+    const bool fused = backend == "sm100_fused";
+    const bool sm100 = backend == "sm100" || backend == "sm100_cta1" || fused;
+    const int cluster = backend == "sm100_cta1" ? 1 : 2;
     TORCH_CHECK(backend == "wmma" || sm100, "Unknown ExpertPlex kernel");
     TORCH_CHECK(ctas % cluster == 0 && ctas >= 2 * cluster,
                 "CTA count must fit at least two complete clusters");
@@ -980,6 +1048,13 @@ public:
     // Specialize the two target models at compile time, retaining a generic
     // shape only for small synthetic debugging checkpoints.
     auto with_native_kernel = [&](auto &&fn) {
+      if (fused) {
+        if (b.hidden == 6144 && b.intermediate == 2560)
+          return fn(expertplex_sm100::executor<2, 6144, 2560, true>);
+        if (b.hidden == 2048 && b.intermediate == 768)
+          return fn(expertplex_sm100::executor<2, 2048, 768, true>);
+        return fn(expertplex_sm100::executor<2, 0, 0, true>);
+      }
       if (b.hidden == 6144 && b.intermediate == 2560)
         return cluster == 2 ? fn(expertplex_sm100::executor<2, 6144, 2560>)
                             : fn(expertplex_sm100::executor<1, 6144, 2560>);
@@ -996,18 +1071,26 @@ public:
     const int threads = sm100 ? expertplex_sm100::Threads : 128;
     TORCH_CHECK(trace_capacity >= 0 && trace_capacity <= 65536,
                 "trace_capacity must be in [0, 65536]");
-    TORCH_CHECK(sm100 || trace_capacity == 0, "Tracing requires the SM100 backend");
+    TORCH_CHECK(sm100 || trace_capacity == 0,
+                "Tracing requires the SM100 backend");
     if (sm100)
       native_context = expertplex_sm100::prepare(
           *owner, reinterpret_cast<const BF16 *>(w13.data_ptr<at::BFloat16>()),
           reinterpret_cast<const BF16 *>(w2.data_ptr<at::BFloat16>()),
-          w13.size(0), ctas, trace_capacity, cluster);
+          w13.size(0), ctas, trace_capacity, cluster, fused);
     cudaFuncAttributes attrs;
     C10_CUDA_CHECK(cudaFuncGetAttributes(&attrs, kernel));
     int optin = 0;
     C10_CUDA_CHECK(cudaDeviceGetAttribute(
         &optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, owner->device));
-    int required = sm100 ? sizeof(expertplex_sm100::Storage) : 198656;
+    int required = 198656;
+    if (sm100) {
+      if (fused)
+        required = sizeof(expertplex_sm100::Storage<2, true>);
+      else
+        required = cluster == 2 ? sizeof(expertplex_sm100::Storage<2, false>)
+                                : sizeof(expertplex_sm100::Storage<1, false>);
+    }
     int reserve = std::max(
         required, static_cast<int>(prop.sharedMemPerMultiprocessor / 2 + 256 -
                                    attrs.sharedSizeBytes));
@@ -1083,6 +1166,12 @@ public:
     d["backend"] = backend_name;
     d["ctas"] = launch_ctas;
     d["cluster_size"] = cluster_size;
+    d["operation_templates"] =
+        backend_name == "sm100_fused" || backend_name == "wmma"
+            ? "fused_gate_up_activation,down"
+            : "gate_up,activation,down";
+    d["loading_stages"] =
+        backend_name == "sm100_fused" ? 4 : (cluster_size == 2 ? 9 : 6);
     d["threads_per_cta"] = launch_threads;
     d["registers_per_thread"] = attributes.numRegs;
     d["local_bytes_per_thread"] = attributes.localSizeBytes;
@@ -1102,7 +1191,8 @@ public:
         torch::TensorOptions().dtype(torch::kInt64).device(torch::kCPU));
     if (native_context.trace_capacity)
       C10_CUDA_CHECK(cudaMemcpy(result.data_ptr(), native_context.trace,
-                                result.numel() * sizeof(U64), cudaMemcpyDeviceToHost));
+                                result.numel() * sizeof(U64),
+                                cudaMemcpyDeviceToHost));
     return result;
   }
   void check_weight(const torch::Tensor &t, int dims, const char *name) {
@@ -1207,67 +1297,79 @@ static void dispatch(std::shared_ptr<RemoteBuffers> r, torch::Tensor hidden,
               "Hidden/routing shape mismatch");
   TORCH_CHECK(
       epoch >= 0 && static_cast<U64>(epoch) <= kMaxEpoch,
-      "Epoch must be in [0,2**30); zero selects a device-generated epoch");
+      "Epoch must be in [0,2**29); zero selects a device-generated epoch");
   TORCH_CHECK(layer >= 0 && phase >= 0 && phase <= 1, "Invalid layer/phase");
   c10::cuda::CUDAGuard guard(r->device);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(r->device);
-  clear_slot<<<1, 32, 0, stream>>>(r->b, r->slot, epoch, layer, phase);
+  auto transfer = r->attention_metadata();
+  clear_slot<<<1, 32, 0, stream>>>(transfer, r->slot, epoch, layer, phase);
   int routes = ids.numel();
   if (routes > 0) {
     if (r->b.packed[r->slot]) {
       int blocks = std::min(256, (routes + 255) / 256);
       if (ids.scalar_type() == at::kInt)
         count_routes<<<blocks, 256, 0, stream>>>(
-            r->b, r->slot, ids.data_ptr<int>(), rows.data_ptr<int>(), routes,
-            rank, world);
+            transfer, r->slot, ids.data_ptr<int>(), rows.data_ptr<int>(),
+            routes, rank, world);
       else
         count_routes<<<blocks, 256, 0, stream>>>(
-            r->b, r->slot, ids.data_ptr<int64_t>(), rows.data_ptr<int>(),
+            transfer, r->slot, ids.data_ptr<int64_t>(), rows.data_ptr<int>(),
             routes, rank, world);
-      pack_offsets<<<1, 1, 0, stream>>>(r->b, r->slot);
+      pack_offsets<<<1, 1, 0, stream>>>(transfer, r->slot);
     }
     if (ids.scalar_type() == at::kInt)
       dispatch_rows<<<routes, 128, 0, stream>>>(
-          r->b, r->slot,
+          transfer, r->slot,
           reinterpret_cast<const BF16 *>(hidden.data_ptr<at::BFloat16>()),
           ids.data_ptr<int>(), rows.data_ptr<int>(), ids.size(0), ids.size(1),
           rank, world);
     else
       dispatch_rows<<<routes, 128, 0, stream>>>(
-          r->b, r->slot,
+          transfer, r->slot,
           reinterpret_cast<const BF16 *>(hidden.data_ptr<at::BFloat16>()),
           ids.data_ptr<int64_t>(), rows.data_ptr<int>(), ids.size(0),
           ids.size(1), rank, world);
   }
+  push_metadata<<<1, 128, 0, stream>>>(r->b, transfer, r->slot);
   if (publish)
     publish_slot<<<1, 1, 0, stream>>>(r->b, r->slot, epoch);
   C10_CUDA_CHECK(cudaGetLastError());
 }
 
 // Diagnostic-only release of pre-staged payloads at a GPU-timed interval.
-// Both timestamps use the attention GPU timer; never subtract them from E's timer.
+// Both timestamps use the attention GPU timer; never subtract them from E's
+// timer.
 __global__ void publish_pair_kernel(U64 *p, U64 *d, U64 delay_ns, U64 *stamps) {
   if (system_load(p + ERROR) || system_load(d + ERROR))
     return;
   __threadfence_system();
   stamps[0] = now_ns();
   system_store(p + READY, uncached_load_u64(p + PENDING));
-  while (now_ns() - stamps[0] < delay_ns) {}
+  while (now_ns() - stamps[0] < delay_ns) {
+  }
   stamps[1] = now_ns();
   system_store(d + READY, uncached_load_u64(d + PENDING));
+  U64 limit = stamps[1] + 2000000000ULL;
+  while ((!stamps[2] || !stamps[3]) && now_ns() < limit) {
+    if (!stamps[2] && system_load(p + START_NS))
+      stamps[2] = now_ns();
+    if (!stamps[3] && system_load(d + START_NS))
+      stamps[3] = now_ns();
+  }
 }
 static torch::Tensor publish_pair(std::shared_ptr<RemoteBuffers> p,
-                                  std::shared_ptr<RemoteBuffers> d, int delay_us) {
+                                  std::shared_ptr<RemoteBuffers> d,
+                                  int delay_us) {
   TORCH_CHECK(!p->closed && !d->closed && p->device == d->device &&
-              p->slot != d->slot && delay_us >= 0 && delay_us <= 1000000,
+                  p->slot != d->slot && delay_us >= 0 && delay_us <= 1000000,
               "Invalid diagnostic publication pair");
   c10::cuda::CUDAGuard guard(p->device);
-  auto stamps = torch::zeros({2}, torch::TensorOptions().dtype(torch::kInt64)
+  auto stamps = torch::zeros({4}, torch::TensorOptions()
+                                      .dtype(torch::kInt64)
                                       .device(torch::kCUDA, p->device));
   publish_pair_kernel<<<1, 1, 0, at::cuda::getCurrentCUDAStream(p->device)>>>(
       p->b.control + p->slot * kControlWords,
-      d->b.control + d->slot * kControlWords,
-      static_cast<U64>(delay_us) * 1000,
+      d->b.control + d->slot * kControlWords, static_cast<U64>(delay_us) * 1000,
       reinterpret_cast<U64 *>(stamps.data_ptr<int64_t>()));
   C10_CUDA_CHECK(cudaGetLastError());
   return stamps;
@@ -1291,16 +1393,17 @@ static void combine(std::shared_ptr<RemoteBuffers> r, torch::Tensor output,
   wait_slot<<<1, 1, 0, stream>>>(r->b, r->slot, epoch,
                                  static_cast<U64>(timeout_ms) * 1000000ULL,
                                  r->status);
-  int blocks = std::min<int64_t>(65535, (output.numel() + 255) / 256);
+  auto transfer = r->attention_metadata();
+  int blocks = std::min<int64_t>(65535, (output.numel() / 8 + 255) / 256);
   if (blocks > 0) {
     if (ids.scalar_type() == at::kInt)
       combine_rows<<<blocks, 256, 0, stream>>>(
-          r->b, r->slot, output.data_ptr<float>(), ids.data_ptr<int>(),
+          transfer, r->slot, output.data_ptr<float>(), ids.data_ptr<int>(),
           weights.data_ptr<float>(), rows.data_ptr<int>(), ids.size(0),
           ids.size(1), rank, world, r->status);
     else
       combine_rows<<<blocks, 256, 0, stream>>>(
-          r->b, r->slot, output.data_ptr<float>(), ids.data_ptr<int64_t>(),
+          transfer, r->slot, output.data_ptr<float>(), ids.data_ptr<int64_t>(),
           weights.data_ptr<float>(), rows.data_ptr<int>(), ids.size(0),
           ids.size(1), rank, world, r->status);
   }
@@ -1317,7 +1420,8 @@ static void combine(std::shared_ptr<RemoteBuffers> r, torch::Tensor output,
               "7=timeout, 8=stopped)");
 }
 
-__global__ void read_timing_kernel(DeviceBuffers b, int slot, int64_t *output) {
+__global__ void read_timing_kernel(const __grid_constant__ DeviceBuffers b,
+                                   int slot, int64_t *output) {
   auto *c = b.control + static_cast<size_t>(slot) * kControlWords;
   output[0] = system_load(c + DONE);
   output[1] = system_load(c + READY);

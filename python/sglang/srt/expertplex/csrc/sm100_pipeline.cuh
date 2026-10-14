@@ -6,6 +6,7 @@
 
 #include <cute/atom/copy_traits_sm100.hpp>
 #include <deep_gemm/common/tma_copy.cuh>
+#include <deep_gemm/epilogue/sm100_store_cd_swap_ab.cuh>
 #include <deep_gemm/mma/sm100.cuh>
 #include <deep_gemm/ptx/ld_st.cuh>
 #include <deep_gemm/ptx/tcgen05.cuh>
@@ -13,7 +14,7 @@
 namespace expertplex_sm100 {
 using Barrier = cutlass::arch::ClusterTransactionBarrier;
 using Element = cutlass::bfloat16_t;
-constexpr int M = 128, N = 128, K = 64, Stages = 4, OutputStages = 2;
+constexpr int M = 128, N = 128, K = 64, OutputStages = 2;
 constexpr int Threads = 128 + M;
 
 struct alignas(128) Maps {
@@ -21,6 +22,7 @@ struct alignas(128) Maps {
   CUtensorMap activation[2];
   CUtensorMap output[2];
   CUtensorMap activation_store[2];
+  CUtensorMap gateup_store[2];
 };
 struct alignas(128) WeightMaps {
   CUtensorMap gate, up, down;
@@ -29,11 +31,14 @@ struct alignas(16) Task {
   int slot, stage, layer, expert, row, column, rows, phase;
   U64 epoch;
 };
-struct Storage {
-  alignas(1024) Element a[Stages][M * K];
+template <int Cluster, bool Fused> struct Storage {
+  static constexpr int Stages = Fused ? 4 : (Cluster == 2 ? 9 : 6);
+  using cd_dtype = Element;
+  alignas(1024) Element a[Stages][M / Cluster * K];
   alignas(1024) Element g[Stages][N * K];
-  alignas(1024) Element u[Stages][N * K];
-  alignas(1024) Element store[2][M * 64];
+  alignas(1024) Element u[Fused ? Stages : 1][Fused ? N * K : 1];
+  alignas(1024) Element store[Fused ? 2 : 1][Fused ? M * 64 : 1];
+  alignas(1024) Element cd[2][Fused ? 1 : 16 * N];
   Barrier full[Stages], empty[Stages];
   Barrier task_full[OutputStages], task_empty[OutputStages];
   Barrier accum_full[OutputStages], accum_empty[OutputStages];
@@ -79,7 +84,8 @@ struct Context {
 };
 
 inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
-                       int layers, int ctas, int trace_capacity, int cluster) {
+                       int layers, int ctas, int trace_capacity, int cluster,
+                       bool fused) {
   auto b = owner.b;
   TORCH_CHECK(b.hidden % K == 0 && b.intermediate % K == 0,
               "SM100 native pipeline requires H and I divisible by 64");
@@ -100,8 +106,11 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
       encode_map(maps[slot].activation_store[phase],
                  b.activation + base * b.intermediate, b.intermediate, rows,
                  tile_m);
+      encode_map(maps[slot].gateup_store[phase],
+                 b.gateup + base * 2 * b.intermediate, 2 * b.intermediate, rows,
+                 16);
       encode_map(maps[slot].output[phase], b.output + base * b.hidden, b.hidden,
-                 rows, tile_m);
+                 rows, fused ? tile_m : 16);
     }
   }
   std::vector<WeightMaps> weights(1);
@@ -130,8 +139,8 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
   result.policy = static_cast<int *>(owner.allocate(ctas * sizeof(int)));
   result.queues = static_cast<QueueHead *>(
       owner.allocate(b.slots * QueueShards * sizeof(QueueHead)));
-  C10_CUDA_CHECK(cudaMemset(result.queues, 0,
-                            b.slots * QueueShards * sizeof(QueueHead)));
+  C10_CUDA_CHECK(
+      cudaMemset(result.queues, 0, b.slots * QueueShards * sizeof(QueueHead)));
   C10_CUDA_CHECK(cudaMemcpy(result.maps, maps.data(),
                             maps.size() * sizeof(Maps),
                             cudaMemcpyHostToDevice));
@@ -143,7 +152,7 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
 }
 
 __device__ __forceinline__ void reset_queues(Context context, int slot,
-                                            U64 epoch, Stage stage) {
+                                             U64 epoch, Stage stage) {
   // Each shard owns indices shard + k * QueueShards. Keep the generation in
   // every head: an idle claimant from a retired operation cannot reserve a
   // tile in the next operation using stale layer/phase metadata.
@@ -152,19 +161,39 @@ __device__ __forceinline__ void reset_queues(Context context, int slot,
                 queue_value(epoch, stage, shard));
 }
 
-template <int Cluster>
+__device__ __forceinline__ int tile_rows(int phase, int stage) {
+  return stage == ACTIVATE ? 32 : (phase == 0 ? M : 32);
+}
+
+__device__ __forceinline__ bool active_stage(int stage) {
+  return stage == GATE || stage == ACTIVATE || stage == DOWN;
+}
+template <bool Fused>
+__device__ __forceinline__ int operation_columns(const DeviceBuffers &b,
+                                                 int stage) {
+  return stage == DOWN ? b.hidden
+                       : b.intermediate * (stage == GATE && !Fused ? 2 : 1);
+}
+__device__ __forceinline__ unsigned operation_tiles(const SlotState *state,
+                                                    int stage) {
+  return stage == GATE       ? state->gate_tiles
+         : stage == ACTIVATE ? state->activation_tiles
+                             : state->down_tiles;
+}
+
+template <int Cluster, bool Fused>
 __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
                                            int layers, Context context) {
   auto *c = b.control + static_cast<size_t>(slot) * kControlWords;
   auto *s = b.states + slot;
   U64 q = queue_load(&s->queue);
-  if (((q >> 32) & 3) != IDLE)
+  if (((q >> 32) & 7) != IDLE)
     return;
   U64 epoch = system_load(c + READY);
-  if (epoch <= (q >> 34) ||
+  if (epoch <= (q >> 35) ||
       !queue_cas(&s->queue, q, queue_value(epoch, INITIALIZING)))
     return;
-  c[START_NS] = now_ns();
+  system_store(c + START_NS, now_ns());
   s->layer = static_cast<int>(uncached_load_u64(c + LAYER));
   s->phase = static_cast<int>(uncached_load_u64(c + PHASE));
   if (s->layer < 0 || s->layer >= layers)
@@ -172,21 +201,26 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
   if (s->phase < 0 || s->phase > 1)
     set_error(c, BAD_PHASE);
   const int tile_m = s->phase == 0 ? M : 32;
-  U64 rows = 0;
+  U64 rows = 0, activation_rows = 0;
   for (int e = 0; e < b.experts; ++e) {
     int count =
         uncached_load_int(b.counts + static_cast<size_t>(slot) * b.experts + e);
     if (count < 0 || count > b.capacity[slot])
       set_error(c, ROW_OVERFLOW);
-    else
+    else {
       rows += (count + tile_m - 1) / tile_m;
+      activation_rows += (count + 31) / 32;
+    }
   }
-  U64 gate = rows * ((b.intermediate + N * Cluster - 1) / (N * Cluster));
+  U64 gate = rows * ((operation_columns<Fused>(b, GATE) + N * Cluster - 1) /
+                     (N * Cluster));
   U64 down = rows * ((b.hidden + N * Cluster - 1) / (N * Cluster));
   if (gate > UINT_MAX - 65536ULL || down > UINT_MAX - 65536ULL)
     set_error(c, ROW_OVERFLOW);
   s->gate_tiles = gate;
   s->down_tiles = down;
+  s->activation_tiles =
+      activation_rows * ((b.intermediate + N * Cluster - 1) / (N * Cluster));
   s->completed = 0;
   __threadfence();
   if (system_load(c + ERROR) || gate == 0) {
@@ -201,22 +235,20 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
 
 // Only CTA0 reads attention readiness words. Other CTAs consume device-scope
 // policies; no SM is reserved for a separate receiver/polling kernel.
-template <int Cluster>
+template <int Cluster, bool Fused>
 __device__ __forceinline__ void
 update_policy(const DeviceBuffers &b, Context context, int layers,
               int decode_budget, float expected, int cap) {
   for (int s = 0; s < b.slots; ++s)
-    initialize<Cluster>(b, s, layers, context);
+    initialize<Cluster, Fused>(b, s, layers, context);
   U64 footprint = 0;
   for (int i = 0; i < b.slots; ++i) {
     auto *s = b.states + i;
-    auto stage = (queue_load(&s->queue) >> 32) & 3;
-    if ((stage == GATE || stage == DOWN) && s->phase == 1)
-      footprint +=
-          stage == GATE
-              ? s->gate_tiles /
-                    ((b.intermediate + N * Cluster - 1) / (N * Cluster))
-              : s->down_tiles / ((b.hidden + N * Cluster - 1) / (N * Cluster));
+    auto stage = (queue_load(&s->queue) >> 32) & 7;
+    if (active_stage(stage) && s->phase == 1)
+      footprint += operation_tiles(s, stage) /
+                   ((operation_columns<Fused>(b, stage) + N * Cluster - 1) /
+                    (N * Cluster));
   }
   int budget =
       footprint
@@ -230,18 +262,18 @@ update_policy(const DeviceBuffers &b, Context context, int layers,
         .store(i * Cluster < budget, cuda::memory_order_release);
 }
 
-template <int Cluster>
+template <int Cluster, bool Fused>
 __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
                                       int phase, int cursor, Task &task) {
   for (int i = 0; i < b.slots; ++i) {
     int slot = (cursor + i) % b.slots;
     auto *state = b.states + slot;
     U64 q = queue_load(&state->queue);
-    int stage = (q >> 32) & 3;
-    if ((stage != GATE && stage != DOWN) || state->phase != phase)
+    int stage = (q >> 32) & 7;
+    if (!active_stage(stage) || state->phase != phase)
       continue;
     const U64 generation = q & ~static_cast<U64>(UINT_MAX);
-    unsigned total = stage == GATE ? state->gate_tiles : state->down_tiles;
+    unsigned total = operation_tiles(state, stage);
     unsigned index = 0;
     bool reserved = false;
     for (int probe = 0; probe < QueueShards && !reserved; ++probe) {
@@ -250,7 +282,8 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
       U64 ticket = queue_load(&head);
       for (int attempt = 0; attempt < 4; ++attempt) {
         index = static_cast<unsigned>(ticket);
-        if ((ticket & ~static_cast<U64>(UINT_MAX)) != generation || index >= total)
+        if ((ticket & ~static_cast<U64>(UINT_MAX)) != generation ||
+            index >= total)
           break;
         if (cuda::atomic_ref<U64, cuda::thread_scope_device>(head)
                 .compare_exchange_strong(ticket, ticket + QueueShards,
@@ -263,10 +296,9 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
     }
     if (!reserved)
       continue;
-    const int tile_m = phase == 0 ? M : 32;
+    const int tile_m = tile_rows(phase, stage);
     const int tile_n =
-        ((stage == GATE ? b.intermediate : b.hidden) + N * Cluster - 1) /
-        (N * Cluster);
+        (operation_columns<Fused>(b, stage) + N * Cluster - 1) / (N * Cluster);
     for (int e = 0; e < b.experts; ++e) {
       int rows = b.counts[static_cast<size_t>(slot) * b.experts + e];
       unsigned count = ((rows + tile_m - 1) / tile_m) * tile_n;
@@ -279,7 +311,7 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
                 static_cast<int>(index % tile_n) * N * Cluster,
                 rows,
                 phase,
-                q >> 34};
+                q >> 35};
         return true;
       }
       index -= count;
@@ -289,14 +321,15 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
   return false;
 }
 
-template <int Cluster, int Hidden = 0, int Intermediate = 0>
+template <int Cluster, int Hidden = 0, int Intermediate = 0, bool Fused = false>
 __global__ __launch_bounds__(Threads, 1) void executor(
     const __grid_constant__ DeviceBuffers b, Context context, int layers,
     int decode_budget, float expected, int cap) {
   const int hidden = Hidden > 0 ? Hidden : b.hidden;
   const int intermediate = Intermediate > 0 ? Intermediate : b.intermediate;
   extern __shared__ __align__(1024) unsigned char workspace[];
-  auto &s = *reinterpret_cast<Storage *>(workspace);
+  auto &s = *reinterpret_cast<Storage<Cluster, Fused> *>(workspace);
+  constexpr int Stages = Storage<Cluster, Fused>::Stages;
   int warp = threadIdx.x / 32, lane = threadIdx.x % 32;
   const int rank = blockIdx.x % Cluster;
   if (threadIdx.x == 32) {
@@ -349,19 +382,19 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         while (task.slot < 0) {
           // Read-only polling must not serialize every idle cluster through
           // a read-modify-write on the same L2 atomic location.
-          if (cuda::atomic_ref<int, cuda::thread_scope_device>(*b.stop)
-                  .load(cuda::memory_order_acquire)) {
+          if (cuda::atomic_ref<int, cuda::thread_scope_device>(*b.stop).load(
+                  cuda::memory_order_acquire)) {
             task.slot = -2;
             break;
           }
           if (blockIdx.x == 0)
-            update_policy<Cluster>(b, context, layers, decode_budget, expected,
-                                   cap);
+            update_policy<Cluster, Fused>(b, context, layers, decode_budget,
+                                          expected, cap);
           int preferred = cuda::atomic_ref<int, cuda::thread_scope_device>(
                               context.policy[blockIdx.x / Cluster])
                               .load(cuda::memory_order_acquire);
-          if (!claim<Cluster>(b, context, preferred, cursor, task))
-            claim<Cluster>(b, context, 1 - preferred, cursor, task);
+          if (!claim<Cluster, Fused>(b, context, preferred, cursor, task))
+            claim<Cluster, Fused>(b, context, 1 - preferred, cursor, task);
           if (task.slot < 0)
             __nanosleep(64);
         }
@@ -402,11 +435,13 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         break;
       previous_phase = task.phase;
       cursor = (task.slot + 1) % b.slots;
+      if (task.stage == ACTIVATE)
+        continue;
       const auto &maps = context.maps[task.slot];
       const auto &weights = context.weights[0];
       const bool gate = task.stage == GATE;
       const int reduction = gate ? hidden : intermediate;
-      const int tile_m = task.phase == 0 ? M : 32;
+      const int tile_m = tile_rows(task.phase, task.stage);
       const int map_row =
           task.row + static_cast<int>(expert_base(b, task.slot, task.expert) -
                                       b.base_rows[task.slot]);
@@ -430,13 +465,14 @@ __global__ __launch_bounds__(Threads, 1) void executor(
               Cluster);
         deep_gemm::tma::copy<K, N, 128, Element>(g, &s.full[stage], s.g[stage],
                                                  k, weight_row, Cluster);
-        if (gate)
+        if (Fused && gate)
           deep_gemm::tma::copy<K, N, 128, Element>(
               &weights.up, &s.full[stage], s.u[stage], k,
               weight_row + intermediate, Cluster);
         if (rank == 0)
           s.full[stage].arrive_and_expect_tx(
-              (tile_m / Cluster + N * (gate ? 2 : 1)) * K * 2 * Cluster);
+              (tile_m / Cluster + N * (Fused && gate ? 2 : 1)) * K * 2 *
+              Cluster);
         else
           s.full[stage].arrive(0u);
       }
@@ -462,6 +498,12 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         break;
       s.accum_empty[index].wait(parity ^ 1);
       deep_gemm::ptx::tcgen05_after_thread_sync();
+      if (task.stage == ACTIVATE) {
+        if (lane == 0)
+          for (int member = 0; member < Cluster; ++member)
+            s.accum_full[index].arrive(member, true);
+        continue;
+      }
       const bool gate = task.stage == GATE;
       const auto instruction = cute::UMMA::make_runtime_instr_desc(
           task.phase == 0 ? prefill_descriptor : decode_descriptor);
@@ -476,17 +518,18 @@ __global__ __launch_bounds__(Threads, 1) void executor(
           auto g =
               deep_gemm::mma::sm100::make_umma_desc<cute::UMMA::Major::K, N, K,
                                                     128>(s.g[stage], 0, 0);
-          auto u =
-              deep_gemm::mma::sm100::make_umma_desc<cute::UMMA::Major::K, N, K,
-                                                    128>(s.u[stage], 0, 0);
+          auto u = deep_gemm::mma::sm100::make_umma_desc<cute::UMMA::Major::K,
+                                                         N, K, 128>(
+              Fused ? s.u[stage] : s.g[stage], 0, 0);
           const uint32_t a_base = a.lo, g_base = g.lo, u_base = u.lo;
 #pragma unroll
           for (int inner = 0; inner < K; inner += 16) {
             a.lo = a_base + inner * 2 / 16;
             g.lo = g_base + inner * 2 / 16;
             u.lo = u_base + inner * 2 / 16;
-            Mma::fma(g, a, index * 256, k || inner, instruction);
-            if (gate)
+            Mma::fma(g, a, index * (Fused ? 256 : 128), k || inner,
+                     instruction);
+            if (Fused && gate)
               Mma::fma(u, a, index * 256 + 128, k || inner, instruction);
           }
         }
@@ -512,6 +555,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
     }
   } else if (warp >= 4) {
     const int local_row = (warp - 4) * 32 + lane;
+    uint32_t tma_store_stage = 0;
     for (uint32_t sequence = 0;; ++sequence) {
       const int index = sequence % OutputStages,
                 parity = (sequence / OutputStages) & 1;
@@ -522,67 +566,115 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       s.accum_full[index].wait(parity);
       deep_gemm::ptx::tcgen05_after_thread_sync();
       const bool gate = task.stage == GATE;
-      const int tile_m = task.phase == 0 ? M : 32;
+      const int tile_m = tile_rows(task.phase, task.stage);
       const auto &maps = context.maps[task.slot];
       const int map_row =
           task.row + static_cast<int>(expert_base(b, task.slot, task.expert) -
                                       b.base_rows[task.slot]);
+      if (task.stage == ACTIVATE) {
+        const size_t base = expert_base(b, task.slot, task.expert);
+        const int column = task.column + local_row;
+        if (column < intermediate) {
+          // Four rows in flight, matching the native activation software
+          // pipeline. Each CTA covers 4096 BF16 elements, independent of the
+          // total routed batch; no operation-length loop is introduced.
+          for (int token = 0; token < 32; token += 4) {
+            float gate_values[4], up_values[4];
 #pragma unroll
-      for (int col = 0; col < tile_m; col += 8) {
-        uint32_t g[8], u[8];
-        cute::SM100_TMEM_LOAD_32dp32b8x::copy(
-            index * 256 + col, g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7]);
-        if (gate)
-          cute::SM100_TMEM_LOAD_32dp32b8x::copy(index * 256 + 128 + col, u[0],
-                                                u[1], u[2], u[3], u[4], u[5],
-                                                u[6], u[7]);
-        cutlass::arch::fence_view_async_tmem_load();
-        alignas(16) BF16 converted[8];
+            for (int j = 0; j < 4; ++j) {
+              size_t offset =
+                  (base + task.row + token + j) * (2 * intermediate) + column;
+              bool valid = task.row + token + j < task.rows;
+              gate_values[j] = valid ? __bfloat162float(b.gateup[offset]) : 0.f;
+              up_values[j] =
+                  valid ? __bfloat162float(b.gateup[offset + intermediate])
+                        : 0.f;
+            }
 #pragma unroll
-        for (int j = 0; j < 8; ++j) {
-          float value = __uint_as_float(g[j]);
-          if (gate) {
-            // Preserve native BF16 GEMM output rounding without materializing
-            // the gate/up tensors in HBM. Fusion must not change this boundary.
-            value = __bfloat162float(__float2bfloat16(value));
-            float up =
-                __bfloat162float(__float2bfloat16(__uint_as_float(u[j])));
-            value = value / (1.f + expf(-value)) * up;
+            for (int j = 0; j < 4; ++j) {
+              float gate_value = gate_values[j];
+              BF16 value = __float2bfloat16(
+                  gate_value / (1.f + expf(-gate_value)) * up_values[j]);
+              b.activation[(base + task.row + token + j) * intermediate +
+                           column] = value;
+            }
           }
-          converted[j] = __float2bfloat16(value);
         }
-        // Transpose weight-row/token-column accumulators into the native
-        // token-row/weight-column swizzled output layout. All CTAs use the
-        // same token rows and write their own 128 output columns.
+        __threadfence();
+        asm volatile("fence.proxy.async.global;" ::: "memory");
+      } else if constexpr (!Fused) {
+        auto *map =
+            gate ? &maps.gateup_store[task.phase] : &maps.output[task.phase];
+        deep_gemm::epilogue::sm100_store_cd_swap_ab<
+            M, N, 16, N, 128, 2, M, 0, deep_gemm::GemmType::MGroupedContiguous,
+            false>(s, tma_store_stage, index * 128, map_row, task.column, 0,
+                   false, tile_m, warp - 4, lane,
+                   deep_gemm::epilogue::transform::EpilogueIdentity{}, false,
+                   &s.accum_empty[index], &s.accum_empty[index],
+                   *reinterpret_cast<const cute::TmaDescriptor *>(map));
+      } else {
 #pragma unroll
-        for (int j = 0; j < 8; ++j) {
-          const int token_row = col + j;
-          const int store_index = local_row / 64;
-          const int column = (local_row % 64) ^ ((token_row & 7) * 8);
-          s.store[store_index][token_row * 64 + column] =
-              task.row + token_row < task.rows ? Element(converted[j])
-                                               : Element(0.f);
+        for (int col = 0; col < tile_m; col += 8) {
+          uint32_t g[8], u[8];
+          cute::SM100_TMEM_LOAD_32dp32b8x::copy(
+              index * (Fused ? 256 : 128) + col, g[0], g[1], g[2], g[3], g[4],
+              g[5], g[6], g[7]);
+          if (Fused && gate)
+            cute::SM100_TMEM_LOAD_32dp32b8x::copy(index * 256 + 128 + col, u[0],
+                                                  u[1], u[2], u[3], u[4], u[5],
+                                                  u[6], u[7]);
+          cutlass::arch::fence_view_async_tmem_load();
+          alignas(16) BF16 converted[8];
+#pragma unroll
+          for (int j = 0; j < 8; ++j) {
+            float value = __uint_as_float(g[j]);
+            if (Fused && gate) {
+              // Preserve native BF16 GEMM output rounding without materializing
+              // the gate/up tensors in HBM. Fusion must not change this
+              // boundary.
+              value = __bfloat162float(__float2bfloat16(value));
+              float up =
+                  __bfloat162float(__float2bfloat16(__uint_as_float(u[j])));
+              value = value / (1.f + expf(-value)) * up;
+            }
+            converted[j] = __float2bfloat16(value);
+          }
+          // Transpose weight-row/token-column accumulators into the native
+          // token-row/weight-column swizzled output layout. All CTAs use the
+          // same token rows and write their own 128 output columns.
+#pragma unroll
+          for (int j = 0; j < 8; ++j) {
+            const int token_row = col + j;
+            const int store_index = local_row / 64;
+            const int column = (local_row % 64) ^ ((token_row & 7) * 8);
+            s.store[store_index][token_row * 64 + column] =
+                task.row + token_row < task.rows ? Element(converted[j])
+                                                 : Element(0.f);
+          }
         }
-      }
-      cute::tma_store_fence();
-      cutlass::arch::NamedBarrier::sync(M, 0);
-      if (local_row == 0) {
-        auto *map = gate ? &maps.activation_store[task.phase]
-                         : &maps.output[task.phase];
+        cute::tma_store_fence();
+        cutlass::arch::NamedBarrier::sync(M, 0);
+        if (local_row == 0) {
+          auto *map = gate ? (Fused ? &maps.activation_store[task.phase]
+                                    : &maps.gateup_store[task.phase])
+                           : &maps.output[task.phase];
 #pragma unroll
-        for (int part = 0; part < 2; ++part) {
-          cute::SM90_TMA_STORE_2D::copy(map, s.store[part],
-                                        task.column + part * 64, map_row);
-          cute::tma_store_arrive();
+          for (int part = 0; part < 2; ++part) {
+            cute::SM90_TMA_STORE_2D::copy(map, s.store[part],
+                                          task.column + part * 64, map_row);
+            cute::tma_store_arrive();
+          }
         }
       }
       deep_gemm::ptx::tcgen05_before_thread_sync();
-      s.accum_empty[index].arrive(0u);
+      if (Fused || task.stage == ACTIVATE)
+        s.accum_empty[index].arrive(0u);
       // Retire every store before publishing completion or reusing its SMEM.
       if (local_row == 0) {
         // CUTLASS's .read wait only releases SMEM; completion publication
         // additionally requires the global writes to have completed.
         asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
+        asm volatile("fence.proxy.async.global;" ::: "memory");
         __threadfence();
       }
       cutlass::arch::NamedBarrier::sync(M, 0);
@@ -593,13 +685,14 @@ __global__ __launch_bounds__(Threads, 1) void executor(
                      sequence]
               .finish_ns = now_ns();
         auto *state = b.states + task.slot;
-        unsigned total = gate ? state->gate_tiles : state->down_tiles;
+        unsigned total = operation_tiles(state, task.stage);
         if (atomicAdd(&state->completed, 1U) == total * Cluster - 1) {
           state->completed = 0;
           __threadfence();
-          if (gate) {
-            reset_queues(context, task.slot, task.epoch, DOWN);
-            queue_store(&state->queue, queue_value(task.epoch, DOWN));
+          if (task.stage != DOWN) {
+            Stage next = gate && !Fused ? ACTIVATE : DOWN;
+            reset_queues(context, task.slot, task.epoch, next);
+            queue_store(&state->queue, queue_value(task.epoch, next));
           } else {
             queue_store(&state->queue, queue_value(task.epoch, IDLE));
             b.control[static_cast<size_t>(task.slot) * kControlWords +

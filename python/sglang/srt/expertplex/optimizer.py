@@ -256,6 +256,11 @@ def estimate_memory(
     # additional transformer temporaries belong in the explicit reserve.
     attention_buffers = (
         config.mailboxes_per_client * rows * (8 * model.hidden_size + 12 * model.top_k)
+        + config.mailboxes_per_client
+        * len(config.expert_devices)
+        * config.slot_count
+        * local_experts
+        * 8
     )
     return MemoryEstimate(
         attention_weights_bytes=model.attention_weight_bytes,
