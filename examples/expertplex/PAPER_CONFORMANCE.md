@@ -16,20 +16,20 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
 
 | 原文 | 必须保留的机制 | 当前证据或差距 | 验收方式 |
 |---|---|---|---|
-| §3 | P、D attention 独占 GPU；E 共享完整专家权重 | 62 层 480B 随机权重完整 HTTP/NVLink KV/TBO/graph 路径通过 24×128 token；小 checkpoint 严格 token 对齐仍有差异 | 同权重基线逐 token / logprob 对照，真实 KV 移交 |
+| §3 | P、D attention 独占 GPU；E 共享完整专家权重 | 62 层 480B 随机权重完成完整服务及 Poisson sweep；最新小 checkpoint 的 24 个固定历史位置 top-1 全部对齐，但 logprob 非 bitwise、非完整词表 | 同权重基线逐 token / logprob 对照，真实 KV 移交 |
 | §4.2、§7.1 | 一个长驻 kernel 融合两个 grouped GEMM、激活、数据处理、cluster scheduler | 默认 SM100 长驻融合 TMA/TCGEN05；当前性能明显落后于原生 DeepGEMM，不能验收调度开销 | 对照原生 BF16 GEMM，并记录融合前后开销 |
-| §7.1、§7.6 Fig.15 | MoE 预处理/后处理也是 APK 中的 tile operation，包含 EP Scatter 两阶段与 EP Gather | 已新增可选 `prefill_preprocess`：E 端 Scatter1/Scatter2/Gather 与 GEMM/激活共享持久化调度；4E、top-8 的数值/并发/graph/任务计数测试通过，完整服务与性能仍待验收 | 原生 BF16 per-rank gather 舍入边界对照；完整负载的各操作抢占间隔测试 |
+| §7.1、§7.6 Fig.15 | MoE 预处理/后处理也是 APK 中的 tile operation，包含 EP Scatter 两阶段与 EP Gather | `prefill_preprocess` 的 4E/top-8 数值、并发、graph 和完整随机权重服务通过；六种操作已有 tile interval 数据，但不构成完整传播/抢占上界证明 | 原生 BF16 per-rank gather 舍入边界对照；完整负载的各操作抢占间隔测试 |
 | §4.2 | 启动前固定 operation templates、buffer、TMA descriptors；shape 在启动时编译为常量 | buffers / TMA descriptors 已固定；Coder/30B 的 H/I 已做编译期特化，小调试模型保留通用形状 | 多层、动态 batch、图 replay 的地址与描述符检查 |
 | §4.2 | 保留原生 CTA/cluster shape、TMA multicast、warp specialization | 默认双 CTA、2SM MMA、9-stage TMA、原生 STSM/TMA epilogue 已通过回归；GateUp/ACT/Down 独立调度。Nsight Systems 确认对应 native GEMM 几何；性能仍落后 | 原生算子形状及流水线代码审计，数值测试 |
-| §4.3 Fig.4 | system P → CTA0 → device p_i → cluster DSMEM → warp broadcast → mbarrier | 默认后端已实现 CTA0→device policy→leader DSMEM→mbarrier；抢占 trace 与上界尚未验证 | 可控时刻注入 urgent decode，记录各级 epoch/timestamp |
+| §4.3 Fig.4 | system P → CTA0 → device p_i → cluster DSMEM → warp broadcast → mbarrier | 默认后端已实现该传播链；GPU 定时发布和 tile trace 已采集，尚未证明完整上界 | 可控时刻注入 urgent decode，记录各级 epoch/timestamp |
 | §4.3 | 决策在 check epoch 内固定；观察切换后不得再领取旧 phase tile | leader 是唯一领取者并向所有成员分发同一 Task；压力与 trace 验证仍待补齐 | 有预取、多 warp、多 CTA 的长时间压力测试 |
-| §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 使用双 accumulator；原路径每 tile 等待 TMA store 完成，尚不能宣称完全保留原生 store pipeline。新增延迟退休实验已通过跨 mailbox 数值回归，但配对性能更差，默认仍关闭 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
+| §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 双 accumulator，延迟 store 退休与 Task ring 元数据复用已分离；跨 mailbox 回归通过，配对汇总仍慢约 0.73%。后期论文实验显式开启，库默认仍关闭 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
 | §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | NVLink IPC 路径已验证全部 56 个有向 GPU 对 | 多发送方、重复 epoch、容量边界、故障路径 |
-| §5.2 | E 无通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 参考路径已实现 | kernel trace、并发 P/D 数值验证 |
+| §5.2 | E 无通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 默认服务路径已实现，E 侧预处理直接读取最终 raw buffer；通信微基准的 identity echo 仅为计时外诊断 | kernel trace、并发 P/D 数值验证 |
 | §5.2 Fig.5 | 单线程 WaitDone 位于 COMM stream；COMPUTE stream 可继续 TBO/SBO | 独立 COMM stream 和双 mailbox 已实现；client 的 TBO/graph 对照通过，小 checkpoint 完整 SGLang TBO/图回放通过，真实模型待验收 | CUDA timeline 及双 microbatch 生命周期检查 |
 | §5.3 | 跨节点 P 同 local rank 转发，节点内 NVLink multicast/gather；无 P 节点走低优先级 IB VL | 单节点 MoE 路径为 NVLink；多节点 MoE RDMA/层次转发未实现 | 需要多节点与 IB 硬件；单机测试不能替代 |
 | §6.1–6.3 Eq.1–3 | 联合枚举 attention/MoE 并行、布局、overlap、q；内存过滤；SLO 二分批量；critical path 估计 | 当前优化器只覆盖部分布局与简化模型，需补齐可执行策略 | profile 拟合留出集误差、候选可执行性、预测/实测对比 |
-| §6.4 Eq.4 | q 随当前/预期 decode tile footprint 缩放，按 cluster 向上取整，Qmax 保证 P 进展；单 phase 借用全部资源 | 参考实现有调节逻辑；需与新 kernel 的 phase-specific tile shape 一致 | 稀疏度变化、空闲借用、P/D 饥饿测试 |
+| §6.4 Eq.4 | q 随当前/预期 decode tile footprint 缩放，按 cluster 向上取整，Qmax 保证 P 进展；单 phase 借用全部资源 | CPU 对照及默认 SM100 调度器均使用实际 masked/packed tile footprint；仍需完整策略质量与饥饿上界验收 | 稀疏度变化、空闲借用、P/D 饥饿测试 |
 
 ## 论文实验逐项对应
 

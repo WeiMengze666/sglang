@@ -263,6 +263,12 @@ schema 要求 `units="seconds_per_layer"`、非空 `provenance`、真实 `total_
 `{x,sequence_length,latency_s}` 样本；MoE 的 x 必须是 tile footprint。只有实际测量过的
 SM 预算进入搜索。测试里的人工系数仅验证代数，不作为 B300 profiles 发布。
 
+profile 还必须声明 `prefill_preprocess`，并与运行配置一致（旧 schema 缺省为 false）。
+启用 E 侧预处理时，通信量包含发往每张 E 的原始 BF16 hidden、top-k ID/weight 和返回的
+BF16 partial output；不能继续套用 A 侧展开 top-k 后的 routed-row 通信量。
+`profile_operations.py` 的 GEMM/ACT 数据没有包含 E 侧 Scatter/Gather，不能直接当作
+`prefill_preprocess=true` 的完整 MoE profile；完整 critical path 仍需独立测量。
+
 当前关键路径模型是近似，未计入完整排队、KV 迁移和服务 CPU 开销。`--overlap auto`
 同时比较 sequential/TBO，按候选策略计算双 mailbox 内存及独立 microbatch padding。
 TBO 假设 token 均衡切分，实际序列边界会影响预测，需要实测校准。
@@ -293,6 +299,9 @@ rendezvous。`bench_apk_sharing.py` 对 GateUp/Down 分别执行 §7.3 对照；
 支持单独构建的固定 DeepEP v1。`--group-transfers` 测试预建整组 attention 通信模板；
 服务端在启用 E 侧预处理时自动使用整组通信；A 侧预处理消融可通过
 `SGLANG_EXPERTPLEX_GROUP_COMM=1` 显式选择整组通信。
+原始 hidden 通信诊断使用 `--group-transfers --prefill-preprocess --mode normal`，
+其 E 侧 identity echo 在 dispatch/combine 计时区间外，只用于验证数据与计时边界；
+该诊断不能作为服务路径无接收 kernel 的证明。
 `check_teacher_forcing.py --top-k 128 --flush-between` 比较同一历史、无前缀缓存复用的
 logprob；top-k 子集不能当作完整词表的 TV/KL。所有脚本的输出均明确实验范围。
 

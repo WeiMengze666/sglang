@@ -65,6 +65,9 @@ def worker(rank, settings):
                     rank,
                     packed=[int(args.mode == "normal")] * 4,
                     top_k=args.top_k,
+                    prefill_preprocess=args.prefill_preprocess,
+                    expert_rank=rank - 4,
+                    expert_world=4,
                 )
             descriptors = [None] * 8
             dist.all_gather_object(descriptors, owner.descriptor() if owner else None)
@@ -131,7 +134,7 @@ def worker(rank, settings):
             nonlocal recv_x, recv_ids, recv_weights, handle
             if remote_group is not None:
                 remote_group.dispatch(
-                    x, ids, row_maps[0], 0, int(args.mode == "low_latency")
+                    x, ids, row_maps[0], 0, int(args.mode == "low_latency"), weights
                 )
             elif args.backend == "expertplex":
                 for expert, (remote, row_map) in enumerate(zip(remotes, row_maps)):
@@ -395,6 +398,11 @@ def main():
     p.add_argument("--iterations", type=int, default=20)
     p.add_argument("--group-transfers", action="store_true")
     p.add_argument(
+        "--prefill-preprocess",
+        action="store_true",
+        help="Measure the serving raw-token broadcast/partial-gather transport",
+    )
+    p.add_argument(
         "--vary-routes",
         action="store_true",
         help="Diagnostic changing routes and padding on every replay",
@@ -408,6 +416,12 @@ def main():
     )
     p.add_argument("--output", required=True)
     args = p.parse_args()
+    if args.prefill_preprocess and (
+        args.backend != "expertplex"
+        or args.mode != "normal"
+        or not args.group_transfers
+    ):
+        p.error("E preprocessing requires ExpertPlex normal mode with group transfers")
     if min(*args.rows, args.iterations) <= 0:
         p.error("Counts must be positive")
     if os.environ.get("CUDA_VISIBLE_DEVICES") not in (None, "0,1,2,3,4,5,6,7"):

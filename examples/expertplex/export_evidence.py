@@ -108,6 +108,14 @@ NUMERIC_KEYS = {
     "top1_equal",
     "flush_between_histories",
     "requested_top_k",
+    "dispatch_us",
+    "combine_us",
+    "step_wall_us",
+    "group_transfers",
+    "cuda_graph",
+    "vary_routes",
+    "isolated_us",
+    "apk_overhead_us",
 }
 CONTAINERS = {
     "settings",
@@ -126,11 +134,16 @@ CONTAINERS = {
     "tolerances",
     "native_reference",
     "comparisons",
+    "summary",
+    "median_max_rank_us",
+    "max_rank_samples",
+    "apk",
+    "native",
 }
 ENUMS = {
     "status": {"passed", "failed", "running", "completed", "incomplete", "ready"},
     "phase": {"prefill", "decode"},
-    "mode": {"exclusive", "priority", "green"},
+    "mode": {"exclusive", "priority", "green", "normal", "low_latency"},
     "operation": {
         "gateup",
         "gate_up",
@@ -141,7 +154,7 @@ ENUMS = {
         "scatter2",
         "gather",
     },
-    "backend": {"sm100", "sm100_fused", "reference"},
+    "backend": {"sm100", "sm100_fused", "reference", "expertplex", "deepep"},
     "workload_identity": {"cpu-bf16-expert-chunks-v1"},
 }
 

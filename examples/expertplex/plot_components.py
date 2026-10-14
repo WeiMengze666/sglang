@@ -283,6 +283,8 @@ def main():
             method = settings["backend"]
             if method == "expertplex":
                 method += " grouped" if settings["group_transfers"] else " peer"
+                if settings.get("prefill_preprocess"):
+                    method += " raw"
             else:
                 revisions = {
                     r["deepep_source_revision"]

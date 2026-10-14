@@ -13,14 +13,41 @@ __global__ void benchmark_echo_done(DeviceBuffers b) {
     system_store(c + DONE, system_load(c + READY));
   }
 }
+__global__ void benchmark_echo_raw(DeviceBuffers b) {
+  const int slot = blockIdx.y;
+  const int n = uncached_load_int(b.raw_n + slot);
+  for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+       i < static_cast<size_t>(n) * b.hidden;
+       i += static_cast<size_t>(gridDim.x) * blockDim.x) {
+    const size_t token = b.raw_base[slot] + i / b.hidden;
+    const float value = __bfloat162float(
+        uncached_load(b.raw_input + b.raw_base[slot] * b.hidden + i));
+    float sum = 0;
+    for (int j = 0; j < b.top_k; ++j) {
+      const size_t index = token * b.top_k + j;
+      const int id = uncached_load_int(b.raw_ids + index);
+      if (id >= 0 && id % b.expert_world == b.expert_rank)
+        sum += value * __int_as_float(uncached_load_int(
+                           reinterpret_cast<const int *>(b.raw_weights + index)));
+    }
+    b.raw_output[b.raw_base[slot] * b.hidden + i] = __float2bfloat16(sum);
+  }
+  __threadfence_system();
+}
 static void benchmark_echo(std::shared_ptr<OwnedBuffers> owner) {
   TORCH_CHECK(!owner->started, "Communication echo cannot run beside an executor");
   c10::cuda::CUDAGuard guard(owner->device);
   auto stream = at::cuda::getCurrentCUDAStream(owner->device);
   auto b = owner->b;
-  size_t rows = b.base_rows[b.slots - 1] + b.storage_rows[b.slots - 1];
-  C10_CUDA_CHECK(cudaMemcpyAsync(b.output, b.input, rows * b.hidden * sizeof(BF16),
+  if (b.prefill_preprocess) {
+    // Identity-only stand-in for persistent scatter/GEMM/gather, outside both
+    // timed intervals. It never serves as a receive/polling communication SM.
+    benchmark_echo_raw<<<dim3(128, b.slots), 256, 0, stream>>>(b);
+  } else {
+    size_t rows = b.base_rows[b.slots - 1] + b.storage_rows[b.slots - 1];
+    C10_CUDA_CHECK(cudaMemcpyAsync(b.output, b.input, rows * b.hidden * sizeof(BF16),
                                  cudaMemcpyDeviceToDevice, stream));
+  }
   benchmark_echo_done<<<1, 32, 0, stream>>>(b);
   C10_CUDA_CHECK(cudaGetLastError());
 }

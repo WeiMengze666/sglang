@@ -455,3 +455,29 @@ Paired GateUp/Down response ratios are 1.00170/0.99815, so the candidate was
 retained. Checkpoint-2248 includes a matched-policy interval ablation and
 filtered numerical results. The paper's low-overhead/preemption targets remain
 unmet; full serving and cached-history regression continue.
+
+## Current-path regression and fair PDMux tuning, 23:08 UTC
+
+With the ring/prefetch changes and pipelined stores enabled, the tiny real BF16
+checkpoint matches baseline top-1 at all 24 teacher-forced histories. Maximum
+common top-k logprob differences are 0.0554237 with cache reuse and 0.0313215
+with a fresh cache per history. The earlier 0.6283 outlier was not reproduced;
+this is not a causal cache proof, full-vocabulary comparison, or trained-480B
+accuracy result. The H2048/I768 Qwen3-30B expert-shape suite also passes four-E,
+two-prefill and graph checks. CPU contract coverage is 48 passing tests.
+
+The raw normal-mode communication fixture now measures the same hidden-vector
+broadcast and partial-output gather used by E-side preprocessing. Static and
+changing/padded graph replays pass identity checks. Its temporary E-side echo
+runs outside both timed intervals; it is a diagnostic, not the production
+receiver-free execution path. The planner distinguishes raw and routed payload
+bounds and refuses profiles measured with a different preprocessing mode.
+
+At total KV capacity 196608, the updated ExpertPlex 64-request pilot attains
+64/56/39/25 joint successes at 0.75/1/1.25/1.5 req/s. It fails the 90% target
+at 1 req/s. PDMux's initial `split_forward_token_budget=512` restricted layer
+progress per host loop and is not its tuned baseline. Budget 8192 gives
+64/63/60 successes at 0.75/1/1.25 req/s, passing all three tested points.
+Checkpoint-2308 publishes this same-capacity comparison, including the worse
+ExpertPlex result. Larger PDMux budget and ExpertPlex SM-cap tuning continue;
+the held-out configuration must be frozen afterward. No 1.5x claim is supported.

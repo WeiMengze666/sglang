@@ -382,9 +382,13 @@ class MeasuredProfiles:
     attention: dict[str, LatencyCoefficients]
     moe: dict[tuple[str, int], LatencyCoefficients]
     expert_probabilities: dict[str, tuple[float, ...]]
+    prefill_preprocess: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], model: ModelSpec) -> MeasuredProfiles:
+        preprocess = data.get("prefill_preprocess", False)
+        if not isinstance(preprocess, bool):
+            raise ValueError("profile prefill_preprocess must be boolean")
         if data.get("units") != "seconds_per_layer":
             raise ValueError("profile units must be seconds_per_layer")
         provenance = data.get("provenance", "")
@@ -453,6 +457,7 @@ class MeasuredProfiles:
             attention,
             moe,
             probabilities,
+            preprocess,
         )
 
     @classmethod
@@ -523,6 +528,29 @@ def expected_rank_footprint(profiles, layout, phase, batch, input_length, overla
     )
 
 
+def nvlink_payload_bytes(
+    model: ModelSpec,
+    layout: Layout,
+    phase: str,
+    tokens: int,
+    *,
+    prefill_preprocess: bool,
+) -> int:
+    """Payload upper bound for single-node transport, excluding controls.
+
+    Raw P sends IDs/weights and pulls one BF16 partial vector per E. Its hidden
+    vector is only sent to ranks with selected experts; this conservative bound
+    assumes every E is selected. Packed P and masked D send and retrieve one
+    vector per valid route (the bound assumes no padding). This is not measured
+    link utilization or a cross-node deduplication model.
+    """
+    if phase not in ("prefill", "decode") or tokens < 0:
+        raise ValueError("Invalid phase or token count")
+    if phase == "prefill" and prefill_preprocess:
+        return tokens * layout.expert_count * (4 * model.hidden_size + 8 * model.top_k)
+    return 4 * tokens * model.top_k * model.hidden_size
+
+
 def _iteration_latency(
     model: ModelSpec,
     profiles: MeasuredProfiles,
@@ -533,6 +561,7 @@ def _iteration_latency(
     context_length: int,
     sm_count: int,
     overlap: str,
+    prefill_preprocess: bool = False,
 ) -> float:
     attention_count = (
         layout.prefill_count if phase == "prefill" else layout.decode_count
@@ -548,15 +577,13 @@ def _iteration_latency(
         profiles, layout, phase, batch, input_length, overlap
     )
     moe = profiles.moe[phase, sm_count].predict(footprint)
-    # NVLink path is bidirectional activation dispatch + expert-result pull.
-    # This is a shared-fabric byte model; topology/protocol overhead belongs in
-    # measured bandwidth and per-layer APK profile, not a synthetic constant.
+    # Match the selected transport's actual duplication boundary. Bandwidth
+    # must be measured for that path; launch/control overhead is not inferred
+    # from payload bytes and remains a limitation of this approximation.
     communication = (
-        2
-        * tokens
-        * model.top_k
-        * model.hidden_size
-        * 2
+        nvlink_payload_bytes(
+            model, layout, phase, tokens, prefill_preprocess=prefill_preprocess
+        )
         / profiles.nvlink_bytes_per_second
     )
     layer = (
@@ -587,6 +614,11 @@ def search(
     TBO is an analytical option for a measured TBO setup; selecting it here
     does not enable communication overlap in the runtime.
     """
+    if profiles.prefill_preprocess != config.prefill_preprocess:
+        raise ValueError(
+            "profile prefill_preprocess differs from the selected transport; "
+            "measure both E preprocessing and its raw-token communication path"
+        )
     if overlap == "auto":
         candidates = [
             search(
@@ -706,6 +738,7 @@ def search(
                         context_length,
                         sms,
                         overlap,
+                        config.prefill_preprocess,
                     )
                     if latency <= slo:
                         low = middle
@@ -723,6 +756,7 @@ def search(
                         context_length,
                         sms,
                         overlap,
+                        config.prefill_preprocess,
                     )
             if not all(batches.values()):
                 continue

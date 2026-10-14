@@ -207,6 +207,43 @@ class ConfigTests(unittest.TestCase):
 
 
 class OptimizerTests(unittest.TestCase):
+    def test_communication_payload_matches_raw_and_routed_transports(self):
+        model = config.ModelSpec.from_dict(model_config(coder=True))
+        layout = optimizer.Layout(1, 3, 4)
+        # Seven tokens: raw normal mode broadcasts four copies with IDs and
+        # routing weights, then reads four partial vectors; masked mode moves
+        # eight dispatched and eight returned vectors per token.
+        self.assertEqual(
+            optimizer.nvlink_payload_bytes(
+                model, layout, "prefill", 7, prefill_preprocess=True
+            ),
+            689920,
+        )
+        for phase, preprocess in (("decode", True), ("prefill", False)):
+            self.assertEqual(
+                optimizer.nvlink_payload_bytes(
+                    model, layout, phase, 7, prefill_preprocess=preprocess
+                ),
+                1376256,
+            )
+
+    def test_search_rejects_profiles_from_another_preprocessing_path(self):
+        model = config.ModelSpec.from_dict(model_config(coder=True))
+        profiles = optimizer.MeasuredProfiles.from_dict(profiles_dict(model), model)
+        node = config.default_config("/models/coder", prefill_preprocess=True)
+        with self.assertRaisesRegex(ValueError, "profile prefill_preprocess"):
+            optimizer.search(
+                node,
+                model,
+                profiles,
+                input_length=128,
+                average_output_length=32,
+                context_length=512,
+                prefill_slo_s=1,
+                decode_slo_s=0.05,
+                kv_tokens_per_attention_gpu=8192,
+            )
+
     def test_tbo_search_counts_double_buffers_and_exports_selected_policy(self):
         model = config.ModelSpec.from_dict(model_config())
         node = config.default_config(
