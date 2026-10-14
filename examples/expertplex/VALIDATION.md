@@ -417,3 +417,22 @@ about 223 us. These producer-handoff-to-retirement diagnostics include pipeline
 waiting and cannot establish the paper's 25.3 us preemption bound. The original
 native tile geometry is retained; shrinking tiles to obtain a lower interval
 would not satisfy the paper's performance-preserving requirement.
+
+## Metadata-ring retirement separation, 22:35 UTC
+
+The producer can now reuse a Task descriptor after every consumer has copied
+it, while accumulator and store-retirement barriers retain data ownership.
+Phase changes still drain outstanding stores. The native-reference suite,
+four-E/two-prefill suite, and four-client P128/P257 tests (30 overlap rounds,
+20 graph replays each) pass. Same-input GateUp/Down comparisons at q=64/96/128
+reduce the previous store-pipeline regression to approximately 0.73% in summed
+P+D response times (16,508.608 us versus 16,388.912 us). This small difference
+is not evidence of a speedup. Later evaluation explicitly enables pipelined
+stores to preserve the intended pipeline mechanism; the environment flag and
+exact source hashes distinguish those runs from the default-path pilots.
+
+The corrected full-model PDMux pilot completed all 64 requests at each offered
+rate. Joint attainment was 19/64 at 0.5 req/s, 12/64 at 1 req/s, 5/64 at 1.5,
+and 3/64 at 2. Its TTFT fails the fixed 1-second target. Checkpoint-2235 adds
+this baseline to the canonical comparison and publishes filtered numerical
+evidence for the ring tests. No 1.5x goodput claim is supported by these pilots.

@@ -87,14 +87,28 @@ def summarize(paths):
         sweep = read_json(root / "sweep/joint-slo.json")
         runs.append(
             {
-                "path": str(root),
+                "path": root.name,
                 "variant": settings.get("label") or settings["variant"],
                 "maximum_feasible_tested_rps": sweep[
                     "p90_goodput_max_tested_arrival_rps"
                 ],
                 "source_files_sha256": experiment.get("source_files_sha256"),
-                "input_artifact_sha256": experiment.get("input_artifact_sha256"),
-                "environment": experiment["environment"],
+                "input_artifact_sha256": {
+                    Path(name).name: digest
+                    for name, digest in experiment.get(
+                        "input_artifact_sha256", {}
+                    ).items()
+                },
+                # Only reproducibility controls belong in the public aggregate.
+                # Raw process environments and host paths stay in local evidence.
+                "runtime_controls": {
+                    key: int(value)
+                    for key in (
+                        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED",
+                        "SGLANG_EXPERTPLEX_PIPELINED_STORES",
+                    )
+                    if (value := experiment["environment"].get(key)) is not None
+                },
             }
         )
         for result in sweep["results"]:
@@ -120,7 +134,7 @@ def summarize(paths):
             ]
             row = {
                 "variant": settings.get("label") or settings["variant"],
-                "experiment": str(root),
+                "experiment": root.name,
                 "request_rate": result["request_rate"],
                 "attempted": result["attempted_requests"],
                 "completed": result["completed_requests"],
@@ -145,6 +159,8 @@ def summarize(paths):
                 "meets_p90_joint_slo": result["meets_p90_joint_slo"],
             }
             rows.append(row)
+    for key in ("model_path", "tokenizer_path", "dataset_path"):
+        common[key] = Path(common[key]).name
     return {
         "scope": __doc__,
         "common_conditions": common,
@@ -192,7 +208,7 @@ def main():
                 x,
                 [r[key] for r in series],
                 "o-",
-                label=variant,
+                label=variant.removeprefix("full480-canonical-"),
                 linewidth=1.5,
                 markersize=4,
             )

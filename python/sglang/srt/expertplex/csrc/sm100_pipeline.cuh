@@ -46,6 +46,7 @@ template <int Cluster, bool Fused> struct Storage {
   Barrier task_full[OutputStages], task_empty[OutputStages];
   Barrier accum_full[OutputStages], accum_empty[OutputStages];
   Barrier decision_full[OutputStages], cluster_empty[OutputStages];
+  Barrier cluster_consumed[OutputStages];
   Task decision[OutputStages];
   Task task[OutputStages];
   uint32_t tmem;
@@ -521,6 +522,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       s.accum_empty[i].init(M * Cluster);
       s.decision_full[i].init(1);
       s.cluster_empty[i].init(M * Cluster);
+      s.cluster_consumed[i].init(M * Cluster);
     }
     cutlass::arch::fence_barrier_init();
   }
@@ -557,9 +559,13 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       Task task{};
       task.slot = -1;
       if (rank == 0) {
-        // A ring slot is reusable only after every participating CTA retires
-        // its epilogue. The other output slot remains pipelined concurrently.
-        s.cluster_empty[index].wait(parity ^ 1);
+        // Reuse metadata after every participating CTA has copied its Task.
+        // Accumulator/store barriers independently protect data still in flight;
+        // cluster_empty remains the retirement barrier for phase transitions.
+        if (context.pipelined_stores)
+          s.cluster_consumed[index].wait(parity ^ 1);
+        else
+          s.cluster_empty[index].wait(parity ^ 1);
         if (deferred.slot >= 0) {
           task = deferred;
           deferred.slot = -1;
@@ -778,7 +784,8 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       if (local_row == 0 && completed.slot >= 0)
         retire_task<Cluster, Fused>(b, context, completed, completed_sequence);
       cutlass::arch::NamedBarrier::sync(M, 0);
-      s.task_empty[completed_sequence % OutputStages].arrive();
+      if (!context.pipelined_stores)
+        s.task_empty[completed_sequence % OutputStages].arrive();
       s.cluster_empty[completed_sequence % OutputStages].arrive(0, true);
     };
     auto drain_pending = [&]() {
@@ -805,6 +812,14 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         break;
       }
       s.accum_full[index].wait(parity);
+      if (context.pipelined_stores) {
+        // Task metadata has been copied by the producer, MMA and all epilogue
+        // readers. Reuse its ring independently of global-store retirement;
+        // accumulator/barrier ownership still protects the TMEM pipeline.
+        asm volatile("" ::: "memory");
+        s.task_empty[index].arrive();
+        s.cluster_consumed[index].arrive(0, true);
+      }
       if (task.slot == -3) {
         drain_pending();
         s.accum_empty[index].arrive(0u);
