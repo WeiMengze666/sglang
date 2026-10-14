@@ -396,3 +396,24 @@ store=0: isolated GateUp P was roughly 2.35 ms versus 1.96 ms, and Down P roughl
 no speedup is claimed for this change. Task-ring reuse still waits for delayed
 retirement and is a candidate pipeline bottleneck requiring another controlled
 experiment. Original low-overhead APK performance remains unfulfilled.
+
+## Publication scope
+
+Raw checkpoints 22:07 onward remain on the authorized server and in the user's
+local workspace. Automatic approval review rejected publishing an unfiltered
+raw artifact bundle because it could contain request/output payloads. The
+repository publishes aggregate serving curves and allowlisted numerical test
+summaries with source-file hashes, plus reconstruction scripts and dataset
+revisions/seeds. `export_evidence.py` omits request text, token histories,
+logprobs, IPC handles, environment, host paths and logs; its exclusion contract
+is CPU-tested. Raw evidence is not silently discarded, but these later raw
+archives are not part of the pushed repository.
+
+The matched CPU-fixture native/APK/MPS runs are complete in checkpoint-2220.
+Their GateUp and Down Pareto plots retain unfavorable results: APK is dominated
+by Green Context at several points. All six operation intervals were measured
+for 128–2048 rows per expert. Scatter2 medians reach about 101 us and Gather
+about 223 us. These producer-handoff-to-retirement diagnostics include pipeline
+waiting and cannot establish the paper's 25.3 us preemption bound. The original
+native tile geometry is retained; shrinking tiles to obtain a lower interval
+would not satisfy the paper's performance-preserving requirement.
