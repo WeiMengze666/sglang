@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "kernel": "sm100",
+  "scope": "native CUDA IPC primitive correctness/progress smoke; not full-model accuracy or goodput",
+  "started_at_utc": "2026-10-14T17:32:28.237055+00:00",
+  "geometry": {
+    "hidden": 256,
+    "intermediate": 128,
+    "layers": 2,
+    "experts": 4,
+    "top_k": 2,
+    "capacity": 128,
+    "seed": 20261013,
+    "weight_std": 0.05,
+    "packed": true
+  },
+  "reference": "CPU Torch FP32 gate/up and down; BF16 activation, expert output and final output",
+  "latency_scope": "host dispatch/combine, final BF16 cast and stream completion; validation D2H copy excluded; smoke only",
+  "tolerances": {
+    "absolute": 0.01,
+    "relative": 0.03,
+    "relative_l2": 0.03
+  },
+  "cases": [],
+  "software": {
+    "pytorch": "2.14.1+cu130",
+    "cuda": "13.0"
+  },
+  "hardware": [
+    {
+      "device": 0,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 1,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 2,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 3,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 4,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 5,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 6,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 7,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    }
+  ],
+  "status": "failed",
+  "error": "Traceback (most recent call last):\n  File \"/home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/torch/utils/cpp_extension.py\", line 2906, in _run_ninja_build\n    subprocess.run(\n  File \"/home/alayadb/miniconda3/envs/mengze-sglang/lib/python3.12/subprocess.py\", line 571, in run\n    raise CalledProcessError(retcode, process.args,\nsubprocess.CalledProcessError: Command '['ninja', '-v', '-j', '4']' returned non-zero exit status 2.\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/home/alayadb/mengze/expertplex-b300/src/examples/expertplex/check_gpu.py\", line 636, in main\n    native.load_extension()\n  File \"/home/alayadb/mengze/expertplex-b300/src/python/sglang/srt/expertplex/native.py\", line 78, in load_extension\n    return load(\n           ^^^^^\n  File \"/home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/torch/utils/cpp_extension.py\", line 1937, in load\n    return _jit_compile(\n           ^^^^^^^^^^^^^\n  File \"/home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/torch/utils/cpp_extension.py\", line 2398, in _jit_compile\n    _write_ninja_file_and_build_library(\n  File \"/home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/torch/utils/cpp_extension.py\", line 2555, in _write_ninja_file_and_build_library\n    _run_ninja_build(\n  File \"/home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/torch/utils/cpp_extension.py\", line 2923, in _run_ninja_build\n    raise RuntimeError(message) from e\nRuntimeError: Error building extension 'sglang_expertplex_native_v2': [1/2] /usr/local/cuda-13.0/bin/nvcc -MD -MF expertplex.cuda.o.d -DTORCH_EXTENSION_NAME=sglang_expertplex_native_v2 -DTORCH_API_INCLUDE_EXTENSION_H -I/home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/deep_gemm/include -isystem /home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/torch/include -isystem /home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-13.0/include -isystem /home/alayadb/miniconda3/envs/mengze-sglang/include/python3.12 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options '-fPIC' -O3 -std=c++20 --expt-relaxed-constexpr -gencode=arch=compute_103a,code=sm_103a -c /home/alayadb/mengze/expertplex-b300/src/python/sglang/srt/expertplex/csrc/expertplex.cu -o expertplex.cuda.o \nFAILED: [code=2] expertplex.cuda.o \n/usr/local/cuda-13.0/bin/nvcc -MD -MF expertplex.cuda.o.d -DTORCH_EXTENSION_NAME=sglang_expertplex_native_v2 -DTORCH_API_INCLUDE_EXTENSION_H -I/home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/deep_gemm/include -isystem /home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/torch/include -isystem /home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-13.0/include -isystem /home/alayadb/miniconda3/envs/mengze-sglang/include/python3.12 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options '-fPIC' -O3 -std=c++20 --expt-relaxed-constexpr -gencode=arch=compute_103a,code=sm_103a -c /home/alayadb/mengze/expertplex-b300/src/python/sglang/srt/expertplex/csrc/expertplex.cu -o expertplex.cuda.o \n/home/alayadb/mengze/expertplex-b300/src/python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh(471): error: more than one instance of overloaded function \"cutlass::arch::ClusterTransactionBarrier::arrive\" matches the argument list:\n            function \"cutlass::arch::ClusterBarrier::arrive(uint32_t, uint32_t) const\" (declared at line 382 of /home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/deep_gemm/include/cutlass/arch/barrier.h)\n            function \"cutlass::arch::ClusterBarrier::arrive(const cutlass::arch::ClusterBarrier::ValueType *)\" (declared at line 503 of /home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/deep_gemm/include/cutlass/arch/barrier.h)\n            argument types are: (int)\n            object type is: expertplex_sm100::Barrier\n        s.cluster_empty[index].arrive(0);\n                               ^\n/home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/deep_gemm/include/cutlass/arch/barrier.h(481): note #3322-D: number of parameters of function \"cutlass::arch::ClusterBarrier::arrive(const cutlass::arch::ClusterBarrier::ValueType *, uint32_t, uint32_t)\" does not match the call\n   static void arrive(ValueType const* smem_ptr, uint32_t cta_id, uint32_t pred) {\n               ^\n/home/alayadb/mengze/expertplex-b300/venv/lib/python3.12/site-packages/deep_gemm/include/cutlass/arch/barrier.h(376): note #3322-D: number of parameters of function \"cutlass::arch::ClusterBarrier::arrive() const\" does not match the call\n   void arrive() const {\n        ^\n\n1 error detected in the compilation of \"/home/alayadb/mengze/expertplex-b300/src/python/sglang/srt/expertplex/csrc/expertplex.cu\".\nninja: build stopped: subcommand failed.\n\n",
+  "finished_at_utc": "2026-10-14T17:32:41.993793+00:00"
+}

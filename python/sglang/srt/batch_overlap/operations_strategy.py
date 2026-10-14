@@ -236,6 +236,27 @@ def _compute_moe_qwen3_layer_operations_strategy_tbo(
     forward_mode: ForwardMode,
 ) -> OperationsStrategy:
     assert layer.is_layer_sparse, "qwen3 moe only support sparse layers"
+    if getattr(layer.mlp, "_expertplex", False):
+        # ExpertPlex §5.2: push / WaitDone / pull execute on COMM while
+        # the other subbatch's attention can make progress on COMPUTE.
+        return OperationsStrategy(
+            deep_gemm_num_sms=None,
+            tbo_delta_stages=0,
+            operations=[
+                layer.op_comm_prepare_attn,
+                layer.self_attn.op_prepare,
+                layer.self_attn.op_core,
+                layer.op_comm_prepare_mlp,
+                layer.mlp.op_gate,
+                layer.mlp.op_select_experts,
+                layer.mlp.op_dispatch_a,
+                operations.YieldOperation(),
+                layer.mlp.op_combine_b,
+                layer.mlp.op_output,
+                layer.op_comm_postprocess_layer,
+                operations.YieldOperation(),
+            ],
+        )
     if forward_mode == ForwardMode.EXTEND:
         return _compute_moe_qwen3_prefill(layer)
     elif (

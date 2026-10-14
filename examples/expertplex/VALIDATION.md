@@ -1,59 +1,67 @@
-# Validation status, 2026-10-13
+# Validation status, 2026-10-15 — work in progress
 
-Base repository: `WeiMengze666/sglang`, `main` at
-`d8f852234850ac01a36adbb1c337a0acc0ff3912`.
+Base: `WeiMengze666/sglang` at `d8f852234850ac01a36adbb1c337a0acc0ff3912`.
+Target: one 8×B300 SM103 node, Qwen3-Coder-480B-A35B-Instruct BF16, 1P3D4E.
+Original paper: arXiv:2607.18002v2; see [mechanism-by-mechanism audit](PAPER_CONFORMANCE.md).
 
-Development host: macOS arm64, Python 3.12. No PyTorch, NVIDIA GPU, CUDA Toolkit,
-model checkpoint, or running SGLang service was available.
+## Environment
 
-## Completed locally
+Remote tests run in the authorized `/home/alayadb/mengze/expertplex-b300` workspace.
+8×B300, 148 SM/GPU, 275040 MiB/GPU, NVLink peer atomics on all pairs,
+driver 580.178.04, CUDA 13.0.88, PyTorch 2.14.1+cu130, Triton 3.8.0,
+sgl-deep-gemm 0.2.2, flashinfer-python 0.7.1, sglang-kernel 0.4.9.
+Dependencies were installed in an isolated workspace venv; the original conda env was preserved.
 
-| Check | Result |
-| --- | --- |
-| Adapter / selective loader / unsupported-mode CPU contracts | 10 passed |
-| Rendezvous generation, checkpoint identity, slot ownership, joint SLO contracts | 9 passed |
-| Model/configuration, memory, tile policy, profile fit/search CPU contracts | 13 passed |
-| Python syntax and all experiment CLI help entry points | Passed |
-| Coder-480B metadata configuration and launcher dry run | Passed |
-| Benchmark CLI flags checked against the pinned serving parser | Passed |
-| Ruff 0.15.1 `F401,F821,F823,UP037` | Passed |
-| Ruff format, isort 7.0.0, clang-format 20.1.7 | Passed |
-| `git diff --check` | Passed |
+## Observed results
 
-Run the dependency-free checks with:
+| Scope | Evidence / result |
+|---|---|
+| CPU adapter, ownership, SLO, config and planner contracts | 34 passed; syntax and CLI checks passed |
+| CUDA IPC / native atomics | All 56 ordered pairs passed |
+| Device-generated epochs / CUDA graph | 20 replays with changing inputs/routes passed |
+| Full 62-layer 480B expert residency, synthetic BF16 | Four experts and four attention clients passed; initial masked version used about 227.65 GiB/E |
+| COMM stream / TBO client protocol | Each client passed 12 bitwise serial-vs-overlap and 20 graph output comparisons |
+| TMA/TCGEN05 single CTA | Small and Coder H=6144/I=2560 shapes passed numerical/concurrent/graph/timeout tests |
+| Contiguous prefill layout | Small-shape numerical/concurrent/graph/timeout tests passed |
+| Two-CTA DSMEM / TMA multicast | Small and Coder shapes passed the same regression suite |
+| Native BF16 gate/up output rounding correction | Coder shape passed at weight std=0.02; earlier results used a different documented rounding contract |
+| Full tiny checkpoint 1P3D4E HTTP + KV | 8 requests × 32 output tokens completed with Mooncake INTRA_NODE_NVLINK |
+| Strict greedy token alignment vs Triton | Failed for some prompts; raw outputs and logprob differences retained |
+| Ordinary SGLang TRTLLM vs Triton | Also differs on some greedy sequences; this does not excuse additional candidate errors |
+| Real Coder weights / coding accuracy / paper goodput | Not validated; checkpoint download incomplete |
 
-```bash
-python examples/expertplex/check_cpu.py
-```
+The first default RDMA KV attempt failed with unregistered GPU memory. The repository's
+single-node NVLink configuration fixed transfer. The launcher now selects that path by default.
+The first TRTLLM JIT compile hit the 300 s watchdog; it completed compilation and the cached
+restart passed generation. These failures are not counted as successful serving measurements.
 
-The adapter tests execute extracted production methods with test doubles. They
-verify that attention ranks do not construct/read routed expert parameters and
-that control flow selects the remote path. They are not an import/initialization
-test of a fully installed SGLang environment.
+The std=0.05 large-shape reference-kernel numerical test failed its elementwise threshold.
+Later std=0.02 passes do not erase that failure. No tolerance was loosened to label it a pass.
+The full-model synthetic checkpoint is only a functional test, not pretrained-model accuracy.
 
-The optimizer's artificial unit-test coefficients verify algebra and filtering
-only. No artificial profile is supplied as a B300 performance measurement.
+## Performance evidence and current gap
 
-The Coder-480B 1P3D4E capacity calculation is 217.96875 GiB routed expert weights
-plus 9.06250096 GiB native buffers per expert GPU. With a 16 GiB planning reserve,
-the estimate is 243.03125096 GiB per expert GPU. This is a static byte calculation,
-not observed HBM usage, and does not prove the deployment starts.
+Single-rank synthetic routing, H=6144/I=2560, 40 local experts, top-8 over 160 experts:
+2048-token prefill on the early single-CTA APK measured about 5.75 ms expert-side time.
+The two-CTA/vector-store version measured about 3.11 ms expert-side time, while native
+DeepGEMM GEMM1 + activation + GEMM2 measured about 0.65 ms. These are distinct code revisions,
+not a serving throughput gain. The native baseline excludes dispatch/combine. GPU clocks
+were approximately 2032 MHz during the later run. Further isolated repetitions are needed.
 
-## Pending B300 acceptance
+No 1.5× serving gain has been demonstrated. The remaining native execution overhead is
+material, and paper preemption bounds, all baselines/ablations, measured optimizer profiles,
+full SGLang TBO and real-model end-to-end acceptance remain outstanding.
 
-1. Compile the SM103 extension with the repository's CUDA/PyTorch toolchain.
-2. Run `check_gpu.py`, including repeated epochs, concurrent P/D, numerical
-   comparison, timeout, and all ordered eight-GPU IPC/atomic pairs.
-3. Run Qwen3-30B-A3B and then Coder-480B BF16 end-to-end. Validate actual HBM,
-   Mooncake KV handoff, long prompts, cancellation, worker failure and cleanup.
-4. Compare intermediate/logit/greedy-token results against ordinary BF16 SGLang
-   and evaluate coding-task accuracy. Native fused rounding can differ.
-5. Measure tile preemption and idle-resource reallocation with a GPU timeline.
-   The code's scheduling boundary does not establish a measured latency bound.
-6. Collect real attention/APK/routing/NVLink profiles, tune policy/layout, then
-   run joint TTFT/TPOT goodput sweeps against the baselines with equal resources.
+## Reproducibility
 
-CUDA compilation, GPU primitives, full-model functional correctness, token
-alignment, task accuracy, preemption latency and goodput are all **NOT RUN**.
-The current kernel is a correctness-oriented WMMA implementation. CUDA Graph,
-TBO/SBO and the paper's optimized TMA/cluster pipeline remain unimplemented.
+Run CPU checks with `python examples/expertplex/check_cpu.py`.
+`check_gpu.py --packed` exercises contiguous mailboxes; `check_node.py` validates all-layer
+expert deployment and TBO client lifecycle; `check_e2e.py` saves actual generated tokens and
+logprobs. `bench_native.py` reports communication and expert timestamps separately;
+`bench_deepgemm.py` measures the native compute baseline. New native reports record a source
+SHA256. Earlier files are identified by the stage names in this record and are retained as
+historical evidence, not silently regenerated.
+
+Joint P90 goodput requires at least 90% of **all offered requests** to meet both TTFT and
+TPOT SLOs. Failed requests remain in the denominator. Kernel speed and synthetic routing
+cannot establish this metric.

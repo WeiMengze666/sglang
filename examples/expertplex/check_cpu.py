@@ -49,7 +49,7 @@ def main():
     subprocess.run(["git", "diff", "--check"], cwd=ROOT, check=True)
     print("CPU contracts, Python syntax, CLI help and whitespace checks passed.")
     print(
-        "CUDA compilation, GPU correctness, full-model accuracy and goodput: NOT RUN."
+        "This CPU-only command does not cover CUDA/GPU, full-model accuracy or goodput."
     )
 
 

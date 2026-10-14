@@ -491,6 +491,18 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             state.topk_output = self.topk.empty_topk_output(hidden_states.device)
 
     def op_dispatch_a(self, state):
+        if self._expertplex:
+            from sglang.srt.expertplex.client import get_client
+
+            topk = state.pop("topk_output")
+            state.expertplex_pending = get_client().begin(
+                self.layer_id,
+                state.pop("hidden_states_mlp_input"),
+                topk.topk_ids,
+                topk.topk_weights,
+                mailbox=state.get("tbo_subbatch_index") or 0,
+            )
+            return
         if self.ep_size > 1:
             self.experts.dispatcher.dispatch_a(
                 hidden_states=state.pop("hidden_states_mlp_input"),
@@ -499,6 +511,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             )
 
     def op_dispatch_b(self, state):
+        if self._expertplex:
+            return
         if self.ep_size > 1:
             with get_global_expert_distribution_recorder().with_current_layer(
                 self.layer_id
@@ -508,11 +522,15 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 )
 
     def op_experts(self, state):
+        if self._expertplex:
+            return
         state.combine_input = self.experts.run_moe_core(
             dispatch_output=state.dispatch_output,
         )
 
     def op_combine_a(self, state):
+        if self._expertplex:
+            return
         if self.ep_size > 1:
             self.experts.dispatcher.combine_a(
                 combine_input=state.pop("combine_input"),
@@ -521,6 +539,13 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             state.pop("dispatch_output")
 
     def op_combine_b(self, state):
+        if self._expertplex:
+            from sglang.srt.expertplex.client import get_client
+
+            state.hidden_states_after_combine = get_client().finish(
+                state.pop("expertplex_pending")
+            )
+            return
         if self.ep_size > 1:
             state.hidden_states_after_combine = self.experts.dispatcher.combine_b(
                 tbo_subbatch_index=state.get("tbo_subbatch_index"),

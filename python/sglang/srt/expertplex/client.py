@@ -5,9 +5,20 @@ from __future__ import annotations
 import atexit
 import os
 import threading
+from dataclasses import dataclass
+from typing import Any
 
 from .config import ModelSpec, load_config
 from .rendezvous import claim_client, wait_for_workers
+
+
+@dataclass
+class PendingMoE:
+    mailbox: int
+    output: Any
+    done: Any
+    references: tuple
+    finished: bool = False
 
 
 class ExpertPlexClient:
@@ -30,11 +41,16 @@ class ExpertPlexClient:
         self.manifest, descriptors = wait_for_workers(self.config)
         claim_client(self.config, self.manifest, client_id)
         self.peers = []
+        self.mailboxes = []
         try:
-            for peer in descriptors:
-                self.peers.append(
-                    native.RemoteBuffers(peer["buffers"], client_id, self.device)
-                )
+            for index in range(self.config.mailboxes_per_client):
+                peers = []
+                self.mailboxes.append(peers)
+                slot = client_id * self.config.mailboxes_per_client + index
+                for peer in descriptors:
+                    mapping = native.RemoteBuffers(peer["buffers"], slot, self.device)
+                    peers.append(mapping)
+                    self.peers.append(mapping)
         except BaseException:
             self.close()
             raise
@@ -42,25 +58,36 @@ class ExpertPlexClient:
         self.epoch = 0
         self.failed = False
         self.lock = threading.Lock()
+        self.streams = [torch.cuda.Stream(device=self.device) for _ in self.mailboxes]
+        self.pending = [None for _ in self.mailboxes]
         atexit.register(self.close)
 
     def close(self):
+        # The exporter must outlive all remote reads. Launcher shutdown orders
+        # clients before experts; synchronize our own streams before IPC close.
+        for stream in getattr(self, "streams", []):
+            stream.synchronize()
         for peer in self.peers:
             peer.close()
         self.peers.clear()
 
     def run(self, layer_id, hidden_states, topk_ids, topk_weights):
+        return self.finish(self.begin(layer_id, hidden_states, topk_ids, topk_weights))
+
+    def begin(self, layer_id, hidden_states, topk_ids, topk_weights, mailbox=0):
         import torch
 
         if hidden_states.numel() == 0:
-            return hidden_states
-        if torch.cuda.is_current_stream_capturing():
-            raise RuntimeError("ExpertPlex currently requires --disable-cuda-graph")
-        # One in-flight operation per attention process. This also excludes
-        # concurrent TBO subbatches from reusing this process's IPC slot.
+            return PendingMoE(-1, hidden_states, None, ())
+        if not 0 <= mailbox < len(self.mailboxes):
+            raise ValueError("TBO microbatch has no allocated ExpertPlex mailbox")
         if not self.lock.acquire(blocking=False):
-            raise RuntimeError("Concurrent forwards cannot share an ExpertPlex slot")
+            raise RuntimeError("Concurrent host threads cannot enqueue ExpertPlex work")
         try:
+            if self.pending[mailbox] is not None:
+                raise RuntimeError(
+                    "ExpertPlex mailbox reused before its result was consumed"
+                )
             if self.failed:
                 raise RuntimeError(
                     "ExpertPlex slot failed; restart the whole deployment with "
@@ -87,45 +114,62 @@ class ExpertPlexClient:
                 raise ValueError(
                     "ExpertPlex top-k IDs and weights must have equal shapes"
                 )
-            if self.epoch >= (1 << 30) - 1:
-                raise RuntimeError("ExpertPlex epoch exhausted; restart the deployment")
-            self.epoch += 1
-            hidden_states = hidden_states.contiguous()
-            topk_ids = topk_ids.to(dtype=torch.int32).contiguous()
-            topk_weights = topk_weights.float().contiguous()
-            row_map = torch.empty_like(topk_ids)
-            output = torch.zeros(
-                (rows, hidden), dtype=torch.float32, device=hidden_states.device
-            )
+            compute_stream = torch.cuda.current_stream(self.device)
+            comm_stream = self.streams[mailbox]
+            # This is an event dependency, not a CPU or device synchronization.
+            comm_stream.wait_stream(compute_stream)
             phase = 0 if self.client.phase == "prefill" else 1
-            world = len(self.peers)
-            # Dispatch all peers before waiting for any peer. Expert workers
-            # never wait for each other, or for another attention client's slot.
-            for rank, peer in enumerate(self.peers):
-                self.native.dispatch(
-                    peer,
-                    hidden_states,
-                    topk_ids,
-                    row_map,
-                    self.epoch,
-                    layer_id,
-                    phase,
-                    rank,
-                    world,
+            peers = self.mailboxes[mailbox]
+            world = len(peers)
+            inputs = (hidden_states, topk_ids, topk_weights)
+            for tensor in inputs:
+                tensor.record_stream(comm_stream)
+            with torch.cuda.stream(comm_stream):
+                hidden_states = hidden_states.contiguous()
+                topk_ids = topk_ids.to(dtype=torch.int32).contiguous()
+                topk_weights = topk_weights.float().contiguous()
+                row_map = torch.empty_like(topk_ids)
+                output = torch.zeros(
+                    (rows, hidden), dtype=torch.float32, device=hidden_states.device
                 )
-            for rank, peer in enumerate(self.peers):
-                self.native.combine(
-                    peer,
-                    output,
-                    topk_ids,
-                    topk_weights,
-                    row_map,
-                    self.epoch,
-                    rank,
-                    world,
-                    timeout_ms=int(self.config.operation_timeout_s * 1000),
-                )
-            return output.to(dtype=hidden_states.dtype)
+                for rank, peer in enumerate(peers):
+                    self.native.dispatch(
+                        peer,
+                        hidden_states,
+                        topk_ids,
+                        row_map,
+                        0,
+                        layer_id,
+                        phase,
+                        rank,
+                        world,
+                    )
+                # WaitDone is a one-thread GPU kernel on COMM. COMPUTE remains
+                # available to another microbatch until finish() adds its edge.
+                for rank, peer in enumerate(peers):
+                    self.native.combine(
+                        peer,
+                        output,
+                        topk_ids,
+                        topk_weights,
+                        row_map,
+                        0,
+                        rank,
+                        world,
+                        timeout_ms=int(self.config.operation_timeout_s * 1000),
+                        synchronize=False,
+                    )
+                output = output.to(dtype=hidden_states.dtype)
+                done = torch.cuda.Event()
+                done.record(comm_stream)
+            pending = PendingMoE(
+                mailbox,
+                output,
+                done,
+                inputs + (hidden_states, topk_ids, topk_weights, row_map),
+            )
+            self.pending[mailbox] = pending
+            return pending
         except BaseException:
             # A partially dispatched operation must never be overwritten after
             # timeout or cancellation; restart rather than corrupt a new epoch.
@@ -133,6 +177,23 @@ class ExpertPlexClient:
             raise
         finally:
             self.lock.release()
+
+    def finish(self, pending):
+        import torch
+
+        if pending.finished:
+            raise RuntimeError("ExpertPlex result consumed twice")
+        if pending.mailbox < 0:
+            pending.finished = True
+            return pending.output
+        if self.pending[pending.mailbox] is not pending:
+            raise RuntimeError("ExpertPlex result does not own its mailbox")
+        stream = torch.cuda.current_stream(self.device)
+        stream.wait_event(pending.done)
+        pending.output.record_stream(stream)
+        self.pending[pending.mailbox] = None
+        pending.finished = True
+        return pending.output
 
 
 _client = None

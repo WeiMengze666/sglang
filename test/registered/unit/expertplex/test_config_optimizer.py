@@ -77,6 +77,30 @@ def profiles_dict(model):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_transformers_canonical_expert_alias(self):
+        raw = model_config(coder=True)
+        canonical = {**raw, "num_local_experts": raw["num_experts"]}
+        del canonical["num_experts"]
+        self.assertEqual(
+            config.ModelSpec.from_dict(raw), config.ModelSpec.from_dict(canonical)
+        )
+        with self.assertRaisesRegex(ValueError, "conflicting"):
+            config.ModelSpec.from_dict({**raw, "num_local_experts": 8})
+
+    def test_tbo_mailbox_capacity(self):
+        model = config.ModelSpec.from_dict(model_config(coder=True))
+        sequential = config.default_config("/models/coder")
+        overlapped = config.default_config("/models/coder", overlap="tbo")
+        self.assertEqual(overlapped.slot_count, 8)
+        a = optimizer.estimate_memory(
+            sequential, model, kv_tokens_per_attention_gpu=1024
+        )
+        b = optimizer.estimate_memory(
+            overlapped, model, kv_tokens_per_attention_gpu=1024
+        )
+        # A single shared stop word is independent of mailbox count.
+        self.assertEqual(b.expert_buffers_bytes - 4, 2 * (a.expert_buffers_bytes - 4))
+
     def test_round_trip_and_mailbox_ids(self):
         original = config.default_config("/models/Qwen3-Coder-480B")
         with tempfile.TemporaryDirectory() as directory:
@@ -191,8 +215,14 @@ class OptimizerTests(unittest.TestCase):
             node, model, kv_tokens_per_attention_gpu=65536
         )
         self.assertEqual(memory.expert_weights_bytes, 62 * 40 * 3 * 6144 * 2560 * 2)
+        packed_rows = (2048 * 8 + 40 * 63 + 63) // 64 * 64
+        decode_rows = 3 * 40 * node.max_decode_tokens
         expected = (
-            4 * 40 * 2048 * (2 * 6144 + 2560) * 2 + 4 * 40 * 4 + 4 * 64 + 4 * 32 + 4
+            (packed_rows + decode_rows) * (2 * 6144 + 2560) * 2
+            + 4 * 40 * 8
+            + 4 * 64
+            + 4 * 32
+            + 4
         )
         self.assertEqual(memory.expert_buffers_bytes, expected)
         self.assertTrue(memory.fits)
@@ -257,10 +287,19 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(
             optimizer.MeasuredProfiles.from_dict(data, model).tile_rows, 16
         )
+        phase_tiles = {"prefill": 64, "decode": 32}
+        self.assertEqual(
+            optimizer.MeasuredProfiles.from_dict(
+                {**data, "tile_rows": phase_tiles}, model
+            ).tile_rows,
+            phase_tiles,
+        )
         for change in (
             {"provenance": ""},
             {"nvlink_bytes_per_second": 0},
             {"units": "milliseconds"},
+            {"tile_rows": {"prefill": 64}},
+            {"tile_rows": {"prefill": 64, "decode": 0}},
         ):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 optimizer.MeasuredProfiles.from_dict({**data, **change}, model)

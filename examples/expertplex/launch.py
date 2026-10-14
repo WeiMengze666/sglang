@@ -48,12 +48,12 @@ def commands(node, args):
             "--device",
             "cuda",
             "--load-format",
-            "safetensors",
-            "--tp",
+            "dummy" if node.weight_mode == "synthetic" else "safetensors",
+            "--tp-size",
             "1",
-            "--ep",
+            "--ep-size",
             "1",
-            "--pp",
+            "--pp-size",
             "1",
             "--base-gpu-id",
             str(client.device),
@@ -70,7 +70,7 @@ def commands(node, args):
             "--disaggregation-transfer-backend",
             "mooncake",
             "--cuda-graph-backend-decode",
-            "disabled",
+            "full" if args.cuda_graph else "disabled",
             "--cuda-graph-backend-prefill",
             "disabled",
             "--disable-overlap-schedule",
@@ -86,10 +86,18 @@ def commands(node, args):
             "--mem-fraction-static",
             "0.75",
             "--attention-backend",
-            "flashinfer",
+            args.attention_backend,
+            "--sampling-backend",
+            args.sampling_backend,
         ]
         if args.ib_device:
             command += ["--disaggregation-ib-device", args.ib_device]
+        if node.overlap == "tbo":
+            command += ["--enable-two-batch-overlap"]
+        if args.skip_tokenizer_init:
+            command += ["--skip-tokenizer-init"]
+        if args.cuda_graph:
+            command += ["--cuda-graph-max-bs", str(min(32, capacity))]
         servers.append((client, command))
     router = [
         sys.executable,
@@ -140,8 +148,30 @@ def main():
     parser.add_argument("--nccl-port", type=int, default=20000)
     parser.add_argument("--kv-tokens", type=int, default=65536)
     parser.add_argument("--ib-device")
+    parser.add_argument(
+        "--kv-transport",
+        choices=("nvlink", "rdma"),
+        default="nvlink",
+        help="P-to-D KV transport; this launcher targets one NVLink node",
+    )
+    parser.add_argument(
+        "--attention-backend",
+        default="flashinfer",
+        choices=("flashinfer", "triton", "fa3", "fa4"),
+    )
+    parser.add_argument(
+        "--sampling-backend", default="flashinfer", choices=("flashinfer", "pytorch")
+    )
     parser.add_argument("--log-dir", default="expertplex-logs")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--cuda-graph", action="store_true", help="Capture decode forward"
+    )
+    parser.add_argument(
+        "--skip-tokenizer-init",
+        action="store_true",
+        help="Accept token-ID requests without a tokenizer",
+    )
     args = parser.parse_args()
     node = config.load_config(args.config)
     worker_command, server_commands, router_command = commands(node, args)
@@ -189,6 +219,9 @@ def main():
     base_env = dict(os.environ)
     base_env.pop("SGLANG_EXPERTPLEX_CONFIG", None)
     base_env.pop("SGLANG_EXPERTPLEX_CLIENT_ID", None)
+    if args.kv_transport == "nvlink":
+        base_env["SGLANG_MOONCAKE_CUSTOM_MEM_POOL"] = "INTRA_NODE_NVLINK"
+        base_env["MC_INTRANODE_NVLINK"] = "true"
 
     def spawn(name, command, env):
         log = (log_root / f"{name}.log").open("w")

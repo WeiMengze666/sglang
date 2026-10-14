@@ -21,7 +21,7 @@ PROMPTS = [
 
 def generate(base_url, prompt, output_tokens):
     payload = {
-        "text": prompt,
+        ("input_ids" if isinstance(prompt, list) else "text"): prompt,
         "sampling_params": {
             "temperature": 0,
             "max_new_tokens": output_tokens,
@@ -37,7 +37,7 @@ def generate(base_url, prompt, output_tokens):
     )
     with urllib.request.urlopen(request, timeout=1800) as response:
         result = json.load(response)
-    if not result.get("text") or result.get("error"):
+    if (not isinstance(prompt, list) and not result.get("text")) or result.get("error"):
         raise RuntimeError(f"Generation failed: {result}")
     meta = result.get("meta_info", {})
     if meta.get("completion_tokens") != output_tokens:
@@ -47,7 +47,7 @@ def generate(base_url, prompt, output_tokens):
         not math.isfinite(item[0]) for item in logprobs
     ):
         raise RuntimeError("Missing or nonfinite per-token logprobs")
-    return {"prompt": prompt, "text": result["text"], "meta_info": meta}
+    return {"prompt": prompt, "text": result.get("text", ""), "meta_info": meta}
 
 
 def compare(reference, candidate):
@@ -92,19 +92,29 @@ def main():
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--reference")
+    parser.add_argument(
+        "--token-id-prompts",
+        action="store_true",
+        help="Use deterministic token IDs, suitable for tiny checkpoint tests",
+    )
     parser.add_argument("--output-tokens", type=int, default=64)
     parser.add_argument("--rounds", type=int, default=2)
     parser.add_argument("--require-exact-tokens", action="store_true")
     args = parser.parse_args()
     if args.output_tokens < 1 or args.rounds < 1:
         parser.error("Output token count and rounds must be positive")
+    prompts = (
+        [[(i * 17 + 3) % 1000 for i in range(length)] for length in (1, 7, 63, 257)]
+        if args.token_id_prompts
+        else PROMPTS
+    )
     outputs = []
     for _ in range(args.rounds):
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(PROMPTS)) as pool:
             outputs.extend(
                 pool.map(
                     lambda prompt: generate(args.base_url, prompt, args.output_tokens),
-                    PROMPTS,
+                    prompts,
                 )
             )
     report = {

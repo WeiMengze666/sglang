@@ -82,6 +82,17 @@ class ModelSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ModelSpec:
+        # Transformers 5 serializes Qwen3MoeConfig's num_experts alias as
+        # num_local_experts. This still denotes the global model expert count,
+        # before SGLang's EP partition, despite the historical field name.
+        data = dict(data)
+        if "num_local_experts" in data:
+            if (
+                "num_experts" in data
+                and data["num_experts"] != data["num_local_experts"]
+            ):
+                raise ValueError("conflicting num_experts and num_local_experts")
+            data["num_experts"] = data["num_local_experts"]
         if data.get("model_type") != "qwen3_moe":
             raise ValueError("model_type must be qwen3_moe")
         if data.get("quantization_config") is not None:
@@ -177,6 +188,10 @@ class NodeConfig:
     node_gpu_count: int = 8
     cta_count: int = 0
     gpu_memory_gib: float = 268.0
+    weight_mode: str = "checkpoint"
+    synthetic_seed: int = 1234
+    overlap: str = "none"
+    kernel: str = "sm100"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "clients", tuple(self.clients))
@@ -199,6 +214,13 @@ class NodeConfig:
             return cls.from_dict(json.load(source))
 
     def validate(self, model_spec: ModelSpec | None = None) -> None:
+        if self.kernel not in ("sm100", "sm100_cta1", "wmma"):
+            raise ValueError("kernel must be sm100, sm100_cta1 or wmma")
+        if self.overlap not in ("none", "tbo"):
+            raise ValueError("overlap must be none or tbo")
+        if self.weight_mode not in ("checkpoint", "synthetic"):
+            raise ValueError("weight_mode must be checkpoint or synthetic")
+        _positive_integer("synthetic_seed", self.synthetic_seed, allow_zero=True)
         if self.node_gpu_count != 8:
             raise ValueError("this implementation supports exactly one 8-GPU node")
         if not self.clients or not self.expert_devices:
@@ -258,6 +280,27 @@ class NodeConfig:
             if client.id == client_id:
                 return client
         raise ValueError(f"unknown attention client ID: {client_id}")
+
+    @property
+    def mailboxes_per_client(self) -> int:
+        return 2 if self.overlap == "tbo" else 1
+
+    @property
+    def slot_count(self) -> int:
+        return len(self.clients) * self.mailboxes_per_client
+
+    def buffer_layout(self) -> tuple[list[int], list[int]]:
+        """Mailbox order matches client_id * mailboxes_per_client + index."""
+        capacities, packed = [], []
+        for client in sorted(self.clients, key=lambda c: c.id):
+            for _ in range(self.mailboxes_per_client):
+                capacities.append(
+                    self.max_prefill_tokens
+                    if client.phase == "prefill"
+                    else self.max_decode_tokens
+                )
+                packed.append(int(client.phase == "prefill"))
+        return capacities, packed
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

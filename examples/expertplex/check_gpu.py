@@ -11,6 +11,7 @@ import argparse
 import json
 import math
 import multiprocessing
+import os
 import queue
 import sys
 import threading
@@ -27,8 +28,10 @@ def _weights(torch, settings):
     hidden, intermediate = settings["hidden"], settings["intermediate"]
     shape13 = (settings["layers"], settings["experts"], 2 * intermediate, hidden)
     shape2 = (settings["layers"], settings["experts"], hidden, intermediate)
-    w13 = (torch.randn(shape13, generator=generator) * 0.05).bfloat16()
-    w2 = (torch.randn(shape2, generator=generator) * 0.05).bfloat16()
+    w13 = (
+        torch.randn(shape13, generator=generator) * settings["weight_std"]
+    ).bfloat16()
+    w2 = (torch.randn(shape2, generator=generator) * settings["weight_std"]).bfloat16()
     return w13, w2
 
 
@@ -58,6 +61,8 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
             hidden=settings["hidden"],
             intermediate=settings["intermediate"],
             device=device,
+            packed=[1, 1] if settings.get("packed") else None,
+            top_k=settings["top_k"],
         )
         if start_executor:
             w13, w2 = _weights(torch, settings)
@@ -170,9 +175,9 @@ def _case(torch, settings, rows, layer, seed, *, skewed=False, int64_ids=False):
 def _reference(torch, case, w13, w2, settings):
     """FP32 products with the native BF16 activation/expert-output boundaries.
 
-    Native gate/up accumulate in FP32, then SiLU(gate)*up is cast to BF16;
-    down accumulates in FP32 and is cast to BF16 before weighted combine.
-    This reference deliberately does not round gate/up matmuls to BF16.
+    All GEMMs accumulate in FP32 and round their outputs to BF16, matching
+    the native DeepGEMM BF16 contract. SiLU/mul evaluates in FP32 and rounds
+    to BF16; weighted combine uses FP32 and returns BF16.
     """
     result = torch.zeros(case["hidden"].shape, dtype=torch.float32)
     layer = case["layer"]
@@ -182,8 +187,8 @@ def _reference(torch, case, w13, w2, settings):
         if not row.numel():
             continue
         x = case["hidden"][row].float()
-        gate = x @ w13[layer, expert, :intermediate].float().T
-        up = x @ w13[layer, expert, intermediate:].float().T
+        gate = (x @ w13[layer, expert, :intermediate].float().T).bfloat16().float()
+        up = (x @ w13[layer, expert, intermediate:].float().T).bfloat16().float()
         activated = (torch.nn.functional.silu(gate) * up).bfloat16()
         expert_output = (activated.float() @ w2[layer, expert].float().T).bfloat16()
         weighted = expert_output.float() * case["weights"][row, choice, None]
@@ -451,11 +456,90 @@ def check_full_mesh(torch, native, args, settings, report):
                 )
 
 
+def check_graph(torch, native, args, settings, report):
+    """Replay identical graph nodes with changing inputs and device epochs."""
+    device = args.attention_device
+    torch.cuda.set_device(device)
+    w13, w2 = _weights(torch, settings)
+    with Exporter(
+        settings, args.expert_device, execute=True, timeout_s=args.startup_timeout_s
+    ) as owner:
+        remote = native.RemoteBuffers(owner.descriptor, 1, device)
+        try:
+            case = _case(torch, settings, 7, 0, settings["seed"] + 300)
+            prepared = _prepare(torch, case, device)
+            stream = torch.cuda.Stream(device=device)
+            stream.wait_stream(torch.cuda.current_stream(device))
+
+            def invoke():
+                prepared["output"].zero_()
+                native.dispatch(
+                    remote,
+                    prepared["hidden"],
+                    prepared["ids"],
+                    prepared["row_map"],
+                    0,
+                    0,
+                    1,
+                    0,
+                    1,
+                )
+                native.combine(
+                    remote,
+                    prepared["output"],
+                    prepared["ids"],
+                    prepared["weights"],
+                    prepared["row_map"],
+                    0,
+                    0,
+                    1,
+                    timeout_ms=args.operation_timeout_ms,
+                    synchronize=False,
+                )
+
+            with torch.cuda.stream(stream):
+                invoke()
+            stream.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, stream=stream):
+                invoke()
+            evidence = []
+            for replay in range(20):
+                case = _case(
+                    torch,
+                    settings,
+                    7,
+                    0,
+                    settings["seed"] + 301 + replay,
+                    skewed=replay % 2 == 0,
+                )
+                prepared["hidden"].copy_(case["hidden"])
+                prepared["ids"].copy_(case["ids"])
+                prepared["weights"].copy_(case["weights"])
+                graph.replay()
+                actual = prepared["output"].bfloat16().cpu()
+                expected = _reference(torch, case, w13, w2, settings)
+                result = {"replay": replay, **_numerics(torch, actual, expected, args)}
+                evidence.append(result)
+                if not result["passed"]:
+                    raise AssertionError(f"CUDA Graph replay mismatch: {result}")
+            report["cuda_graph_replays"] = evidence
+        finally:
+            remote.close()
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--attention-device", type=int, default=0)
     parser.add_argument("--expert-device", type=int, default=1)
-    parser.add_argument("--hidden", type=int, choices=(64, 128), default=64)
+    parser.add_argument("--weight-std", type=float, default=0.05)
+    parser.add_argument("--hidden", type=int, default=64)
+    parser.add_argument("--intermediate", type=int, default=64)
+    parser.add_argument("--experts", type=int, default=4)
+    parser.add_argument("--capacity", type=int, default=64)
+    parser.add_argument(
+        "--packed", action="store_true", help="Test contiguous prefill mailboxes"
+    )
     parser.add_argument("--iterations", type=int, default=4)
     parser.add_argument("--seed", type=int, default=20261013)
     parser.add_argument("--startup-timeout-s", type=float, default=600)
@@ -476,6 +560,14 @@ def parse_args():
         help="Save the JSON evidence in this file as well as stdout.",
     )
     args = parser.parse_args()
+    if (
+        min(args.hidden, args.intermediate) <= 0
+        or args.hidden % 16
+        or args.intermediate % 16
+    ):
+        parser.error("matrix dimensions must be positive multiples of 16")
+    if args.experts < 2 or args.capacity < 8:
+        parser.error("at least two experts and capacity eight are required")
     if args.attention_device == args.expert_device:
         parser.error("attention and expert devices must be distinct")
     if args.iterations < 2:
@@ -499,15 +591,19 @@ def main():
     args = parse_args()
     settings = {
         "hidden": args.hidden,
-        "intermediate": 64,
+        "intermediate": args.intermediate,
         "layers": 2,
-        "experts": 4,
+        "experts": args.experts,
         "top_k": 2,
-        "capacity": 64,
+        "capacity": args.capacity,
         "seed": args.seed,
+        "weight_std": args.weight_std,
+        "packed": args.packed,
     }
     report = {
         "schema_version": 1,
+        "native_source_sha256": module("native").source_fingerprint(),
+        "kernel": os.environ.get("SGLANG_EXPERTPLEX_KERNEL", "sm100"),
         "scope": "native CUDA IPC primitive correctness/progress smoke; not full-model accuracy or goodput",
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "geometry": settings,
@@ -540,6 +636,7 @@ def main():
         torch.cuda.set_device(args.attention_device)
         native.load_extension()
         check_pair(torch, native, args, settings, report)
+        check_graph(torch, native, args, settings, report)
         if not args.skip_timeout_test:
             check_timeout(torch, native, args, settings, report)
         if args.full_mesh:

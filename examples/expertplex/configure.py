@@ -19,6 +19,15 @@ def main():
     parser.add_argument("--max-prefill-tokens", type=int, default=2048)
     parser.add_argument("--max-decode-tokens", type=int, default=256)
     parser.add_argument("--rendezvous-dir", required=True)
+    parser.add_argument("--overlap", choices=("none", "tbo"), default="none")
+    parser.add_argument(
+        "--kernel", choices=("sm100", "sm100_cta1", "wmma"), default="sm100"
+    )
+    parser.add_argument(
+        "--synthetic-weights",
+        action="store_true",
+        help="Explicit random weights for geometry/capacity testing only",
+    )
     args = parser.parse_args()
     if min(args.prefill, args.decode, args.experts) < 1:
         parser.error("Each role needs at least one GPU")
@@ -40,19 +49,26 @@ def main():
         max_prefill_tokens=args.max_prefill_tokens,
         max_decode_tokens=args.max_decode_tokens,
         rendezvous_dir=str(Path(args.rendezvous_dir).expanduser().resolve()),
+        weight_mode="synthetic" if args.synthetic_weights else "checkpoint",
+        overlap=args.overlap,
+        kernel=args.kernel,
     )
     if Path(node.model_path, "config.json").exists():
         spec = config.ModelSpec.from_model_path(node.model_path)
         node.validate(spec)
         capacity = max(node.max_prefill_tokens, node.max_decode_tokens)
         experts = spec.num_experts // len(node.expert_devices)
-        buffers = (
-            len(node.clients)
-            * experts
-            * capacity
-            * (2 * spec.hidden_size + spec.intermediate_size)
-            * 2
-        )
+        capacities, packed = node.buffer_layout()
+        buffers = module("native").estimate_buffer_bytes(
+            node.slot_count,
+            experts,
+            capacity,
+            spec.hidden_size,
+            spec.intermediate_size,
+            capacities=capacities,
+            packed=packed,
+            top_k=spec.top_k,
+        )["total"]
         memory = {
             "expert_weights_gib_per_gpu": spec.expert_weight_bytes
             / args.experts

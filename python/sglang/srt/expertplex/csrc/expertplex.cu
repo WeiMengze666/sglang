@@ -1,5 +1,4 @@
-// Experimental ExpertPlex B300 backend. Independent CTAs (cluster size one).
-// No TMA / asynchronous matrix operation spans a task scheduling boundary.
+// ExpertPlex B300 IPC protocol, reference WMMA and native SM100 executors.
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAException.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -23,7 +22,17 @@ namespace py = pybind11;
 using U64 = unsigned long long;
 using BF16 = __nv_bfloat16;
 constexpr int kControlWords = 8;
-enum Control { READY = 0, DONE = 1, LAYER = 2, PHASE = 3, ERROR = 4 };
+constexpr int kMaxSlots = 32;
+enum Control {
+  READY = 0,
+  DONE = 1,
+  LAYER = 2,
+  PHASE = 3,
+  ERROR = 4,
+  PENDING = 5,
+  START_NS = 6,
+  FINISH_NS = 7
+};
 enum Error {
   OK = 0,
   BUSY = 1,
@@ -51,12 +60,21 @@ static_assert(sizeof(SlotState) == 32,
 
 struct DeviceBuffers {
   BF16 *input, *activation, *output;
-  int *counts;
+  int *counts, *offsets;
   U64 *control;
   SlotState *states;
   int *stop;
   int slots, experts, rows, hidden, intermediate;
+  int capacity[kMaxSlots], packed[kMaxSlots], storage_rows[kMaxSlots];
+  size_t base_rows[kMaxSlots];
 };
+
+__device__ __forceinline__ size_t expert_base(DeviceBuffers b, int slot,
+                                              int expert) {
+  return b.base_rows[slot] +
+         (b.packed[slot] ? b.offsets[slot * b.experts + expert]
+                         : static_cast<size_t>(expert) * b.capacity[slot]);
+}
 
 static std::string encode_handle(void *pointer) {
   cudaIpcMemHandle_t handle;
@@ -109,10 +127,12 @@ public:
   bool active = false;
   bool started = false;
   std::vector<void *> allocations;
-  std::string input_handle, output_handle, counts_handle, control_handle;
+  std::string input_handle, output_handle, counts_handle, control_handle,
+      offsets_handle;
 
   OwnedBuffers(int slots, int experts, int rows, int hidden, int intermediate,
-               int dev)
+               int dev, std::vector<int> capacities, std::vector<int> packed,
+               int top_k)
       : device(dev) {
     TORCH_CHECK(slots > 0 && experts > 0 && rows > 0 && hidden > 0 &&
                     intermediate > 0,
@@ -134,14 +154,43 @@ public:
     b.rows = rows;
     b.hidden = hidden;
     b.intermediate = intermediate;
+    TORCH_CHECK(slots <= kMaxSlots, "Too many mailboxes");
+    if (capacities.empty())
+      capacities.assign(slots, rows);
+    if (packed.empty())
+      packed.assign(slots, 0);
+    TORCH_CHECK(capacities.size() == slots && packed.size() == slots,
+                "Mailbox layout length mismatch");
+    size_t total_rows = 0;
+    for (int s = 0; s < slots; ++s) {
+      TORCH_CHECK(capacities[s] > 0 && capacities[s] <= rows &&
+                      (packed[s] == 0 || packed[s] == 1),
+                  "Invalid mailbox layout");
+      TORCH_CHECK(!packed[s] || top_k > 0, "Packed layout requires top_k");
+      int64_t storage =
+          packed[s]
+              ? static_cast<int64_t>(capacities[s]) * std::min(top_k, experts) +
+                    63LL * experts
+              : static_cast<int64_t>(capacities[s]) * experts;
+      // Descriptor dimensions must admit a full 64-row zero-padded tile.
+      storage = (storage + 63) / 64 * 64;
+      TORCH_CHECK(storage <= INT_MAX, "Mailbox exceeds TMA row indexing range");
+      b.capacity[s] = capacities[s];
+      b.packed[s] = packed[s];
+      b.storage_rows[s] = storage;
+      b.base_rows[s] = total_rows;
+      total_rows += storage;
+    }
     try {
-      b.input = static_cast<BF16 *>(
-          allocate(checked_product({slots, experts, rows, hidden, 2})));
-      b.activation = static_cast<BF16 *>(
-          allocate(checked_product({slots, experts, rows, intermediate, 2})));
-      b.output = static_cast<BF16 *>(
-          allocate(checked_product({slots, experts, rows, hidden, 2})));
+      b.input = static_cast<BF16 *>(allocate(
+          checked_product({static_cast<int64_t>(total_rows), hidden, 2})));
+      b.activation = static_cast<BF16 *>(allocate(checked_product(
+          {static_cast<int64_t>(total_rows), intermediate, 2})));
+      b.output = static_cast<BF16 *>(allocate(
+          checked_product({static_cast<int64_t>(total_rows), hidden, 2})));
       b.counts =
+          static_cast<int *>(allocate(checked_product({slots, experts, 4})));
+      b.offsets =
           static_cast<int *>(allocate(checked_product({slots, experts, 4})));
       b.control = static_cast<U64 *>(
           allocate(checked_product({slots, kControlWords, 8})));
@@ -161,6 +210,7 @@ public:
       input_handle = encode_handle(b.input);
       output_handle = encode_handle(b.output);
       counts_handle = encode_handle(b.counts);
+      offsets_handle = encode_handle(b.offsets);
       control_handle = encode_handle(b.control);
     } catch (...) {
       release();
@@ -188,7 +238,7 @@ public:
   }
   py::dict descriptor() const {
     py::dict d;
-    d["version"] = 1;
+    d["version"] = 2;
     d["device"] = device;
     d["slot_count"] = b.slots;
     d["local_experts"] = b.experts;
@@ -199,6 +249,12 @@ public:
     d["output_handle"] = output_handle;
     d["counts_handle"] = counts_handle;
     d["control_handle"] = control_handle;
+    d["offsets_handle"] = offsets_handle;
+    d["capacities"] = std::vector<int>(b.capacity, b.capacity + b.slots);
+    d["packed"] = std::vector<int>(b.packed, b.packed + b.slots);
+    d["storage_rows"] =
+        std::vector<int>(b.storage_rows, b.storage_rows + b.slots);
+    d["base_rows"] = std::vector<size_t>(b.base_rows, b.base_rows + b.slots);
     return d;
   }
 };
@@ -213,13 +269,25 @@ public:
   bool closed = false;
 
   RemoteBuffers(py::dict d, int slot_id, int dev) : device(dev), slot(slot_id) {
-    TORCH_CHECK(py::cast<int>(d["version"]) == 1,
+    TORCH_CHECK(py::cast<int>(d["version"]) == 2,
                 "Unsupported IPC descriptor version");
     b.slots = py::cast<int>(d["slot_count"]);
     b.experts = py::cast<int>(d["local_experts"]);
     b.rows = py::cast<int>(d["max_rows"]);
     b.hidden = py::cast<int>(d["hidden"]);
     b.intermediate = py::cast<int>(d["intermediate"]);
+    TORCH_CHECK(b.slots > 0 && b.slots <= kMaxSlots, "Invalid slot count");
+    auto capacities = py::cast<std::vector<int>>(d["capacities"]);
+    auto packed = py::cast<std::vector<int>>(d["packed"]);
+    auto storage = py::cast<std::vector<int>>(d["storage_rows"]);
+    auto bases = py::cast<std::vector<size_t>>(d["base_rows"]);
+    TORCH_CHECK(capacities.size() == b.slots && packed.size() == b.slots &&
+                    storage.size() == b.slots && bases.size() == b.slots,
+                "Malformed mailbox layout");
+    std::copy(capacities.begin(), capacities.end(), b.capacity);
+    std::copy(packed.begin(), packed.end(), b.packed);
+    std::copy(storage.begin(), storage.end(), b.storage_rows);
+    std::copy(bases.begin(), bases.end(), b.base_rows);
     TORCH_CHECK(slot >= 0 && slot < b.slots, "Invalid attention slot");
     checked_product({b.slots, b.experts, b.rows, b.hidden});
     TORCH_CHECK(b.hidden % 16 == 0 && b.intermediate > 0,
@@ -243,6 +311,8 @@ public:
           static_cast<BF16 *>(map(py::cast<std::string>(d["output_handle"])));
       b.counts =
           static_cast<int *>(map(py::cast<std::string>(d["counts_handle"])));
+      b.offsets =
+          static_cast<int *>(map(py::cast<std::string>(d["offsets_handle"])));
       b.control =
           static_cast<U64 *>(map(py::cast<std::string>(d["control_handle"])));
       C10_CUDA_CHECK(cudaMalloc(&status, sizeof(int)));
@@ -349,14 +419,18 @@ __global__ void clear_slot(DeviceBuffers b, int slot, U64 epoch, int layer,
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
   if (threadIdx.x == 0) {
     U64 ready = system_load(c + READY), done = system_load(c + DONE);
-    if (ready != done)
+    if (epoch == 0)
+      epoch = ready + 1; // Recomputed on every CUDA Graph replay.
+    if (system_load(c + ERROR)) {
+      // Keep a failed slot poisoned until the deployment is restarted.
+    } else if (ready != done)
       set_error(c, BUSY);
-    else if (epoch <= ready)
+    else if (epoch <= ready || epoch > kMaxEpoch)
       set_error(c, BAD_EPOCH);
     else {
-      system_store(c + ERROR, 0ULL);
       c[LAYER] = layer;
       c[PHASE] = phase;
+      c[PENDING] = epoch;
     }
   }
   __syncthreads();
@@ -364,6 +438,42 @@ __global__ void clear_slot(DeviceBuffers b, int slot, U64 epoch, int layer,
     return;
   for (int e = threadIdx.x; e < b.experts; e += blockDim.x)
     b.counts[static_cast<size_t>(slot) * b.experts + e] = 0;
+  __threadfence_system();
+}
+
+template <typename Id>
+__global__ void count_routes(DeviceBuffers b, int slot, const Id *ids,
+                             int *row_map, int routes, int rank, int world) {
+  auto *c = b.control + static_cast<size_t>(slot) * kControlWords;
+  if (system_load(c + ERROR))
+    return;
+  for (int route = blockIdx.x * blockDim.x + threadIdx.x; route < routes;
+       route += gridDim.x * blockDim.x) {
+    Id expert = ids[route];
+    if (expert < 0 || expert >= static_cast<Id>(b.experts) * world) {
+      set_error(c, BAD_ROUTE);
+      continue;
+    }
+    if (expert % world != rank)
+      continue;
+    int row = atomicAdd_system(b.counts + slot * b.experts + expert / world, 1);
+    row_map[route] = row;
+    if (row >= b.capacity[slot])
+      set_error(c, ROW_OVERFLOW);
+  }
+  __threadfence_system();
+}
+
+// Runs on the attention GPU, before payload copies. No expert receive kernel.
+__global__ void pack_offsets(DeviceBuffers b, int slot) {
+  int offset = 0;
+  for (int e = 0; e < b.experts; ++e) {
+    b.offsets[slot * b.experts + e] = offset;
+    int count = uncached_load_int(b.counts + slot * b.experts + e);
+    offset += (count + 63) / 64 * 64;
+  }
+  if (offset > b.storage_rows[slot])
+    set_error(b.control + slot * kControlWords, ROW_OVERFLOW);
   __threadfence_system();
 }
 
@@ -388,18 +498,19 @@ __global__ void dispatch_rows(DeviceBuffers b, int slot, const BF16 *hidden,
   int local = expert / world;
   __shared__ int row;
   if (threadIdx.x == 0) {
-    row = atomicAdd_system(
-        b.counts + static_cast<size_t>(slot) * b.experts + local, 1);
+    row =
+        b.packed[slot]
+            ? row_map[route]
+            : atomicAdd_system(
+                  b.counts + static_cast<size_t>(slot) * b.experts + local, 1);
     row_map[route] = row;
-    if (row >= b.rows)
+    if (row >= b.capacity[slot])
       set_error(c, ROW_OVERFLOW);
   }
   __syncthreads();
-  if (row >= b.rows)
+  if (row >= b.capacity[slot])
     return;
-  size_t base =
-      ((static_cast<size_t>(slot) * b.experts + local) * b.rows + row) *
-      b.hidden;
+  size_t base = (expert_base(b, slot, local) + row) * b.hidden;
   int token = route / k;
   for (int h = threadIdx.x; h < b.hidden; h += blockDim.x)
     b.input[base + h] = hidden[static_cast<size_t>(token) * b.hidden + h];
@@ -414,12 +525,14 @@ __global__ void publish_slot(DeviceBuffers b, int slot, U64 epoch) {
   if (system_load(c + ERROR))
     return;
   __threadfence_system();
-  system_store(c + READY, epoch);
+  system_store(c + READY, epoch ? epoch : uncached_load_u64(c + PENDING));
 }
 
 __global__ void wait_slot(DeviceBuffers b, int slot, U64 epoch, U64 timeout_ns,
                           int *status) {
   U64 *c = b.control + static_cast<size_t>(slot) * kControlWords;
+  if (epoch == 0)
+    epoch = uncached_load_u64(c + PENDING);
   U64 started = now_ns();
   while (true) {
     U64 error = system_load(c + ERROR);
@@ -459,12 +572,9 @@ __global__ void combine_rows(DeviceBuffers b, int slot, float *output,
       if (expert % world != rank)
         continue;
       int row = row_map[route];
-      if (row < 0 || row >= b.rows)
+      if (row < 0 || row >= b.capacity[slot])
         continue; // dispatch errors surfaced by wait.
-      size_t base =
-          ((static_cast<size_t>(slot) * b.experts + expert / world) * b.rows +
-           row) *
-          b.hidden;
+      size_t base = (expert_base(b, slot, expert / world) + row) * b.hidden;
       sum +=
           weights[route] * __bfloat162float(uncached_load(b.output + base + h));
     }
@@ -472,21 +582,31 @@ __global__ void combine_rows(DeviceBuffers b, int slot, float *output,
   }
 }
 
-// One warp per CTA keeps the reference matrix path simple. Dynamic shared
-// memory reserves enough resources to admit exactly one CTA per SM. Budgeting
-// CTAs then corresponds to budgeting SMs, without relying on block-index-to-SM
-// placement. Matrix arithmetic uses BF16 tensor cores with FP32 accumulation.
-__device__ void compute_tile(DeviceBuffers b, const BF16 *w13, const BF16 *w2,
-                             int slot, int layer, Stage stage, unsigned task,
-                             BF16 *sa, BF16 *sg, BF16 *su, float *cg,
-                             float *cu) {
-  int ntile = (stage == GATE ? b.intermediate : b.hidden) / 16;
-  int expert = 0, mtile = 0, column = 0;
+// Four warp tensor-core tile, with 128-wide asynchronous global/shared copies.
+// All copy groups and matrix accumulators are committed before yielding a tile.
+__device__ __forceinline__ void copy16(BF16 *dst, const BF16 *src, bool valid) {
+  unsigned address = static_cast<unsigned>(__cvta_generic_to_shared(dst));
+  int bytes = valid ? 16 : 0;
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;" ::"r"(address),
+               "l"(src), "r"(bytes)
+               : "memory");
+}
+
+template <int M>
+__device__ void compute_tile_wide(DeviceBuffers b, const BF16 *w13,
+                                  const BF16 *w2, int slot, int layer,
+                                  Stage stage, unsigned task, BF16 *sa,
+                                  BF16 *sg, BF16 *su, float *cg, float *cu) {
+  constexpr int N = 128, K = 128, S = 144;
+  int out = stage == GATE ? b.intermediate : b.hidden;
+  int width = stage == GATE ? b.hidden : b.intermediate;
+  int ntile = (out + N - 1) / N;
+  int expert = 0, mtile = 0, column = 0, count = 0;
   for (; expert < b.experts; ++expert) {
-    int count = uncached_load_int(
-        b.counts + static_cast<size_t>(slot) * b.experts + expert);
+    count = uncached_load_int(b.counts + static_cast<size_t>(slot) * b.experts +
+                              expert);
     unsigned tiles =
-        static_cast<unsigned>((static_cast<U64>(count) + 15) / 16 * ntile);
+        static_cast<unsigned>((static_cast<U64>(count) + M - 1) / M * ntile);
     if (task < tiles) {
       mtile = task / ntile;
       column = task % ntile;
@@ -496,13 +616,8 @@ __device__ void compute_tile(DeviceBuffers b, const BF16 *w13, const BF16 *w2,
   }
   if (expert == b.experts)
     return;
-  int count = uncached_load_int(b.counts +
-                                static_cast<size_t>(slot) * b.experts + expert);
-  int width = stage == GATE ? b.hidden : b.intermediate;
-  int output_width = stage == GATE ? b.intermediate : b.hidden;
-  const BF16 *input =
-      (stage == GATE ? b.input : b.activation) +
-      ((static_cast<size_t>(slot) * b.experts + expert) * b.rows) * width;
+  const BF16 *input = (stage == GATE ? b.input : b.activation) +
+                      expert_base(b, slot, expert) * width;
   const BF16 *weight =
       stage == GATE ? w13 + ((static_cast<size_t>(layer) * b.experts + expert) *
                              2 * b.intermediate) *
@@ -511,58 +626,102 @@ __device__ void compute_tile(DeviceBuffers b, const BF16 *w13, const BF16 *w2,
                             b.hidden) *
                                b.intermediate;
   using namespace nvcuda;
-  wmma::fragment<wmma::matrix_a, 16, 16, 16, BF16, wmma::row_major> a;
+  wmma::fragment<wmma::matrix_a, 16, 16, 16, BF16, wmma::row_major> a[M / 16];
   wmma::fragment<wmma::matrix_b, 16, 16, 16, BF16, wmma::col_major> g, u;
-  wmma::fragment<wmma::accumulator, 16, 16, 16, float> gate, up;
-  wmma::fill_fragment(gate, 0.0f);
-  wmma::fill_fragment(up, 0.0f);
-  for (int offset = 0; offset < width; offset += 16) {
-    for (int i = threadIdx.x; i < 256; i += 32) {
-      int m = i / 16, inner = i % 16, row = mtile * 16 + m;
-      sa[i] = row < count
-                  ? uncached_load(input + static_cast<size_t>(row) * width +
-                                  offset + inner)
-                  : __float2bfloat16(0.0f);
-      // Column-major KxN view of row-major [N,K] checkpoint weights.
-      int col = i / 16, kk = i % 16;
-      sg[i] =
-          weight[static_cast<size_t>(column * 16 + col) * width + offset + kk];
+  wmma::fragment<wmma::accumulator, 16, 16, 16, float> gate[M / 16][2],
+      up[M / 16][2];
+#pragma unroll
+  for (int m = 0; m < M / 16; ++m) {
+#pragma unroll
+    for (int n = 0; n < 2; ++n) {
+      wmma::fill_fragment(gate[m][n], 0.f);
+      wmma::fill_fragment(up[m][n], 0.f);
+    }
+  }
+  int warp = threadIdx.x / 32;
+  auto prefetch = [&](int offset, int buffer) {
+    BF16 *aa = sa + buffer * 64 * S, *gg = sg + buffer * N * S,
+         *uu = su + buffer * N * S;
+    for (int v = threadIdx.x; v < M * K / 8; v += blockDim.x) {
+      int row = v * 8 / K, kk = v * 8 % K;
+      bool valid = mtile * M + row < count && offset + kk < width;
+      copy16(aa + row * S + kk,
+             input + static_cast<size_t>(valid ? mtile * M + row : 0) * width +
+                 offset + kk,
+             valid);
+    }
+    for (int v = threadIdx.x; v < N * K / 8; v += blockDim.x) {
+      int col = v * 8 / K, kk = v * 8 % K;
+      bool valid = column * N + col < out && offset + kk < width;
+      const BF16 *src =
+          weight + static_cast<size_t>(valid ? column * N + col : 0) * width +
+          offset + kk;
+      copy16(gg + col * S + kk, src, valid);
       if (stage == GATE)
-        su[i] = weight[static_cast<size_t>(b.intermediate + column * 16 + col) *
-                           width +
-                       offset + kk];
+        copy16(uu + col * S + kk,
+               src + static_cast<size_t>(b.intermediate) * width, valid);
+    }
+    asm volatile("cp.async.commit_group;" ::: "memory");
+  };
+  prefetch(0, 0);
+  for (int offset = 0, step = 0; offset < width; offset += K, ++step) {
+    int buffer = step & 1;
+    if (offset + K < width) {
+      prefetch(offset + K, 1 - buffer);
+      asm volatile("cp.async.wait_group 1;" ::: "memory");
+    } else {
+      asm volatile("cp.async.wait_group 0;" ::: "memory");
     }
     __syncthreads();
-    wmma::load_matrix_sync(a, sa, 16);
-    wmma::load_matrix_sync(g, sg, 16);
-    wmma::mma_sync(gate, a, g, gate);
-    if (stage == GATE) {
-      wmma::load_matrix_sync(u, su, 16);
-      wmma::mma_sync(up, a, u, up);
+    BF16 *aa = sa + buffer * 64 * S, *gg = sg + buffer * N * S,
+         *uu = su + buffer * N * S;
+#pragma unroll
+    for (int kk = 0; kk < K; kk += 16) {
+#pragma unroll
+      for (int m = 0; m < M / 16; ++m)
+        wmma::load_matrix_sync(a[m], aa + m * 16 * S + kk, S);
+#pragma unroll
+      for (int n = 0; n < 2; ++n) {
+        wmma::load_matrix_sync(g, gg + (warp * 32 + n * 16) * S + kk, S);
+        if (stage == GATE)
+          wmma::load_matrix_sync(u, uu + (warp * 32 + n * 16) * S + kk, S);
+#pragma unroll
+        for (int m = 0; m < M / 16; ++m) {
+          wmma::mma_sync(gate[m][n], a[m], g, gate[m][n]);
+          if (stage == GATE)
+            wmma::mma_sync(up[m][n], a[m], u, up[m][n]);
+        }
+      }
     }
     __syncthreads();
   }
-  wmma::store_matrix_sync(cg, gate, 16, wmma::mem_row_major);
-  if (stage == GATE)
-    wmma::store_matrix_sync(cu, up, 16, wmma::mem_row_major);
-  __syncthreads();
-  BF16 *destination =
-      (stage == GATE ? b.activation : b.output) +
-      ((static_cast<size_t>(slot) * b.experts + expert) * b.rows) *
-          output_width;
-  for (int i = threadIdx.x; i < 256; i += 32) {
-    int row = mtile * 16 + i / 16, col = column * 16 + i % 16;
-    if (row < count) {
-      float value = cg[i];
+#pragma unroll
+  for (int m = 0; m < M / 16; ++m) {
+#pragma unroll
+    for (int n = 0; n < 2; ++n) {
+      wmma::store_matrix_sync(cg + m * 16 * N + warp * 32 + n * 16, gate[m][n],
+                              N, wmma::mem_row_major);
       if (stage == GATE)
-        value = (value / (1.0f + expf(-value))) * cu[i];
-      destination[static_cast<size_t>(row) * output_width + col] =
+        wmma::store_matrix_sync(cu + m * 16 * N + warp * 32 + n * 16, up[m][n],
+                                N, wmma::mem_row_major);
+    }
+  }
+  __syncthreads();
+  BF16 *destination = (stage == GATE ? b.activation : b.output) +
+                      expert_base(b, slot, expert) * out;
+  for (int i = threadIdx.x; i < M * N; i += blockDim.x) {
+    int row = mtile * M + i / N, col = column * N + i % N;
+    if (row < count && col < out) {
+      float value = cg[i];
+      if (stage == GATE) {
+        value = __bfloat162float(__float2bfloat16(value));
+        float up = __bfloat162float(__float2bfloat16(cu[i]));
+        value = (value / (1.f + expf(-value))) * up;
+      }
+      destination[static_cast<size_t>(row) * out + col] =
           __float2bfloat16(value);
     }
   }
-  // The next claimant can reuse shared memory only after all matrix operations
-  // and stores above have completed. There is no asynchronous pipeline to
-  // drain.
   __syncthreads();
 }
 
@@ -577,6 +736,7 @@ __device__ void initialize_slot(DeviceBuffers b, int slot, int layers) {
     return;
   if (!queue_cas(&s->queue, q, queue_value(epoch, INITIALIZING)))
     return;
+  c[START_NS] = now_ns();
   s->layer = static_cast<int>(uncached_load_u64(c + LAYER));
   s->phase = static_cast<int>(uncached_load_u64(c + PHASE));
   if (s->layer < 0 || s->layer >= layers)
@@ -587,13 +747,14 @@ __device__ void initialize_slot(DeviceBuffers b, int slot, int layers) {
   for (int e = 0; e < b.experts; ++e) {
     int count =
         uncached_load_int(b.counts + static_cast<size_t>(slot) * b.experts + e);
-    if (count < 0 || count > b.rows)
+    if (count < 0 || count > b.capacity[slot])
       set_error(c, ROW_OVERFLOW);
     else
-      rows += (static_cast<U64>(count) + 15) / 16;
+      rows += (static_cast<U64>(count) + (s->phase == 0 ? 63 : 15)) /
+              (s->phase == 0 ? 64 : 16);
   }
-  U64 gate_tiles = rows * (b.intermediate / 16),
-      down_tiles = rows * (b.hidden / 16);
+  U64 gate_tiles = rows * ((b.intermediate + 127) / 128),
+      down_tiles = rows * ((b.hidden + 127) / 128);
   // Low queue bits carry the task counter. Leave headroom for one outstanding
   // overshoot per CTA; rejecting impossibly large requests avoids carry into
   // stage.
@@ -606,6 +767,7 @@ __device__ void initialize_slot(DeviceBuffers b, int slot, int layers) {
   if (system_load(c + ERROR) || gate_tiles == 0) {
     queue_store(&s->queue, queue_value(epoch, IDLE));
     __threadfence_system();
+    c[FINISH_NS] = now_ns();
     system_store(c + DONE, epoch);
   } else
     queue_store(&s->queue, queue_value(epoch, GATE));
@@ -642,8 +804,12 @@ __global__ void persistent_executor(DeviceBuffers b, const BF16 *w13,
                                     const BF16 *w2, int layers,
                                     int decode_budget, float expected_tiles,
                                     int max_decode_ctas) {
-  __shared__ __align__(32) BF16 sa[256], sg[256], su[256];
-  __shared__ __align__(32) float cg[256], cu[256];
+  extern __shared__ __align__(128) unsigned char workspace[];
+  BF16 *sa = reinterpret_cast<BF16 *>(workspace);
+  BF16 *sg = sa + 2 * 64 * 144;
+  BF16 *su = sg + 2 * 128 * 144;
+  float *cg = reinterpret_cast<float *>(workspace);
+  float *cu = cg + 64 * 128;
   __shared__ int chosen_slot, chosen_stage;
   __shared__ unsigned chosen_task;
   __shared__ U64 chosen_epoch;
@@ -670,8 +836,9 @@ __global__ void persistent_executor(DeviceBuffers b, const BF16 *w13,
           U64 q = queue_load(&s->queue);
           int st = (q >> 32) & 3;
           if ((st == GATE || st == DOWN) && s->phase == 1)
-            decode_tiles += st == GATE ? s->gate_tiles / (b.intermediate / 16)
-                                       : s->down_tiles / (b.hidden / 16);
+            decode_tiles += st == GATE
+                                ? s->gate_tiles / ((b.intermediate + 127) / 128)
+                                : s->down_tiles / ((b.hidden + 127) / 128);
         }
         float requested = ceilf(
             decode_budget * static_cast<float>(decode_tiles) / expected_tiles);
@@ -702,8 +869,12 @@ __global__ void persistent_executor(DeviceBuffers b, const BF16 *w13,
     int slot = chosen_slot;
     Stage stage = static_cast<Stage>(chosen_stage);
     SlotState *state = b.states + slot;
-    compute_tile(b, w13, w2, slot, state->layer, stage, chosen_task, sa, sg, su,
-                 cg, cu);
+    if (state->phase == 0)
+      compute_tile_wide<64>(b, w13, w2, slot, state->layer, stage, chosen_task,
+                            sa, sg, su, cg, cu);
+    else
+      compute_tile_wide<16>(b, w13, w2, slot, state->layer, stage, chosen_task,
+                            sa, sg, su, cg, cu);
     // Every lane flushes stores before lane zero signals tile completion.
     __threadfence();
     __syncthreads();
@@ -718,6 +889,8 @@ __global__ void persistent_executor(DeviceBuffers b, const BF16 *w13,
           // Publish idle state before done; the client cannot reuse this slot
           // until it observes done. Queue generations reject stale claim CASes.
           queue_store(&state->queue, queue_value(chosen_epoch, IDLE));
+          b.control[static_cast<size_t>(slot) * kControlWords + FINISH_NS] =
+              now_ns();
           __threadfence_system();
           system_store(b.control + static_cast<size_t>(slot) * kControlWords +
                            DONE,
@@ -729,6 +902,8 @@ __global__ void persistent_executor(DeviceBuffers b, const BF16 *w13,
     cursor = (slot + 1) % b.slots;
   }
 }
+
+#include "sm100_pipeline.cuh"
 
 class PersistentExecutor {
 public:
@@ -742,7 +917,8 @@ public:
   PersistentExecutor(std::shared_ptr<OwnedBuffers> buffers,
                      torch::Tensor gateup, torch::Tensor down,
                      int decode_budget, double expected_tiles,
-                     double max_decode_fraction, int requested_ctas)
+                     double max_decode_fraction, int requested_ctas,
+                     const std::string &backend)
       : owner(std::move(buffers)), w13(std::move(gateup)), w2(std::move(down)) {
     TORCH_CHECK(!owner->active && !owner->started,
                 "A buffer set admits one executor lifetime; allocate fresh "
@@ -777,20 +953,43 @@ public:
         ctas - 1, static_cast<int>(std::floor(ctas * max_decode_fraction)));
     TORCH_CHECK(max_decode_ctas >= 1,
                 "Decode cap must admit at least one decode CTA");
+    const bool sm100 = backend == "sm100" || backend == "sm100_cta1";
+    const int cluster = backend == "sm100" ? 2 : 1;
+    TORCH_CHECK(backend == "wmma" || sm100, "Unknown ExpertPlex kernel");
+    TORCH_CHECK(ctas % cluster == 0 && ctas >= 2 * cluster,
+                "CTA count must fit at least two complete clusters");
+    max_decode_ctas =
+        std::min(ctas - cluster, max_decode_ctas / cluster * cluster);
+    TORCH_CHECK(max_decode_ctas >= cluster, "Decode cap must fit one cluster");
+    const void *kernel =
+        sm100 ? (cluster == 2 ? reinterpret_cast<const void *>(
+                                    expertplex_sm100::executor<2>)
+                              : reinterpret_cast<const void *>(
+                                    expertplex_sm100::executor<1>))
+              : reinterpret_cast<const void *>(persistent_executor);
+    const int threads = sm100 ? expertplex_sm100::Threads : 128;
+    expertplex_sm100::Context native_context{};
+    if (sm100)
+      native_context = expertplex_sm100::prepare(
+          *owner, reinterpret_cast<const BF16 *>(w13.data_ptr<at::BFloat16>()),
+          reinterpret_cast<const BF16 *>(w2.data_ptr<at::BFloat16>()),
+          w13.size(0), ctas);
     cudaFuncAttributes attrs;
-    C10_CUDA_CHECK(cudaFuncGetAttributes(&attrs, persistent_executor));
+    C10_CUDA_CHECK(cudaFuncGetAttributes(&attrs, kernel));
     int optin = 0;
     C10_CUDA_CHECK(cudaDeviceGetAttribute(
         &optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, owner->device));
-    int reserve = prop.sharedMemPerMultiprocessor / 2 + 256;
+    int required = sm100 ? sizeof(expertplex_sm100::Storage) : 198656;
+    int reserve = std::max(
+        required, static_cast<int>(prop.sharedMemPerMultiprocessor / 2 + 256 -
+                                   attrs.sharedSizeBytes));
     TORCH_CHECK(reserve + attrs.sharedSizeBytes <= static_cast<size_t>(optin),
                 "Cannot reserve one persistent CTA per SM on this device");
     C10_CUDA_CHECK(cudaFuncSetAttribute(
-        persistent_executor, cudaFuncAttributeMaxDynamicSharedMemorySize,
-        reserve));
+        kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, reserve));
     int resident = 0;
     C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &resident, persistent_executor, 32, reserve));
+        &resident, kernel, threads, reserve));
     TORCH_CHECK(
         resident == 1,
         "Persistent scheduling requires exactly one resident CTA per SM");
@@ -811,11 +1010,33 @@ public:
           ready, at::cuda::getCurrentCUDAStream(owner->device)));
       C10_CUDA_CHECK(cudaStreamWaitEvent(stream, ready, 0));
       C10_CUDA_CHECK(cudaEventDestroy(ready));
-      persistent_executor<<<ctas, 32, reserve, stream>>>(
-          b, reinterpret_cast<const BF16 *>(w13.data_ptr<at::BFloat16>()),
-          reinterpret_cast<const BF16 *>(w2.data_ptr<at::BFloat16>()),
-          static_cast<int>(w13.size(0)), decode_budget,
-          static_cast<float>(expected_tiles), max_decode_ctas);
+      if (sm100) {
+        cudaLaunchConfig_t launch{};
+        launch.gridDim = dim3(ctas);
+        launch.blockDim = dim3(threads);
+        launch.dynamicSmemBytes = reserve;
+        launch.stream = stream;
+        cudaLaunchAttribute attr{};
+        attr.id = cudaLaunchAttributeClusterDimension;
+        attr.val.clusterDim = {static_cast<unsigned>(cluster), 1, 1};
+        launch.attrs = &attr;
+        launch.numAttrs = 1;
+        if (cluster == 2)
+          C10_CUDA_CHECK(cudaLaunchKernelEx(
+              &launch, expertplex_sm100::executor<2>, b, native_context,
+              static_cast<int>(w13.size(0)), decode_budget,
+              static_cast<float>(expected_tiles), max_decode_ctas));
+        else
+          C10_CUDA_CHECK(cudaLaunchKernelEx(
+              &launch, expertplex_sm100::executor<1>, b, native_context,
+              static_cast<int>(w13.size(0)), decode_budget,
+              static_cast<float>(expected_tiles), max_decode_ctas));
+      } else
+        persistent_executor<<<ctas, 128, reserve, stream>>>(
+            b, reinterpret_cast<const BF16 *>(w13.data_ptr<at::BFloat16>()),
+            reinterpret_cast<const BF16 *>(w2.data_ptr<at::BFloat16>()),
+            static_cast<int>(w13.size(0)), decode_budget,
+            static_cast<float>(expected_tiles), max_decode_ctas);
       C10_CUDA_CHECK(cudaGetLastError());
       owner->active = true;
       owner->started = true;
@@ -926,14 +1147,27 @@ static void dispatch(std::shared_ptr<RemoteBuffers> r, torch::Tensor hidden,
   check_routes(ids, rows, *r, rank, world);
   TORCH_CHECK(hidden.size(0) == ids.size(0) && hidden.size(1) == r->b.hidden,
               "Hidden/routing shape mismatch");
-  TORCH_CHECK(epoch > 0 && static_cast<U64>(epoch) <= kMaxEpoch,
-              "Epoch must be in [1,2**30)");
+  TORCH_CHECK(
+      epoch >= 0 && static_cast<U64>(epoch) <= kMaxEpoch,
+      "Epoch must be in [0,2**30); zero selects a device-generated epoch");
   TORCH_CHECK(layer >= 0 && phase >= 0 && phase <= 1, "Invalid layer/phase");
   c10::cuda::CUDAGuard guard(r->device);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream(r->device);
   clear_slot<<<1, 32, 0, stream>>>(r->b, r->slot, epoch, layer, phase);
   int routes = ids.numel();
   if (routes > 0) {
+    if (r->b.packed[r->slot]) {
+      int blocks = std::min(256, (routes + 255) / 256);
+      if (ids.scalar_type() == at::kInt)
+        count_routes<<<blocks, 256, 0, stream>>>(
+            r->b, r->slot, ids.data_ptr<int>(), rows.data_ptr<int>(), routes,
+            rank, world);
+      else
+        count_routes<<<blocks, 256, 0, stream>>>(
+            r->b, r->slot, ids.data_ptr<int64_t>(), rows.data_ptr<int>(),
+            routes, rank, world);
+      pack_offsets<<<1, 1, 0, stream>>>(r->b, r->slot);
+    }
     if (ids.scalar_type() == at::kInt)
       dispatch_rows<<<routes, 128, 0, stream>>>(
           r->b, r->slot,
@@ -954,14 +1188,14 @@ static void dispatch(std::shared_ptr<RemoteBuffers> r, torch::Tensor hidden,
 static void combine(std::shared_ptr<RemoteBuffers> r, torch::Tensor output,
                     torch::Tensor ids, torch::Tensor weights,
                     torch::Tensor rows, int64_t epoch, int rank, int world,
-                    int timeout_ms) {
+                    int timeout_ms, bool synchronize) {
   check_tensor(output, *r, at::kFloat, 2, "output");
   check_routes(ids, rows, *r, rank, world);
   check_tensor(weights, *r, at::kFloat, 2, "topk_weights");
   TORCH_CHECK(output.size(0) == ids.size(0) && output.size(1) == r->b.hidden &&
                   weights.sizes() == ids.sizes(),
               "Output/routing shape mismatch");
-  TORCH_CHECK(epoch > 0 && static_cast<U64>(epoch) <= kMaxEpoch &&
+  TORCH_CHECK(epoch >= 0 && static_cast<U64>(epoch) <= kMaxEpoch &&
                   timeout_ms > 0 && timeout_ms <= 3600000,
               "Invalid epoch or timeout (1..3600000 ms)");
   c10::cuda::CUDAGuard guard(r->device);
@@ -983,6 +1217,9 @@ static void combine(std::shared_ptr<RemoteBuffers> r, torch::Tensor output,
           ids.size(1), rank, world, r->status);
   }
   C10_CUDA_CHECK(cudaGetLastError());
+  if (!synchronize)
+    return; // Stream-ordered result; worker monitors persistent protocol
+            // errors.
   C10_CUDA_CHECK(cudaMemcpyAsync(r->host_status, r->status, sizeof(int),
                                  cudaMemcpyDeviceToHost, stream));
   C10_CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -992,9 +1229,30 @@ static void combine(std::shared_ptr<RemoteBuffers> r, torch::Tensor output,
               "7=timeout, 8=stopped)");
 }
 
+__global__ void read_timing_kernel(DeviceBuffers b, int slot, int64_t *output) {
+  auto *c = b.control + static_cast<size_t>(slot) * kControlWords;
+  output[0] = system_load(c + DONE);
+  output[1] = system_load(c + READY);
+  output[2] = uncached_load_u64(c + START_NS);
+  output[3] = uncached_load_u64(c + FINISH_NS);
+}
+
+static torch::Tensor read_timing(std::shared_ptr<RemoteBuffers> r) {
+  TORCH_CHECK(!r->closed, "IPC mapping has been closed");
+  c10::cuda::CUDAGuard guard(r->device);
+  auto result = torch::empty({4}, torch::TensorOptions()
+                                      .dtype(torch::kInt64)
+                                      .device(torch::kCUDA, r->device));
+  read_timing_kernel<<<1, 1, 0, at::cuda::getCurrentCUDAStream(r->device)>>>(
+      r->b, r->slot, result.data_ptr<int64_t>());
+  C10_CUDA_CHECK(cudaGetLastError());
+  return result;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<OwnedBuffers, std::shared_ptr<OwnedBuffers>>(m, "OwnedBuffers")
-      .def(py::init<int, int, int, int, int, int>())
+      .def(py::init<int, int, int, int, int, int, std::vector<int>,
+                    std::vector<int>, int>())
       .def("descriptor", &OwnedBuffers::descriptor);
   py::class_<RemoteBuffers, std::shared_ptr<RemoteBuffers>>(m, "RemoteBuffers")
       .def(py::init<py::dict, int, int>())
@@ -1002,11 +1260,12 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<PersistentExecutor, std::shared_ptr<PersistentExecutor>>(
       m, "PersistentExecutor")
       .def(py::init<std::shared_ptr<OwnedBuffers>, torch::Tensor, torch::Tensor,
-                    int, double, double, int>())
+                    int, double, double, int, const std::string &>())
       .def("stop", &PersistentExecutor::stop,
            py::call_guard<py::gil_scoped_release>())
       .def("check_error", &PersistentExecutor::check_error,
            py::call_guard<py::gil_scoped_release>());
   m.def("dispatch", &dispatch);
+  m.def("read_timing", &read_timing);
   m.def("combine", &combine, py::call_guard<py::gil_scoped_release>());
 }

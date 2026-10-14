@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .config import ModelSpec, NodeConfig, default_config
+from .native import estimate_buffer_bytes
 
 GIB = 1024**3
 
@@ -223,10 +224,9 @@ def estimate_memory(
 ) -> MemoryEstimate:
     """Count this backend's fixed buffers, not idealized evenly routed buffers.
 
-    Native buffers on every expert rank are BF16 [slots, local_experts, rows,H]
-    for input/output and [slots,local_experts,rows,I] for activated gate/up.
-    Every slot uses max(max_prefill_tokens,max_decode_tokens) rows. They are
-    reused across layers; only expert weights have a layer dimension.
+    Prefill reserves packed routed rows including alignment slack; decode
+    reserves its own masked capacity. TBO gets two mailboxes per client.
+    Buffers are reused across layers; expert weights retain all layers.
     """
     config.validate(model)
     if (
@@ -238,20 +238,25 @@ def estimate_memory(
     if not math.isfinite(reserve_gib) or reserve_gib < 0:
         raise ValueError("reserve_gib must be finite and nonnegative")
     local_experts = model.num_experts // len(config.expert_devices)
-    slots = len(config.clients)
+    slots = config.slot_count
     rows = max(config.max_prefill_tokens, config.max_decode_tokens)
-    expert_buffers = (
-        slots
-        * local_experts
-        * rows
-        * (2 * model.hidden_size + model.intermediate_size)
-        * 2
-    )
-    expert_buffers += slots * local_experts * 4 + slots * 8 * 8 + slots * 32 + 4
+    capacities, packed = config.buffer_layout()
+    expert_buffers = estimate_buffer_bytes(
+        slots,
+        local_experts,
+        rows,
+        model.hidden_size,
+        model.intermediate_size,
+        capacities=capacities,
+        packed=packed,
+        top_k=model.top_k,
+    )["total"]
     # Dispatch writes to peer final buffers and combine reads those buffers
     # directly. Only hidden/output and routing tensors are local to attention;
     # additional transformer temporaries belong in the explicit reserve.
-    attention_buffers = rows * (8 * model.hidden_size + 12 * model.top_k)
+    attention_buffers = (
+        config.mailboxes_per_client * rows * (8 * model.hidden_size + 12 * model.top_k)
+    )
     return MemoryEstimate(
         attention_weights_bytes=model.attention_weight_bytes,
         attention_kv_bytes=model.kv_bytes_per_token * kv_tokens_per_attention_gpu,
@@ -366,7 +371,7 @@ class MeasuredProfiles:
 
     provenance: str
     total_sms: int
-    tile_rows: int
+    tile_rows: int | dict[str, int]
     nvlink_bytes_per_second: float
     attention: dict[str, LatencyCoefficients]
     moe: dict[tuple[str, int], LatencyCoefficients]
@@ -379,13 +384,26 @@ class MeasuredProfiles:
         provenance = data.get("provenance", "")
         if not isinstance(provenance, str) or not provenance.strip():
             raise ValueError("measured profile provenance is required")
-        for name in ("total_sms", "tile_rows"):
+        for name in ("total_sms",):
             if (
                 isinstance(data.get(name), bool)
                 or not isinstance(data.get(name), int)
                 or data[name] <= 0
             ):
                 raise ValueError(f"profile {name} must be a positive integer")
+        tile_rows = data.get("tile_rows")
+        phase_tiles = (
+            tile_rows
+            if isinstance(tile_rows, dict)
+            else {p: tile_rows for p in ("prefill", "decode")}
+        )
+        if set(phase_tiles) != {"prefill", "decode"} or any(
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            for value in phase_tiles.values()
+        ):
+            raise ValueError(
+                "tile_rows must be positive, or map prefill/decode to positive tile heights"
+            )
         bandwidth = data.get("nvlink_bytes_per_second", 0)
         if (
             not isinstance(bandwidth, (int, float))
@@ -482,7 +500,9 @@ def _iteration_latency(
                 expected_expert_tiles(
                     client_batch * (input_length if phase == "prefill" else 1),
                     probability,
-                    profiles.tile_rows,
+                    profiles.tile_rows[phase]
+                    if isinstance(profiles.tile_rows, dict)
+                    else profiles.tile_rows,
                 )
                 for probability in probabilities[rank :: layout.expert_count]
             )

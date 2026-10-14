@@ -8,8 +8,20 @@ a PyTorch build which supports Blackwell are required for the B300 target.
 from __future__ import annotations
 
 import functools
+import hashlib
+import os
 from pathlib import Path
 from typing import Any
+
+
+def source_fingerprint() -> str:
+    """Identify the exact native implementation in benchmark artifacts."""
+    root = Path(__file__).parent
+    digest = hashlib.sha256()
+    for path in (root / "native.py", *sorted((root / "csrc").glob("*"))):
+        if path.is_file():
+            digest.update(path.name.encode() + b"\0" + path.read_bytes())
+    return digest.hexdigest()
 
 
 def estimate_buffer_bytes(
@@ -18,17 +30,37 @@ def estimate_buffer_bytes(
     max_rows: int,
     hidden: int,
     intermediate: int,
+    *,
+    capacities: list[int] | None = None,
+    packed: list[int] | None = None,
+    top_k: int = 0,
 ) -> dict[str, int]:
     """Exact requested cudaMalloc bytes, excluding allocator/driver overhead."""
     dims = (slot_count, local_experts, max_rows, hidden, intermediate)
     if any(isinstance(v, bool) or not isinstance(v, int) or v <= 0 for v in dims):
         raise ValueError("ExpertPlex buffer dimensions must be positive integers")
-    rows = slot_count * local_experts * max_rows
+    capacities = capacities or [max_rows] * slot_count
+    packed = packed or [0] * slot_count
+    if len(capacities) != slot_count or len(packed) != slot_count:
+        raise ValueError("Mailbox layout length mismatch")
+    rows = 0
+    for capacity, is_packed in zip(capacities, packed):
+        if not 0 < capacity <= max_rows or is_packed not in (0, 1):
+            raise ValueError("Invalid mailbox layout")
+        if is_packed and top_k <= 0:
+            raise ValueError("Packed layout requires top_k")
+        storage = (
+            capacity * min(top_k, local_experts) + 63 * local_experts
+            if is_packed
+            else capacity * local_experts
+        )
+        rows += (storage + 63) // 64 * 64
     result = {
         "input": rows * hidden * 2,
         "activation": rows * intermediate * 2,
         "output": rows * hidden * 2,
         "counts": slot_count * local_experts * 4,
+        "offsets": slot_count * local_experts * 4,
         "control": slot_count * 8 * 8,
         "scheduler": slot_count * 32,
         "stop": 4,
@@ -39,6 +71,8 @@ def estimate_buffer_bytes(
 
 @functools.lru_cache(maxsize=1)
 def load_extension() -> Any:
+    import importlib.util
+
     import torch
     from torch.utils.cpp_extension import load
 
@@ -46,17 +80,24 @@ def load_extension() -> Any:
         raise RuntimeError("ExpertPlex native executor requires a CUDA deployment host")
     # Supplying an explicit architecture also prevents cpp_extension from
     # compiling for every visible device on an eight-GPU deployment host.
+    spec = importlib.util.find_spec("deep_gemm")
+    if spec is None or spec.origin is None:
+        raise RuntimeError(
+            "ExpertPlex SM100 pipeline requires sgl-deep-gemm 0.2.2 headers"
+        )
+    include = Path(spec.origin).parent / "include"
     return load(
-        name="sglang_expertplex_native_v1",
+        name="sglang_expertplex_native_v2",
         sources=[str(Path(__file__).parent / "csrc" / "expertplex.cu")],
-        extra_cflags=["-O3", "-std=c++17"],
+        extra_include_paths=[str(include)],
+        extra_cflags=["-O3", "-std=c++20"],
         extra_cuda_cflags=[
             "-O3",
-            "-std=c++17",
+            "-std=c++20",
             "--expt-relaxed-constexpr",
-            "-gencode=arch=compute_103,code=sm_103",
-            "-gencode=arch=compute_103,code=compute_103",
+            "-gencode=arch=compute_103a,code=sm_103a",
         ],
+        extra_ldflags=["-lcuda"],
         with_cuda=True,
         verbose=False,
     )
@@ -65,9 +106,9 @@ def load_extension() -> Any:
 class OwnedBuffers:
     """Dedicated cudaMalloc allocations whose IPC handles stay valid until close.
 
-    R is a per-expert row capacity, not a total token capacity. Storage is
-    BF16 input[S,E,R,H], activation[S,E,R,I], output[S,E,R,H]. A slot admits
-    exactly one outstanding MoE layer invocation.
+    Prefill can use contiguous routed rows with 64-row expert alignment;
+    decode uses fixed per-expert masked capacity. A slot admits exactly one
+    outstanding invocation. Descriptors and allocations stay fixed for replay.
     """
 
     def __init__(
@@ -78,9 +119,21 @@ class OwnedBuffers:
         hidden: int,
         intermediate: int,
         device: int,
+        *,
+        capacities: list[int] | None = None,
+        packed: list[int] | None = None,
+        top_k: int = 0,
     ) -> None:
         self._impl = load_extension().OwnedBuffers(
-            slot_count, local_experts, max_rows, hidden, intermediate, device
+            slot_count,
+            local_experts,
+            max_rows,
+            hidden,
+            intermediate,
+            device,
+            capacities or [],
+            packed or [],
+            top_k,
         )
 
     def descriptor(self) -> dict[str, Any]:
@@ -98,12 +151,14 @@ class RemoteBuffers:
 
 
 class PersistentExecutor:
-    """One independently scheduled CTA per selected SM, with cluster size one.
+    """One long-lived expert executor per GPU.
 
-    The WMMA kernel is a correctness-oriented implementation: it uses committed
-    shared-memory tiles and block barriers, with no outstanding TMA/WGMMA work
-    at a scheduling boundary. It makes no throughput or goodput claim before
-    B300 validation. Weights must remain resident and contiguous in BF16:
+    ``sm100`` uses two-CTA clusters, TMA multicast, DSMEM decisions, TCGEN05
+    and separate producer/MMA/epilogue warps. ``sm100_cta1`` is its single-CTA
+    ablation for measuring cooperative scheduling overhead.
+    ``wmma`` retains the original reference implementation for comparisons.
+    See the conformance record for remaining performance/preemption validation.
+    Weights must remain resident and contiguous in BF16:
     w13[L,E,2I,H] (gate followed by up), w2[L,E,H,I].
     """
 
@@ -116,9 +171,11 @@ class PersistentExecutor:
         expected_decode_tiles: float,
         max_decode_sm_fraction: float = 0.875,
         ctas: int = 0,
+        kernel: str | None = None,
     ) -> None:
         self._buffers = buffers
         self._weights = (w13, w2)
+        self.kernel = kernel or os.environ.get("SGLANG_EXPERTPLEX_KERNEL", "sm100")
         self._impl = load_extension().PersistentExecutor(
             buffers._impl,
             w13,
@@ -127,6 +184,7 @@ class PersistentExecutor:
             expected_decode_tiles,
             max_decode_sm_fraction,
             ctas,
+            self.kernel,
         )
 
     def stop(self) -> None:
@@ -176,6 +234,16 @@ def dispatch(
     )
 
 
+def read_timing(remote: RemoteBuffers):
+    """Read [done, ready, expert start ns, expert finish ns] on the current stream.
+
+    Call after combine and before reusing this mailbox. Both timestamps use the
+    expert GPU's global timer; their difference excludes attention-side transfer.
+    This measures the full expert operation including APK scheduling waits.
+    """
+    return load_extension().read_timing(remote._impl)
+
+
 def combine(
     remote: RemoteBuffers,
     output: Any,
@@ -186,6 +254,7 @@ def combine(
     expert_rank: int,
     expert_world_size: int,
     timeout_ms: int = 30000,
+    synchronize: bool = True,
 ) -> None:
     """Wait with a bounded GPU poll, then add this peer's routed results.
 
@@ -203,4 +272,5 @@ def combine(
         expert_rank,
         expert_world_size,
         timeout_ms,
+        synchronize,
     )

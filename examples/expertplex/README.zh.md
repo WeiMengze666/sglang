@@ -4,32 +4,32 @@
 **Qwen/Qwen3-Coder-480B-A35B-Instruct，原始 BF16 safetensors**，调试模型为
 **Qwen/Qwen3-30B-A3B，原始 BF16 safetensors**。默认布局是 **1P + 3D + 4E**。
 
-代码已完成 CPU 契约测试和静态检查。开发环境没有 NVIDIA GPU、CUDA Toolkit、
-PyTorch 或模型权重，因此 **CUDA 尚未编译，GPU 数值、服务启动、抢占时延、
-模型精度和 goodput 均未验收**。这不是论文性能结果已经复现的声明。
+已在 8×B300 编译并测试 CUDA IPC、原生 TMA/TCGEN05、双 CTA cluster、
+连续 prefill 布局及 COMM stream 协议。小型 BF16 checkpoint 的 1P3D4E HTTP/KV
+生成已打通，但严格 token 对齐未全部通过。Coder 完整真实权重、论文所有实验及
+1.5× goodput **尚未验收**。逐项证据见 [论文对照](PAPER_CONFORMANCE.md) 和
+[验证记录](VALIDATION.md)。
 
 ## 版本和范围
 
 - 仓库：<https://github.com/WeiMengze666/sglang>
 - 工作分支：`feat/expertplex-b300`
 - 基线：`d8f852234850ac01a36adbb1c337a0acc0ff3912`，2026-10-13 的 `main`
-- 论文：[ExpertPlex, arXiv:2607.18002v1](https://arxiv.org/html/2607.18002v1)
+- 论文：[ExpertPlex, arXiv:2607.18002v2](https://arxiv.org/html/2607.18002v2)
 - 平台：Linux，单节点 8 张 NVIDIA B300 / SM103，完整 NVLink peer access 和 peer atomics
 - 权重：本地、不可变、未量化的 Qwen3 MoE BF16 checkpoint
 - attention 进程：每进程 TP=EP=PP=DP=1，独占一张 GPU
 - expert 进程：每张 E 卡一个长期运行的 CUDA executor，P/D 共享一份专家权重
 
-论文原实现面向 H800/SM90，修改 DeepGEMM/DeepEP。当前实现使用 BF16 WMMA，
-一个 CTA 对应一个调度单元，cluster size=1，固定 16×16 输出 tile，完整 K 维归约后
-才切换 tile。它实现了 GPU 内调度和安全 tile 边界，但没有移植论文的
-TMA multicast、DSMEM、warp-specialized/mbarrier 流水线。
+论文原实验使用 H800/SM90 与 FP8；本适配使用 B300/SM103 的 BF16 TMA/TCGEN05。
+默认 `sm100` 后端采用双 CTA cluster、producer/MMA/epilogue warp 分工、4-stage TMA
+与双 accumulator 流水线。CTA0 读取系统 ready word，cluster leader 读取 device policy，
+通过 DSMEM 分发 tile 决策，mbarrier 向后续 warp 交接；共享输入使用 TMA multicast。
+`sm100_cta1` 保留单 CTA 消融后端，`wmma` 保留功能参考。它们不能混作论文性能结果。
 
-当前明确限制：CUDA Graph、TBO/SBO、推测解码、LoRA、EPLB、CPU offload、量化、
-多节点/RDMA MoE 通信、动态 P/D 角色切换均不支持。参数校验会拒绝这些组合。
-attention 的每次 MoE 调用同步等待结果；P/D 之间可以同时访问不同 mailbox，
-各 expert GPU 可以独立切换和借用 CTA。这与完整论文实现仍有差距，尤其是
-CUDA Graph、原生 Blackwell 高性能 GEMM 和相内通信 overlap；后续性能优化应在
-数值/并发测试通过后进行。
+当前仍缺完整的原生流水线性能校准、抢占上界测量、跨栈策略覆盖与跨节点 RDMA MoE。
+TBO 的双 mailbox client/graph 路径已通过，完整 SGLang TBO 仍需端到端验证。
+推测解码、LoRA、EPLB、CPU offload、量化、多节点、动态 P/D 切换均未支持。
 
 ## 权重与显存
 
@@ -45,8 +45,8 @@ BF16 routed expert 权重按 `expert_id % E_count` 分片，每张 E 卡持有�
 | 默认配置的每卡项目 | GiB |
 | --- | ---: |
 | E 卡 routed expert 权重 | 217.969 |
-| E 卡全部 mailbox 和中间缓冲区 | 9.063 |
-| E 卡计入 16 GiB 预留后的容量估算 | 243.031 |
+| E 卡全部 mailbox 和中间缓冲区（连续 P / masked D） | 1.374 |
+| E 卡计入 16 GiB 预留后的容量估算 | 235.342 |
 | A 卡 attention/router/embedding/head 权重 | 22.483 |
 | A 卡 65,536-token BF16 KV pool | 15.5 |
 
@@ -55,18 +55,12 @@ BF16 routed expert 权重按 `expert_id % E_count` 分片，每张 E 卡持有�
 worker 会使用 `cudaMemGetInfo` 对专家权重、固定 mailbox 和至少 8 GiB 运行时预留做
 启动检查。规划器默认预留 16 GiB；GPU 测试仍需记录实际 allocated/reserved HBM。
 
-buffer 不按层复制，布局为：
-
-```text
-input      [attention_slots, local_experts, max_rows, H] BF16
-activation [attention_slots, local_experts, max_rows, I] BF16
-output     [attention_slots, local_experts, max_rows, H] BF16
-```
-
-`max_rows=max(max_prefill_tokens,max_decode_tokens)` 是每个专家的最坏情况容量。
-默认 2048/256。增大 prefill chunk 会线性增加所有 mailbox 的空间；不能仅根据
-权重能装下就无限增大 chunk。attention 直接读写远端最终 buffer，未额外分配
-一个完整的本地专家 packing buffer。
+buffer 不按层复制。P 为按专家连续打包的 routed rows，专家起点按 64 行对齐；
+D 为 `[local_experts, max_decode_tokens, H/I]` masked 布局。每个 mailbox 各有
+BF16 input、activation、output；TBO 分配两套。P 的最坏情况行数按
+`max_prefill_tokens * min(top_k, local_experts) + 63 * local_experts` 向上对齐，
+而非为所有专家预留最大 prefill 长度。`configure.py` 和优化器计算同一分配公式。
+attention 直接写远端最终 buffer，没有额外完整本地 packing buffer。
 
 235B/2E 也可以配置：235B 每张 E 卡约 211.5 GiB 专家权重，具体 P/D 比例应测量。
 E 数控制计算和带宽容量，最少能装下权重的 E 数不必然获得最高 goodput。
@@ -88,7 +82,7 @@ SGLang D attention GPU 3 ── dispatch / pull ─┘
 3. E 卡长期运行的 kernel 通过 generation-tagged queue 认领 tile，融合 gate/up GEMM、
    SiLU 和 down GEMM。stage 之间使用完成计数器，最后一个 tile 发布下一 stage。
 4. 每个 CTA 在完整 tile 提交后重新选择阶段。竞争时按论文 Eq.4 的当前 decode
-   `sum(ceil(expert_rows/16))` 相对离线期望调整 decode CTA 预算；上限保留 prefill
+   `sum(ceil(expert_rows/32))` 相对离线期望调整 decode CTA 预算；上限保留 prefill
    进展。一个阶段没有可认领任务时，其他阶段可以借用空闲 CTA。动态 shared memory
    限制每个 SM 只驻留一个 executor CTA，CTA 预算才具有 SM 预算含义。
 5. E 卡发布 done epoch；attention 使用 system-scope acquire 等待并拉取最终专家输出，
@@ -105,7 +99,7 @@ SGLang D attention GPU 3 ── dispatch / pull ─┘
 - `python/sglang/srt/models/qwen3_moe.py`、`model_loader/loader.py`：attention-only 接入
 - `examples/expertplex/`：配置、启动、验证、基准工具
 
-每个 attention client 独占一个 mailbox，一次只允许一个未完成调用。运行 ID、配置
+每个 attention client 独占一个 mailbox，TBO 使用两个；每个 mailbox 只允许一个未完成调用。运行 ID、配置
 digest、checkpoint 配置及 shard size/mtime fingerprint、单 client 所有权检查防止误用
 旧 IPC 句柄。fingerprint 不是对全部权重内容的密码学哈希；运行中必须保持 checkpoint
 不变。超时或协议错误后该 client 被标记失败，不覆盖或复用未完成 buffer；重启整个
@@ -116,7 +110,7 @@ digest、checkpoint 配置及 shard size/mtime fingerprint、单 client 所有�
 
 在 B300 Linux 环境使用本分支配套依赖，遵循仓库 Dockerfile/`python/pyproject.toml`。
 此基线锁定 PyTorch 2.14.1 和 CUDA 13 相关依赖。原生扩展需要可用的 `nvcc`、
-C++ 编译器、`ninja`；JIT 显式编译 `sm_103`。不要把旧版 SGLang wheel 与本分支源码
+C++ 编译器、`ninja`；JIT 显式编译 `sm_103a`，并使用 `sgl-deep-gemm 0.2.2` 的官方头文件。不要把旧版 SGLang wheel 与本分支源码
 混用。KV handoff 需要 Mooncake；router 需要当前仓库配套 `sglang_router`。
 
 ```bash
@@ -245,12 +239,12 @@ python -m sglang.srt.expertplex.optimizer \
 
 不提供 `--profiles` 时仅估算容量，不产生任何 latency/goodput 数字。提供 profile 时，
 schema 要求 `units="seconds_per_layer"`、非空 `provenance`、真实 `total_sms`、
-`tile_rows=16`、实测 `nvlink_bytes_per_second`，以及 prefill/decode 各自的
+`tile_rows={"prefill":64,"decode":32}`、实测 `nvlink_bytes_per_second`，以及 prefill/decode 各自的
 `attention` 系数 `{alpha,beta,gamma,delta}`、`moe_by_sm_count` 和逐专家激活概率
 `expert_probabilities`（总和为 top-k）。`fit_coefficients` 接受实测
 `{x,sequence_length,latency_s}` 样本；MoE 的 x 必须是 tile footprint。只有实际测量过的
 SM 预算进入搜索。测试里的人工系数仅验证代数，不作为 B300 profiles 发布。
 
 当前关键路径模型是近似，未计入完整排队、KV 迁移和服务 CPU 开销。`--overlap tbo`
-只是针对已测 TBO profiles 的分析选项，runtime 仍会拒绝启用 TBO。
+需要实测 TBO profiles；client 路径支持该选项，完整服务验收仍待完成。
 profile 搜索结果要在 B300 上用同配置的端到端 sweep 重新验收。

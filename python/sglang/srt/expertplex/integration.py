@@ -89,7 +89,6 @@ def validate_server_args(cfg: Any) -> None:
         if getattr(cfg, name, 1) != 1:
             errors.append(f"--{name.replace('_', '-')} must be 1")
     for name in (
-        "enable_two_batch_overlap",
         "enable_single_batch_overlap",
         "enable_torch_compile",
         "enable_eplb",
@@ -103,12 +102,21 @@ def validate_server_args(cfg: Any) -> None:
             errors.append(f"--{name.replace('_', '-')} is not supported")
     if getattr(cfg, "lora_paths", None):
         errors.append("LoRA adapters are not supported")
+    if bool(getattr(cfg, "enable_two_batch_overlap", False)) != (
+        config.overlap == "tbo"
+    ):
+        errors.append("--enable-two-batch-overlap must match ExpertPlex config.overlap")
     if getattr(cfg, "speculative_algorithm", None) is not None:
         errors.append("speculative decoding is not supported")
     if getattr(cfg, "quantization", None) not in (None, "unquant"):
         errors.append("quantization is not supported; use the BF16 checkpoint")
-    if getattr(cfg, "load_format", None) not in ("auto", "safetensors"):
-        errors.append("--load-format must be auto or safetensors")
+    formats = (
+        ("dummy",) if config.weight_mode == "synthetic" else ("auto", "safetensors")
+    )
+    if getattr(cfg, "load_format", None) not in formats:
+        errors.append(
+            f"--load-format must be one of {formats} for {config.weight_mode} weights"
+        )
     if getattr(cfg, "model_impl", "auto") not in ("auto", "sglang"):
         errors.append("--model-impl must be auto or sglang")
     if getattr(cfg, "device", None) != "cuda":
@@ -173,8 +181,11 @@ def validate_server_args(cfg: Any) -> None:
             if isinstance(phase_config, dict)
             else getattr(phase_config, "backend", None)
         )
-        if backend != "disabled":
-            errors.append(f"--cuda-graph-backend-{phase} must be disabled")
+        allowed = (
+            ("disabled", "piecewise", "full") if phase == "decode" else ("disabled",)
+        )
+        if backend not in allowed:
+            errors.append(f"--cuda-graph-backend-{phase} must be one of {allowed}")
     if (
         Path(cfg.model_path).expanduser().resolve()
         != Path(config.model_path).expanduser().resolve()

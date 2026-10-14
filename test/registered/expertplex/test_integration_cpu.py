@@ -134,7 +134,7 @@ class IntegrationTests(unittest.TestCase):
             speculative_algorithm="EAGLE",
             quantization="fp8",
             disable_overlap_schedule=False,
-            cuda_graph_config={"decode": {"backend": "full"}},
+            cuda_graph_config={"decode": {"backend": "invalid"}},
         )
         with self.assertRaises(ValueError) as caught:
             INTEGRATION.validate_server_args(args)

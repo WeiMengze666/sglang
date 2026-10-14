@@ -22,7 +22,7 @@ _EXPERT_WEIGHT = re.compile(
 )
 
 
-def load_expert_weights(model_path, spec, rank, world, device):
+def load_expert_weights(model_path, spec, rank, world, device, synthetic_seed=None):
     import torch
     from safetensors import safe_open
 
@@ -37,6 +37,20 @@ def load_expert_weights(model_path, spec, rank, world, device):
         dtype=torch.bfloat16,
         device=device,
     )
+    if synthetic_seed is not None:
+        # Explicit synthetic mode: no checkpoint shards are read or fabricated.
+        # Independent expert seeds avoid identical experts and routing artifacts.
+        for layer in range(spec.num_layers):
+            for local in range(local_experts):
+                seed = synthetic_seed + layer * spec.num_experts + local * world + rank
+                generator = torch.Generator(device=device).manual_seed(seed)
+                w13[layer, local].uniform_(-1e-3, 1e-3, generator=generator)
+                w2[layer, local].uniform_(-1e-3, 1e-3, generator=generator)
+        torch.cuda.synchronize(device)
+        logger.warning(
+            "SYNTHETIC weights: geometry/capacity testing only, not model accuracy"
+        )
+        return w13, w2
     root = Path(model_path)
     index_path = root / "model.safetensors.index.json"
     if index_path.exists():
@@ -98,7 +112,12 @@ def load_expert_weights(model_path, spec, rank, world, device):
 def expert_main(config_path, rank, manifest, stop_event):
     import torch
 
-    from .native import OwnedBuffers, PersistentExecutor, load_extension
+    from .native import (
+        OwnedBuffers,
+        PersistentExecutor,
+        estimate_buffer_bytes,
+        load_extension,
+    )
 
     logging.basicConfig(level=logging.INFO)
     config = load_config(config_path)
@@ -117,13 +136,17 @@ def expert_main(config_path, rank, manifest, stop_event):
     load_extension()  # Compile before allocating / publishing any IPC handles.
     local_experts = spec.num_experts // len(config.expert_devices)
     capacity = max(config.max_prefill_tokens, config.max_decode_tokens)
-    buffer_bytes = (
-        len(config.clients)
-        * local_experts
-        * capacity
-        * (2 * spec.hidden_size + spec.intermediate_size)
-        * 2
-    )
+    capacities, packed = config.buffer_layout()
+    buffer_bytes = estimate_buffer_bytes(
+        config.slot_count,
+        local_experts,
+        capacity,
+        spec.hidden_size,
+        spec.intermediate_size,
+        capacities=capacities,
+        packed=packed,
+        top_k=spec.top_k,
+    )["total"]
     required_bytes = (
         spec.expert_weight_bytes // len(config.expert_devices) + buffer_bytes
     )
@@ -138,15 +161,25 @@ def expert_main(config_path, rank, manifest, stop_event):
             "Reduce the mailbox capacity or use more expert GPUs."
         )
     w13, w2 = load_expert_weights(
-        config.model_path, spec, rank, len(config.expert_devices), device
+        config.model_path,
+        spec,
+        rank,
+        len(config.expert_devices),
+        device,
+        synthetic_seed=config.synthetic_seed
+        if config.weight_mode == "synthetic"
+        else None,
     )
     buffers = OwnedBuffers(
-        slot_count=len(config.clients),
+        slot_count=config.slot_count,
         local_experts=spec.num_experts // len(config.expert_devices),
         max_rows=max(config.max_prefill_tokens, config.max_decode_tokens),
         hidden=spec.hidden_size,
         intermediate=spec.intermediate_size,
         device=device,
+        capacities=capacities,
+        packed=packed,
+        top_k=spec.top_k,
     )
     executor = PersistentExecutor(
         buffers,
@@ -156,6 +189,7 @@ def expert_main(config_path, rank, manifest, stop_event):
         expected_decode_tiles=config.expected_decode_tiles,
         max_decode_sm_fraction=config.max_decode_sm_fraction,
         ctas=config.cta_count,
+        kernel=config.kernel,
     )
     descriptor_path = Path(config.rendezvous_dir) / f"expert-{rank}.json"
     atomic_json(
