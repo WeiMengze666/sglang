@@ -41,6 +41,17 @@ def main():
     )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
+        "--chunk-size",
+        type=int,
+        default=2048,
+        help="ChunkedPrefill tuning parameter; freeze before held-out evaluation",
+    )
+    p.add_argument(
+        "--disable-tbo",
+        action="store_true",
+        help="Baseline ablation; ExpertPlex uses config.overlap",
+    )
+    p.add_argument(
         "--canonical-synthetic-seed",
         type=int,
         help="Use identical globally named random BF16 tensors in every layout",
@@ -54,6 +65,10 @@ def main():
         p.error("ExpertPlex requires --config")
     if args.variant == "pdmux" and not args.pdmux_config:
         p.error("PDMux requires tested --pdmux-config")
+    if args.chunk_size < 1:
+        p.error("Chunk size must be positive")
+    if args.variant == "expertplex" and args.disable_tbo:
+        p.error("Use an explicit ExpertPlex node config with overlap=none")
     if args.canonical_synthetic_seed is not None:
         if args.weight_mode != "synthetic" or args.canonical_synthetic_seed < 0:
             p.error(
@@ -128,6 +143,10 @@ def main():
         ]
         if args.pdmux_config:
             launch += ["--pdmux-config", args.pdmux_config]
+        if args.variant == "chunked":
+            launch += ["--chunk-size", str(args.chunk_size)]
+        if args.disable_tbo:
+            launch += ["--disable-tbo"]
     bench = [
         sys.executable,
         str(scripts / "bench_sweep.py"),
@@ -188,6 +207,15 @@ def main():
     )
     report = {
         "scope": __doc__,
+        "input_artifact_sha256": {
+            str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in (
+                Path(args.dataset_path),
+                Path(args.model_path) / "config.json",
+                Path(args.tokenizer_path) / "tokenizer.json",
+            )
+            if path.is_file()
+        },
         "source_files_sha256": source_hashes,
         "hardware_at_start": hardware.stdout
         if hardware.returncode == 0

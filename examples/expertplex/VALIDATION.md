@@ -16,7 +16,7 @@ Dependencies were installed in an isolated workspace venv; the original conda en
 
 | Scope | Evidence / result |
 |---|---|
-| CPU adapter, ownership, SLO, config and planner contracts | 40 passed; syntax and CLI checks passed |
+| CPU adapter, ownership, SLO, config and planner contracts | 42 passed; syntax and CLI checks passed |
 | CUDA IPC / native atomics | All 56 ordered pairs passed |
 | Device-generated epochs / CUDA graph | 20 replays with changing inputs/routes passed |
 | Full 62-layer 480B expert residency, synthetic BF16 | Four experts and four attention clients passed; initial masked version used about 227.65 GiB/E |
@@ -321,3 +321,22 @@ These include pipeline waiting, and trace retirement now includes stage commit.
 They are neither isolated instruction timings nor a proof of the paper's complete
 25.3 us reallocation bound. Raw reports/traces are in `checkpoint-2135/` below the
 same results directory; `checkpoint-2118/` retains the earlier implementation.
+
+## Planner corrections, 21:49 UTC
+
+The search now filters memory using the candidate overlap strategy, including
+two mailboxes for TBO, and counts each balanced microbatch's partial tiles
+independently. `--overlap auto` compares both sequential and TBO candidates.
+`--write-config` exports the selected placement, overlap, q, and expected decode
+footprint instead of the original input configuration. CPU checks verify that
+a memory-infeasible TBO candidate cannot win and that partial tiles do not merge
+across mailboxes. Batch predictions remain separate from runtime capacity caps.
+TP1 attention/EP-only placement and IID routing remain explicit limitations.
+
+The 64-request canonical ShareGPT pilot completed: colocated joint attainment
+was 64/64, 54/64, 17/64, 21/64 at 0.5, 1, 1.5, 2 rps; ExpertPlex was 64/64,
+61/64, 33/64, 22/64. The maximum feasible *tested* rates are 0.5 and 1 rps.
+This coarse grid and sample size do not establish a 2x boundary ratio or the
+requested 1.5x acceptance. Other baselines, finer grids, and disjoint held-out
+requests are still required. Both runs use canonical random weights, not the
+pretrained Coder checkpoint. Evidence is retained in `checkpoint-2149/`.

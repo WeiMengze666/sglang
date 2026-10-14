@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -472,6 +472,55 @@ class SearchResult:
     predicted_goodput_requests_per_second: float
     profile_provenance: str
     overlap: str
+    expected_decode_tiles: int
+
+    def config(self, source: NodeConfig) -> NodeConfig:
+        """Export the selected placement and contention policy, not the input."""
+        overrides = {
+            key: value
+            for key, value in source.to_dict().items()
+            if key not in ("model_path", "clients", "expert_devices")
+        }
+        overrides.update(
+            overlap="tbo" if self.overlap == "tbo" else "none",
+            decode_sm_budget=self.decode_sm_budget,
+            expected_decode_tiles=self.expected_decode_tiles,
+        )
+        return self.layout.config(source.model_path, **overrides)
+
+
+def expected_rank_footprint(profiles, layout, phase, batch, input_length, overlap):
+    """Expected maximum EP-rank footprint, retaining each mailbox's padding.
+
+    The analytical TBO case assumes balanced token microbatches. Actual prefill
+    sequence-boundary splits can differ; this remains a profile-model assumption.
+    """
+    attention_count = (
+        layout.prefill_count if phase == "prefill" else layout.decode_count
+    )
+    mailbox_tokens = []
+    for i in range(attention_count):
+        tokens = (batch // attention_count + (i < batch % attention_count)) * (
+            input_length if phase == "prefill" else 1
+        )
+        mailbox_tokens.extend(
+            (tokens // 2, tokens - tokens // 2) if overlap == "tbo" else (tokens,)
+        )
+    probabilities = profiles.expert_probabilities[phase]
+    tile_rows = (
+        profiles.tile_rows[phase]
+        if isinstance(profiles.tile_rows, dict)
+        else profiles.tile_rows
+    )
+    return max(
+        sum(
+            expected_expert_tiles(tokens, probability, tile_rows)
+            for tokens in mailbox_tokens
+            if tokens
+            for probability in probabilities[rank :: layout.expert_count]
+        )
+        for rank in range(layout.expert_count)
+    )
 
 
 def _iteration_latency(
@@ -495,27 +544,8 @@ def _iteration_latency(
     # Mailboxes belong to independent attention clients. Their partial tiles
     # cannot be merged into a single global-batch tile without changing the
     # runtime. Sum each client's tiles on every expert rank, then take max rank.
-    client_batches = [
-        batch // attention_count + (i < batch % attention_count)
-        for i in range(attention_count)
-    ]
-    probabilities = profiles.expert_probabilities[phase]
-    footprint = max(
-        sum(
-            sum(
-                expected_expert_tiles(
-                    client_batch * (input_length if phase == "prefill" else 1),
-                    probability,
-                    profiles.tile_rows[phase]
-                    if isinstance(profiles.tile_rows, dict)
-                    else profiles.tile_rows,
-                )
-                for probability in probabilities[rank :: layout.expert_count]
-            )
-            for client_batch in client_batches
-            if client_batch
-        )
-        for rank in range(layout.expert_count)
+    footprint = expected_rank_footprint(
+        profiles, layout, phase, batch, input_length, overlap
     )
     moe = profiles.moe[phase, sm_count].predict(footprint)
     # NVLink path is bidirectional activation dispatch + expert-result pull.
@@ -557,8 +587,33 @@ def search(
     TBO is an analytical option for a measured TBO setup; selecting it here
     does not enable communication overlap in the runtime.
     """
+    if overlap == "auto":
+        candidates = [
+            search(
+                config,
+                model,
+                profiles,
+                input_length=input_length,
+                average_output_length=average_output_length,
+                context_length=context_length,
+                prefill_slo_s=prefill_slo_s,
+                decode_slo_s=decode_slo_s,
+                kv_tokens_per_attention_gpu=kv_tokens_per_attention_gpu,
+                reserve_gib=reserve_gib,
+                overlap=choice,
+            )
+            for choice in ("sequential", "tbo")
+        ]
+        return max(
+            (c for c in candidates if c is not None),
+            key=lambda c: c.predicted_goodput_requests_per_second,
+            default=None,
+        )
     if overlap not in ("sequential", "tbo"):
-        raise ValueError("overlap must be sequential or tbo")
+        raise ValueError("overlap must be sequential, tbo or auto")
+    # FitsMemory must account for the strategy being evaluated: TBO reserves
+    # two complete mailboxes even when the input config uses sequential mode.
+    config = replace(config, overlap="tbo" if overlap == "tbo" else "none")
     for name, value in (
         ("input_length", input_length),
         ("average_output_length", average_output_length),
@@ -685,6 +740,19 @@ def search(
                 goodput,
                 profiles.provenance,
                 overlap,
+                max(
+                    1,
+                    math.ceil(
+                        expected_rank_footprint(
+                            profiles,
+                            layout,
+                            "decode",
+                            batches["decode"],
+                            input_length,
+                            overlap,
+                        )
+                    ),
+                ),
             )
             if best is None or goodput > best.predicted_goodput_requests_per_second:
                 best = result
@@ -710,7 +778,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--prefill-slo-s", type=float, default=1.0)
     parser.add_argument("--decode-slo-s", type=float, default=0.05)
     parser.add_argument(
-        "--overlap", choices=("sequential", "tbo"), default="sequential"
+        "--overlap", choices=("sequential", "tbo", "auto"), default="auto"
+    )
+    parser.add_argument(
+        "--prefill-preprocess", action=argparse.BooleanOptionalAction, default=True
     )
     args = parser.parse_args(argv)
     model = ModelSpec.from_model_path(args.model_path)
@@ -722,6 +793,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         max_prefill_tokens=args.max_prefill_tokens,
         max_decode_tokens=args.max_decode_tokens,
         gpu_memory_gib=args.gpu_memory_gib,
+        overlap="tbo" if args.overlap == "tbo" else "none",
+        prefill_preprocess=args.prefill_preprocess,
     )
     memory = estimate_memory(
         config,
@@ -729,12 +802,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         kv_tokens_per_attention_gpu=args.kv_tokens_per_attention_gpu,
         reserve_gib=args.reserve_gib,
     )
-    if not memory.fits:
+    if not memory.fits and not args.profiles:
         parser.error(
             "selected placement exceeds configured HBM capacity; lower fixed mailbox rows or choose more expert GPUs"
         )
-    if args.write_config:
-        config.write_json(args.write_config)
     output: dict[str, Any] = {"config": config.to_dict(), "memory": memory.to_dict()}
     if args.profiles:
         profiles = MeasuredProfiles.from_json(args.profiles, model)
@@ -752,6 +823,17 @@ def main(argv: Sequence[str] | None = None) -> None:
             overlap=args.overlap,
         )
         output["prediction"] = asdict(result) if result is not None else None
+        if result is not None:
+            config = result.config(config)
+            output["config"] = config.to_dict()
+            output["memory"] = estimate_memory(
+                config,
+                model,
+                kv_tokens_per_attention_gpu=args.kv_tokens_per_attention_gpu,
+                reserve_gib=args.reserve_gib,
+            ).to_dict()
+        elif args.write_config:
+            parser.error("No feasible measured-profile candidate; no config written")
         output["prediction_note"] = (
             "Profile-backed estimate only; this is not measured end-to-end goodput."
         )
@@ -759,6 +841,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         output["prediction_note"] = (
             "No measured profiles supplied: no latency or goodput prediction made."
         )
+    if args.write_config:
+        config.write_json(args.write_config)
     print(json.dumps(output, indent=2))
 
 

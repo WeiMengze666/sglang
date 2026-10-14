@@ -25,8 +25,8 @@
 默认 `sm100` 后端采用双 CTA cluster、producer/MMA/epilogue warp 分工、9-stage TMA
 与双 accumulator 流水线；GateUp、激活、Down 是独立调度的 operation templates，
 GEMM 直接复用原生 DeepGEMM 的 STSM/TMA epilogue。
-可选 `--prefill-preprocess` 将 normal 模式的两阶段 scatter 和 BF16 gather 也纳入同一个长驻调度器；
-已通过 Coder 专家形状的 4E/top-8 算子验证，完整服务验收仍在进行。CTA0 读取系统 ready word，cluster leader 读取 device policy，
+`configure.py` 默认启用 `--prefill-preprocess`，将 normal 模式的两阶段 scatter 和 BF16 gather 也纳入同一个长驻调度器；
+已通过 Coder 专家形状的 4E/top-8 算子和小模型完整服务测试；`--no-prefill-preprocess` 保留 A 侧重排消融。CTA0 读取系统 ready word，cluster leader 读取 device policy，
 通过 DSMEM 分发 tile 决策，mbarrier 向后续 warp 交接；共享输入使用 TMA multicast。
 `sm100_cta1` 保留单 CTA 消融后端，`sm100_fused` 保留早期 4-stage 融合 gate/up/激活后端，
 `wmma` 保留功能参考。它们不能混作论文性能结果。
@@ -50,8 +50,8 @@ BF16 routed expert 权重按 `expert_id % E_count` 分片，每张 E 卡持有�
 | 默认配置的每卡项目 | GiB |
 | --- | ---: |
 | E 卡 routed expert 权重 | 217.969 |
-| E 卡全部 mailbox 和中间缓冲区（默认单 mailbox，P2048 / D256） | 1.942 |
-| E 卡计入 16 GiB 预留后的容量估算 | 235.911 |
+| E 卡全部 mailbox 和中间缓冲区（默认单 mailbox，P2048 / D256，E 侧预处理） | 1.989 |
+| E 卡计入 16 GiB 预留后的容量估算 | 235.958 |
 | A 卡 attention/router/embedding/head 权重 | 22.483 |
 | A 卡 65,536-token BF16 KV pool | 15.5 |
 
@@ -251,8 +251,12 @@ schema 要求 `units="seconds_per_layer"`、非空 `provenance`、真实 `total_
 `{x,sequence_length,latency_s}` 样本；MoE 的 x 必须是 tile footprint。只有实际测量过的
 SM 预算进入搜索。测试里的人工系数仅验证代数，不作为 B300 profiles 发布。
 
-当前关键路径模型是近似，未计入完整排队、KV 迁移和服务 CPU 开销。`--overlap tbo`
-需要实测 TBO profiles；client 路径支持该选项，完整服务验收仍待完成。
+当前关键路径模型是近似，未计入完整排队、KV 迁移和服务 CPU 开销。`--overlap auto`
+同时比较 sequential/TBO，按候选策略计算双 mailbox 内存及独立 microbatch padding。
+TBO 假设 token 均衡切分，实际序列边界会影响预测，需要实测校准。
+`--write-config` 在有 profile 时导出搜索胜出的布局、overlap、q 和预期 decode footprint；
+预测 batch 仍在 JSON 中单独报告，容量上限不等同于服务调度器的实际 batch。
+当前并行策略仍限于 TP1 attention + EP 专家，未覆盖论文的全部跨栈候选。
 profile 搜索结果要在 B300 上用同配置的端到端 sweep 重新验收。
 
 
@@ -260,7 +264,10 @@ profile 搜索结果要在 B300 上用同配置的端到端 sweep 重新验收�
 
 完整 480B **随机权重**，ShareGPT 64 请求、1P3D4E、相同 24576 长度上限，
 固定 TTFT=1s / TPOT=50ms，第一轮 1 req/s 的 joint attainment：
-共置基线 61/64，ExpertPlex 45/64。当前没有达到 1.5×；保留全部结果供后续优化对照。
+共置基线 61/64，ExpertPlex 45/64。**审计发现这些早期布局使用不同的随机初始化方式，
+只能作为诊断，不能作为速度比验收。** 当前没有达到 1.5×；保留全部原始结果。
+新增 `--canonical-synthetic-seed 1234` 在完整 HF 张量上统一初始化，再由正常 loader 分片；
+E worker 使用相同的全局专家名称。公平对照的新曲线正在采集，仍不代替真实模型结果。
 这一服务测试配置使用 P24576 / D256、双 mailbox，实际固定 buffer 估算为 **17.291 GiB/E**，
 不能套用上方 P2048 单 mailbox 的容量数字。
 
@@ -269,6 +276,7 @@ rendezvous。`bench_apk_sharing.py` 对 GateUp/Down 分别执行 §7.3 对照；
 `profile_operations.py` 扫 §7.4 的 per-expert rows / active experts；
 `bench_communication.py --cuda-graph` 用 GPU 同步隔离 dispatch 与 combine，
 支持单独构建的固定 DeepEP v1。`--group-transfers` 测试预建整组 attention 通信模板；
-服务端目前以 `SGLANG_EXPERTPLEX_GROUP_COMM=1` 显式选择。
+服务端在启用 E 侧预处理时自动使用整组通信；A 侧预处理消融可通过
+`SGLANG_EXPERTPLEX_GROUP_COMM=1` 显式选择整组通信。
 `check_teacher_forcing.py --top-k 128 --flush-between` 比较同一历史、无前缀缓存复用的
 logprob；top-k 子集不能当作完整词表的 TV/KL。所有脚本的输出均明确实验范围。

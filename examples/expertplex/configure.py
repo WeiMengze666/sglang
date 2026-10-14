@@ -27,7 +27,8 @@ def main():
     )
     parser.add_argument(
         "--prefill-preprocess",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Run normal-mode scatter and gather inside the persistent expert kernel",
     )
     parser.add_argument(

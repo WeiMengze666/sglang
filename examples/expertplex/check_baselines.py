@@ -239,6 +239,10 @@ def main():
         if child is not None and child.poll() is None:
             child.terminate()
             child.wait(timeout=90)
+    if any(row["status"] != "functional_pass" for row in report["cases"]):
+        raise RuntimeError(
+            "Baseline functional matrix failed; see preserved summary.json"
+        )
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -206,6 +207,64 @@ class ConfigTests(unittest.TestCase):
 
 
 class OptimizerTests(unittest.TestCase):
+    def test_tbo_search_counts_double_buffers_and_exports_selected_policy(self):
+        model = config.ModelSpec.from_dict(model_config())
+        node = config.default_config(
+            "/models/30b", max_prefill_tokens=256, max_decode_tokens=32
+        )
+        profiles = optimizer.MeasuredProfiles.from_dict(profiles_dict(model), model)
+        original = optimizer.estimate_memory
+        seen = []
+
+        def memory(candidate, *args, **kwargs):
+            seen.append(candidate.overlap)
+            estimate = original(candidate, *args, **kwargs)
+            # A constrained device can admit sequential but reject doubled TBO buffers.
+            if candidate.overlap == "tbo":
+                return type(estimate)(
+                    **{**estimate.__dict__, "available_bytes_per_gpu": 0}
+                )
+            return estimate
+
+        arguments = dict(
+            input_length=64,
+            average_output_length=16,
+            context_length=128,
+            prefill_slo_s=1,
+            decode_slo_s=0.1,
+            kv_tokens_per_attention_gpu=1024,
+        )
+        with patch.object(optimizer, "estimate_memory", side_effect=memory):
+            self.assertIsNone(
+                optimizer.search(node, model, profiles, overlap="tbo", **arguments)
+            )
+            result = optimizer.search(
+                node, model, profiles, overlap="auto", **arguments
+            )
+        self.assertEqual(set(seen), {"none", "tbo"})
+        self.assertEqual(result.overlap, "sequential")
+        selected = result.config(node)
+        self.assertEqual(len(selected.expert_devices), result.layout.expert_count)
+        self.assertEqual(selected.decode_sm_budget, result.decode_sm_budget)
+        self.assertEqual(selected.expected_decode_tiles, result.expected_decode_tiles)
+        selected.validate(model)
+
+    def test_tbo_partial_tiles_cannot_merge_across_mailboxes(self):
+        model = config.ModelSpec.from_dict(model_config())
+        data = profiles_dict(model)
+        for phase in ("prefill", "decode"):
+            data[phase]["expert_probabilities"] = [1.0] * 8 + [0.0] * 120
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        layout = optimizer.Layout(1, 3, 4)
+        sequential = optimizer.expected_rank_footprint(
+            profiles, layout, "prefill", 1, 16, "sequential"
+        )
+        tbo = optimizer.expected_rank_footprint(
+            profiles, layout, "prefill", 1, 16, "tbo"
+        )
+        self.assertEqual(sequential, 2)
+        self.assertEqual(tbo, 4)
+
     def test_expected_sparse_tiles_do_not_activate_every_expert(self):
         self.assertAlmostEqual(optimizer.expected_expert_tiles(1, 0.05, 16), 0.05)
         self.assertAlmostEqual(optimizer.expected_expert_tiles(3, 0.5, 16), 0.875)
