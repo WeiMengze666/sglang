@@ -201,9 +201,12 @@ def expert_main(config_path, rank, manifest, stop_event):
             "device": device,
             "pid": os.getpid(),
             "buffers": buffers.descriptor(),
+            "executor": executor.describe(),
         },
     )
-    logger.info("Expert rank %s persistent executor is ready", rank)
+    logger.info(
+        "Expert rank %s persistent executor is ready: %s", rank, executor.describe()
+    )
     try:
         while not stop_event.wait(0.25):
             errors = executor.check_error()

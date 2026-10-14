@@ -215,7 +215,7 @@ class OptimizerTests(unittest.TestCase):
             node, model, kv_tokens_per_attention_gpu=65536
         )
         self.assertEqual(memory.expert_weights_bytes, 62 * 40 * 3 * 6144 * 2560 * 2)
-        packed_rows = (2048 * 8 + 40 * 63 + 63) // 64 * 64
+        packed_rows = (2048 * 8 + 40 * 127 + 127) // 128 * 128
         decode_rows = 3 * 40 * node.max_decode_tokens
         expected = (
             (packed_rows + decode_rows) * (2 * 6144 + 2560) * 2

@@ -13,12 +13,14 @@
 namespace expertplex_sm100 {
 using Barrier = cutlass::arch::ClusterTransactionBarrier;
 using Element = cutlass::bfloat16_t;
-constexpr int M = 64, N = 128, K = 64, Stages = 4, OutputStages = 2;
-constexpr int Threads = 192;
+constexpr int M = 128, N = 128, K = 64, Stages = 4, OutputStages = 2;
+constexpr int Threads = 128 + M;
 
 struct alignas(128) Maps {
   CUtensorMap input[2];
   CUtensorMap activation[2];
+  CUtensorMap output[2];
+  CUtensorMap activation_store[2];
 };
 struct alignas(128) WeightMaps {
   CUtensorMap gate, up, down;
@@ -31,6 +33,7 @@ struct Storage {
   alignas(1024) Element a[Stages][M * K];
   alignas(1024) Element g[Stages][N * K];
   alignas(1024) Element u[Stages][N * K];
+  alignas(1024) Element store[2][M * 64];
   Barrier full[Stages], empty[Stages];
   Barrier task_full[OutputStages], task_empty[OutputStages];
   Barrier accum_full[OutputStages], accum_empty[OutputStages];
@@ -56,46 +59,66 @@ inline void encode_map(CUtensorMap &map, void *ptr, int inner, int outer,
               "cuTensorMapEncodeTiled failed: ", static_cast<int>(status));
 }
 
+// Optional diagnostics are copied only after the executor has stopped.
+// Each CTA owns its trace row; no tracing atomics or receiver kernels.
+struct TraceRecord {
+  U64 begin_ns, finish_ns, ready_seen_ns, epoch;
+  U64 sequence, slot, phase, stage;
+};
 struct Context {
+  TraceRecord *trace = nullptr;
+  int trace_capacity = 0;
   Maps *maps;
   WeightMaps *weights;
   int *policy;
 };
 
 inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
-                       int layers, int ctas) {
+                       int layers, int ctas, int trace_capacity, int cluster) {
   auto b = owner.b;
   TORCH_CHECK(b.hidden % K == 0 && b.intermediate % K == 0,
               "SM100 native pipeline requires H and I divisible by 64");
-  std::vector<Maps> maps(b.slots * b.experts);
-  for (int s = 0; s < b.slots; ++s)
-    for (int e = 0; e < b.experts; ++e) {
-      size_t index = static_cast<size_t>(s) * b.experts + e;
-      for (int p = 0; p < 2; ++p) {
-        const int tile_m = p == 0 ? 64 : 32;
-        size_t base = b.base_rows[s] + (b.packed[s] ? 0 : e * b.capacity[s]);
-        int rows = b.packed[s] ? b.storage_rows[s] : b.capacity[s];
-        encode_map(maps[index].input[p], b.input + base * b.hidden, b.hidden,
-                   rows, tile_m);
-        encode_map(maps[index].activation[p],
-                   b.activation + base * b.intermediate, b.intermediate, rows,
-                   tile_m);
-      }
+  // Match native DeepGEMM: one tensor map per operand/slot, with layer
+  // and expert folded into the outer coordinate. Per-expert maps overflow
+  // the descriptor working set and are unnecessary for fixed-stride weights.
+  std::vector<Maps> maps(b.slots);
+  for (int slot = 0; slot < b.slots; ++slot) {
+    for (int phase = 0; phase < 2; ++phase) {
+      int tile_m = phase == 0 ? M : 32;
+      size_t base = b.base_rows[slot];
+      int rows = b.storage_rows[slot];
+      encode_map(maps[slot].input[phase], b.input + base * b.hidden, b.hidden,
+                 rows, tile_m / cluster);
+      encode_map(maps[slot].activation[phase],
+                 b.activation + base * b.intermediate, b.intermediate, rows,
+                 tile_m / cluster);
+      encode_map(maps[slot].activation_store[phase],
+                 b.activation + base * b.intermediate, b.intermediate, rows,
+                 tile_m);
+      encode_map(maps[slot].output[phase], b.output + base * b.hidden, b.hidden,
+                 rows, tile_m);
     }
-  std::vector<WeightMaps> weights(layers * b.experts);
-  for (int l = 0; l < layers; ++l)
-    for (int e = 0; e < b.experts; ++e) {
-      size_t index = static_cast<size_t>(l) * b.experts + e;
-      auto gate =
-          const_cast<BF16 *>(w13) + index * 2 * b.intermediate * b.hidden;
-      auto down = const_cast<BF16 *>(w2) + index * b.hidden * b.intermediate;
-      encode_map(weights[index].gate, gate, b.hidden, b.intermediate, N);
-      encode_map(weights[index].up,
-                 gate + static_cast<size_t>(b.intermediate) * b.hidden,
-                 b.hidden, b.intermediate, N);
-      encode_map(weights[index].down, down, b.intermediate, b.hidden, N);
-    }
+  }
+  std::vector<WeightMaps> weights(1);
+  TORCH_CHECK(static_cast<int64_t>(layers) * b.experts * 2 * b.intermediate <=
+                      INT_MAX &&
+                  static_cast<int64_t>(layers) * b.experts * b.hidden <=
+                      INT_MAX,
+              "Flattened weights exceed tensor-map coordinate range");
+  encode_map(weights[0].gate, const_cast<BF16 *>(w13), b.hidden,
+             layers * b.experts * 2 * b.intermediate, N);
+  // Gate/up share the same flattened storage and descriptor.
+  weights[0].up = weights[0].gate;
+  encode_map(weights[0].down, const_cast<BF16 *>(w2), b.intermediate,
+             layers * b.experts * b.hidden, N);
   Context result;
+  result.trace_capacity = trace_capacity;
+  if (trace_capacity) {
+    size_t bytes =
+        static_cast<size_t>(ctas) * trace_capacity * sizeof(TraceRecord);
+    result.trace = static_cast<TraceRecord *>(owner.allocate(bytes));
+    C10_CUDA_CHECK(cudaMemset(result.trace, 0, bytes));
+  }
   result.maps = static_cast<Maps *>(owner.allocate(maps.size() * sizeof(Maps)));
   result.weights = static_cast<WeightMaps *>(
       owner.allocate(weights.size() * sizeof(WeightMaps)));
@@ -111,7 +134,8 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
 }
 
 template <int Cluster>
-__device__ void initialize(DeviceBuffers b, int slot, int layers) {
+__device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
+                                           int layers) {
   auto *c = b.control + static_cast<size_t>(slot) * kControlWords;
   auto *s = b.states + slot;
   U64 q = queue_load(&s->queue);
@@ -128,7 +152,7 @@ __device__ void initialize(DeviceBuffers b, int slot, int layers) {
     set_error(c, BAD_LAYER);
   if (s->phase < 0 || s->phase > 1)
     set_error(c, BAD_PHASE);
-  const int tile_m = s->phase == 0 ? 64 : 32;
+  const int tile_m = s->phase == 0 ? M : 32;
   U64 rows = 0;
   for (int e = 0; e < b.experts; ++e) {
     int count =
@@ -157,8 +181,9 @@ __device__ void initialize(DeviceBuffers b, int slot, int layers) {
 // Only CTA0 reads attention readiness words. Other CTAs consume device-scope
 // policies; no SM is reserved for a separate receiver/polling kernel.
 template <int Cluster>
-__device__ void update_policy(DeviceBuffers b, Context context, int layers,
-                              int decode_budget, float expected, int cap) {
+__device__ __forceinline__ void
+update_policy(const DeviceBuffers &b, Context context, int layers,
+              int decode_budget, float expected, int cap) {
   for (int s = 0; s < b.slots; ++s)
     initialize<Cluster>(b, s, layers);
   U64 footprint = 0;
@@ -185,7 +210,8 @@ __device__ void update_policy(DeviceBuffers b, Context context, int layers,
 }
 
 template <int Cluster>
-__device__ bool claim(DeviceBuffers b, int phase, int cursor, Task &task) {
+__device__ __forceinline__ bool claim(const DeviceBuffers &b, int phase,
+                                      int cursor, Task &task) {
   for (int i = 0; i < b.slots; ++i) {
     int slot = (cursor + i) % b.slots;
     auto *state = b.states + slot;
@@ -197,7 +223,7 @@ __device__ bool claim(DeviceBuffers b, int phase, int cursor, Task &task) {
     unsigned total = stage == GATE ? state->gate_tiles : state->down_tiles;
     if (index >= total || !queue_cas(&state->queue, q, q + 1))
       continue;
-    const int tile_m = phase == 0 ? 64 : 32;
+    const int tile_m = phase == 0 ? M : 32;
     const int tile_n =
         ((stage == GATE ? b.intermediate : b.hidden) + N * Cluster - 1) /
         (N * Cluster);
@@ -223,32 +249,39 @@ __device__ bool claim(DeviceBuffers b, int phase, int cursor, Task &task) {
   return false;
 }
 
-template <int Cluster>
-__global__ __launch_bounds__(Threads,
-                             1) void executor(DeviceBuffers b, Context context,
-                                              int layers, int decode_budget,
-                                              float expected, int cap) {
+template <int Cluster, int Hidden = 0, int Intermediate = 0>
+__global__ __launch_bounds__(Threads, 1) void executor(
+    const __grid_constant__ DeviceBuffers b, Context context, int layers,
+    int decode_budget, float expected, int cap) {
+  const int hidden = Hidden > 0 ? Hidden : b.hidden;
+  const int intermediate = Intermediate > 0 ? Intermediate : b.intermediate;
   extern __shared__ __align__(1024) unsigned char workspace[];
   auto &s = *reinterpret_cast<Storage *>(workspace);
   int warp = threadIdx.x / 32, lane = threadIdx.x % 32;
   const int rank = blockIdx.x % Cluster;
   if (threadIdx.x == 32) {
     for (int i = 0; i < Stages; ++i) {
-      s.full[i].init(1);
-      s.empty[i].init(Cluster);
+      s.full[i].init(Cluster);
+      s.empty[i].init(1);
     }
     for (int i = 0; i < OutputStages; ++i) {
       s.task_full[i].init(1);
-      s.task_empty[i].init(64);
+      s.task_empty[i].init(M);
       s.accum_full[i].init(1);
-      s.accum_empty[i].init(64);
+      s.accum_empty[i].init(M * Cluster);
       s.decision_full[i].init(1);
-      s.cluster_empty[i].init(64 * Cluster);
+      s.cluster_empty[i].init(M * Cluster);
     }
     cutlass::arch::fence_barrier_init();
   }
+  using Allocator = cute::conditional_t<Cluster == 1, cute::TMEM::Allocator1Sm,
+                                        cute::TMEM::Allocator2Sm>;
+  if constexpr (Cluster > 1) {
+    cute::cluster_arrive();
+    cute::cluster_wait();
+  }
   if (warp == 2)
-    cute::TMEM::Allocator1Sm().allocate(512, &s.tmem);
+    Allocator().allocate(512, &s.tmem);
   __syncthreads();
   if constexpr (Cluster > 1) {
     cute::cluster_arrive();
@@ -305,55 +338,78 @@ __global__ __launch_bounds__(Threads,
         task = s.decision[index];
       }
       task.column += rank * N;
+      if (task.slot >= 0 && context.trace &&
+          sequence < context.trace_capacity) {
+        auto &record = context.trace[static_cast<size_t>(blockIdx.x) *
+                                         context.trace_capacity +
+                                     sequence];
+        record = {now_ns(),
+                  0,
+                  b.control[static_cast<size_t>(task.slot) * kControlWords +
+                            START_NS],
+                  task.epoch,
+                  sequence,
+                  static_cast<U64>(task.slot),
+                  static_cast<U64>(task.phase),
+                  static_cast<U64>(task.stage)};
+      }
       s.task[index] = task;
       s.task_full[index].arrive();
       if (task.slot == -2)
         break;
       previous_phase = task.phase;
       cursor = (task.slot + 1) % b.slots;
-      const auto &maps = context.maps[task.slot * b.experts + task.expert];
-      const auto &weights =
-          context.weights[task.layer * b.experts + task.expert];
+      const auto &maps = context.maps[task.slot];
+      const auto &weights = context.weights[0];
       const bool gate = task.stage == GATE;
-      const int reduction = gate ? b.hidden : b.intermediate;
-      const int tile_m = task.phase == 0 ? 64 : 32;
+      const int reduction = gate ? hidden : intermediate;
+      const int tile_m = task.phase == 0 ? M : 32;
       const int map_row =
-          task.row + (b.packed[task.slot]
-                          ? b.offsets[task.slot * b.experts + task.expert]
-                          : 0);
+          task.row + static_cast<int>(expert_base(b, task.slot, task.expert) -
+                                      b.base_rows[task.slot]);
       for (int k = 0; k < reduction; k += K, advance()) {
         s.empty[stage].wait(phase ^ 1);
         auto *a = gate ? &maps.input[task.phase] : &maps.activation[task.phase];
         auto *g = gate ? &weights.gate : &weights.down;
-        if constexpr (Cluster > 1) {
-          if (rank == 0)
-            cute::SM90_TMA_LOAD_MULTICAST_2D::copy(
-                a, reinterpret_cast<uint64_t *>(&s.full[stage]),
-                (1 << Cluster) - 1,
-                static_cast<uint64_t>(cute::TMA::CacheHintSm90::EVICT_NORMAL),
-                s.a[stage], k, map_row);
-        } else {
-          if (task.phase == 0)
-            deep_gemm::tma::copy<K, 64, 128, Element>(a, &s.full[stage],
-                                                      s.a[stage], k, map_row);
-          else
-            deep_gemm::tma::copy<K, 32, 128, Element>(a, &s.full[stage],
-                                                      s.a[stage], k, map_row);
-        }
+        const int weight_row = (task.layer * b.experts + task.expert) *
+                                   (gate ? 2 * intermediate : hidden) +
+                               task.column;
+        // Swap A/B: weight columns are the MMA M dimension and tokens are
+        // N. Each CTA owns N weight columns and half of the activation tile.
+        // Native 2-SM TMA completion signals the leader barrier only.
+        if (task.phase == 0)
+          deep_gemm::tma::copy<K, M / Cluster, 128, Element>(
+              a, &s.full[stage], s.a[stage], k, map_row + rank * (M / Cluster),
+              Cluster);
+        else
+          deep_gemm::tma::copy<K, 32 / Cluster, 128, Element>(
+              a, &s.full[stage], s.a[stage], k, map_row + rank * (32 / Cluster),
+              Cluster);
         deep_gemm::tma::copy<K, N, 128, Element>(g, &s.full[stage], s.g[stage],
-                                                 k, task.column);
+                                                 k, weight_row, Cluster);
         if (gate)
-          deep_gemm::tma::copy<K, N, 128, Element>(&weights.up, &s.full[stage],
-                                                   s.u[stage], k, task.column);
-        s.full[stage].arrive_and_expect_tx((tile_m + N * (gate ? 2 : 1)) * K *
-                                           2);
+          deep_gemm::tma::copy<K, N, 128, Element>(
+              &weights.up, &s.full[stage], s.u[stage], k,
+              weight_row + intermediate, Cluster);
+        if (rank == 0)
+          s.full[stage].arrive_and_expect_tx(
+              (tile_m / Cluster + N * (gate ? 2 : 1)) * K * 2 * Cluster);
+        else
+          s.full[stage].arrive(0u);
       }
     }
-  } else if (warp == 1) {
-    auto descriptor = cute::UMMA::make_instr_desc<Element, Element, float, 128,
-                                                  N, cute::UMMA::Major::K,
-                                                  cute::UMMA::Major::K>();
-    auto instruction = cute::UMMA::make_runtime_instr_desc(descriptor);
+  } else if (warp == 1 && rank == 0) {
+    auto prefill_descriptor =
+        cute::UMMA::make_instr_desc<Element, Element, float, N * Cluster, M,
+                                    cute::UMMA::Major::K,
+                                    cute::UMMA::Major::K>();
+    auto decode_descriptor =
+        cute::UMMA::make_instr_desc<Element, Element, float, N * Cluster, 32,
+                                    cute::UMMA::Major::K,
+                                    cute::UMMA::Major::K>();
+    using Mma =
+        cute::conditional_t<Cluster == 1, deep_gemm::ptx::SM100_MMA_F16BF16_SS,
+                            deep_gemm::ptx::SM100_MMA_F16BF16_2x1SM_SS>;
     for (uint32_t sequence = 0;; ++sequence) {
       const int index = sequence % OutputStages,
                 parity = (sequence / OutputStages) & 1;
@@ -364,7 +420,9 @@ __global__ __launch_bounds__(Threads,
       s.accum_empty[index].wait(parity ^ 1);
       deep_gemm::ptx::tcgen05_after_thread_sync();
       const bool gate = task.stage == GATE;
-      const int reduction = gate ? b.hidden : b.intermediate;
+      const auto instruction = cute::UMMA::make_runtime_instr_desc(
+          task.phase == 0 ? prefill_descriptor : decode_descriptor);
+      const int reduction = gate ? hidden : intermediate;
       for (int k = 0; k < reduction; k += K, advance()) {
         s.full[stage].wait(phase);
         deep_gemm::ptx::tcgen05_after_thread_sync();
@@ -384,24 +442,28 @@ __global__ __launch_bounds__(Threads,
             a.lo = a_base + inner * 2 / 16;
             g.lo = g_base + inner * 2 / 16;
             u.lo = u_base + inner * 2 / 16;
-            deep_gemm::ptx::SM100_MMA_F16BF16_SS::fma(a, g, index * 256,
-                                                      k || inner, instruction);
+            Mma::fma(g, a, index * 256, k || inner, instruction);
             if (gate)
-              deep_gemm::ptx::SM100_MMA_F16BF16_SS::fma(
-                  a, u, index * 256 + 128, k || inner, instruction);
+              Mma::fma(u, a, index * 256 + 128, k || inner, instruction);
           }
         }
         __syncwarp();
         if constexpr (Cluster > 1)
-          cutlass::arch::umma_arrive_multicast(
+          cutlass::arch::umma_arrive_multicast_2x1SM(
               reinterpret_cast<uint64_t *>(&s.empty[stage]),
               (1 << Cluster) - 1);
         else
           cutlass::arch::umma_arrive(
               reinterpret_cast<uint64_t *>(&s.empty[stage]));
-        if (k + K == reduction)
-          cutlass::arch::umma_arrive(
-              reinterpret_cast<uint64_t *>(&s.accum_full[index]));
+        if (k + K == reduction) {
+          if constexpr (Cluster > 1)
+            cutlass::arch::umma_arrive_multicast_2x1SM(
+                reinterpret_cast<uint64_t *>(&s.accum_full[index]),
+                (1 << Cluster) - 1);
+          else
+            cutlass::arch::umma_arrive(
+                reinterpret_cast<uint64_t *>(&s.accum_full[index]));
+        }
         __syncwarp();
       }
     }
@@ -417,14 +479,13 @@ __global__ __launch_bounds__(Threads,
       s.accum_full[index].wait(parity);
       deep_gemm::ptx::tcgen05_after_thread_sync();
       const bool gate = task.stage == GATE;
-      const int width = gate ? b.intermediate : b.hidden;
-      const int row = task.row + local_row;
-      const bool valid_row =
-          row < task.rows && local_row < (task.phase == 0 ? 64 : 32);
-      size_t base = (expert_base(b, task.slot, task.expert) + row) * width;
-      BF16 *output = gate ? b.activation : b.output;
+      const int tile_m = task.phase == 0 ? M : 32;
+      const auto &maps = context.maps[task.slot];
+      const int map_row =
+          task.row + static_cast<int>(expert_base(b, task.slot, task.expert) -
+                                      b.base_rows[task.slot]);
 #pragma unroll
-      for (int col = 0; col < N; col += 8) {
+      for (int col = 0; col < tile_m; col += 8) {
         uint32_t g[8], u[8];
         cute::SM100_TMEM_LOAD_32dp32b8x::copy(
             index * 256 + col, g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7]);
@@ -447,17 +508,47 @@ __global__ __launch_bounds__(Threads,
           }
           converted[j] = __float2bfloat16(value);
         }
-        // H/I and tile columns are 64-element aligned. One 128-bit store
-        // avoids eight narrow, strided transactions per epilogue thread.
-        if (valid_row && task.column + col < width)
-          *reinterpret_cast<uint4 *>(output + base + task.column + col) =
-              *reinterpret_cast<const uint4 *>(converted);
+        // Transpose weight-row/token-column accumulators into the native
+        // token-row/weight-column swizzled output layout. All CTAs use the
+        // same token rows and write their own 128 output columns.
+#pragma unroll
+        for (int j = 0; j < 8; ++j) {
+          const int token_row = col + j;
+          const int store_index = local_row / 64;
+          const int column = (local_row % 64) ^ ((token_row & 7) * 8);
+          s.store[store_index][token_row * 64 + column] =
+              task.row + token_row < task.rows ? Element(converted[j])
+                                               : Element(0.f);
+        }
+      }
+      cute::tma_store_fence();
+      cutlass::arch::NamedBarrier::sync(M, 0);
+      if (local_row == 0) {
+        auto *map = gate ? &maps.activation_store[task.phase]
+                         : &maps.output[task.phase];
+#pragma unroll
+        for (int part = 0; part < 2; ++part) {
+          cute::SM90_TMA_STORE_2D::copy(map, s.store[part],
+                                        task.column + part * 64, map_row);
+          cute::tma_store_arrive();
+        }
       }
       deep_gemm::ptx::tcgen05_before_thread_sync();
-      s.accum_empty[index].arrive();
-      __threadfence();
-      cutlass::arch::NamedBarrier::sync(64, 0);
+      s.accum_empty[index].arrive(0u);
+      // Retire every store before publishing completion or reusing its SMEM.
       if (local_row == 0) {
+        // CUTLASS's .read wait only releases SMEM; completion publication
+        // additionally requires the global writes to have completed.
+        asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
+        __threadfence();
+      }
+      cutlass::arch::NamedBarrier::sync(M, 0);
+      if (local_row == 0) {
+        if (context.trace && sequence < context.trace_capacity)
+          context
+              .trace[static_cast<size_t>(blockIdx.x) * context.trace_capacity +
+                     sequence]
+              .finish_ns = now_ns();
         auto *state = b.states + task.slot;
         unsigned total = gate ? state->gate_tiles : state->down_tiles;
         if (atomicAdd(&state->completed, 1U) == total * Cluster - 1) {
@@ -477,7 +568,7 @@ __global__ __launch_bounds__(Threads,
           }
         }
       }
-      cutlass::arch::NamedBarrier::sync(64, 0);
+      cutlass::arch::NamedBarrier::sync(M, 0);
       s.task_empty[index].arrive();
       s.cluster_empty[index].arrive(0, true);
     }
@@ -488,6 +579,6 @@ __global__ __launch_bounds__(Threads,
     cute::cluster_wait();
   }
   if (warp == 0)
-    cute::TMEM::Allocator1Sm().free(0, 512);
+    Allocator().free(0, 512);
 }
 } // namespace expertplex_sm100

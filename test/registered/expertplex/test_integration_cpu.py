@@ -63,6 +63,38 @@ def extracted_method(path, class_name, method_name, namespace):
     return namespace[method_name]
 
 
+class SchedulerTboTests(unittest.TestCase):
+    def test_tp1_tbo_prepares_local_metadata(self):
+        path = SRT / "utils/common.py"
+        node = next(
+            n
+            for n in ast.parse(path.read_text()).body
+            if isinstance(n, ast.FunctionDef) and n.name == "require_mlp_sync"
+        )
+        state = types.SimpleNamespace(attn_dp_enabled=False)
+        overlap = types.SimpleNamespace(enable_two_batch_overlap=False)
+        namespace = {
+            "get_parallel": lambda: state,
+            "require_gathered_buffer": lambda: False,
+            "get_exec": lambda: types.SimpleNamespace(overlap=overlap),
+        }
+        exec(
+            compile(
+                ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])),
+                str(path),
+                "exec",
+            ),
+            namespace,
+        )
+        required = namespace["require_mlp_sync"]
+        self.assertFalse(required())
+        overlap.enable_two_batch_overlap = True
+        self.assertTrue(required())
+        overlap.enable_two_batch_overlap = False
+        state.attn_dp_enabled = True
+        self.assertTrue(required())
+
+
 class IntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -124,6 +156,22 @@ class IntegrationTests(unittest.TestCase):
         hf = types.SimpleNamespace(to_dict=lambda: self.hf_config)
         INTEGRATION.validate_attention_model(hf)
         self.assertEqual(INTEGRATION.attention_config()[1].phase, "decode")
+
+    def test_unchunked_prefill_has_a_hard_input_bound(self):
+        node, _ = INTEGRATION.attention_config()
+        self.assertEqual(
+            INTEGRATION.bound_request_input_length(100000), node.max_prefill_tokens + 1
+        )
+        self.assertEqual(INTEGRATION.bound_request_input_length(128), 128)
+        with patch.dict(os.environ, {INTEGRATION.CLIENT_ENV: "0"}):
+            for disabled in (-1, None):
+                INTEGRATION.validate_server_args(
+                    self.server_args(
+                        disaggregation_mode="prefill",
+                        base_gpu_id=0,
+                        chunked_prefill_size=disabled,
+                    )
+                )
 
     def test_unsupported_modes_are_reported_together(self):
         args = self.server_args(

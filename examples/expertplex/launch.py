@@ -76,7 +76,7 @@ def commands(node, args):
             "--disable-overlap-schedule",
             "--disable-flashinfer-autotune",
             "--chunked-prefill-size",
-            str(capacity),
+            str(capacity if client.phase == "decode" or args.chunked_prefill else -1),
             "--max-prefill-tokens",
             str(capacity),
             "--max-running-requests",
@@ -97,7 +97,7 @@ def commands(node, args):
         if args.skip_tokenizer_init:
             command += ["--skip-tokenizer-init"]
         if args.cuda_graph:
-            command += ["--cuda-graph-max-bs", str(min(32, capacity))]
+            command += ["--cuda-graph-max-bs-decode", str(min(32, capacity))]
         servers.append((client, command))
     router = [
         sys.executable,
@@ -148,6 +148,11 @@ def main():
     parser.add_argument("--nccl-port", type=int, default=20000)
     parser.add_argument("--kv-tokens", type=int, default=65536)
     parser.add_argument("--ib-device")
+    parser.add_argument(
+        "--chunked-prefill",
+        action="store_true",
+        help="Optional chunking ablation; default P processes whole requests",
+    )
     parser.add_argument(
         "--kv-transport",
         choices=("nvlink", "rdma"),

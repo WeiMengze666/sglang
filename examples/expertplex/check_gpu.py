@@ -61,25 +61,39 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
             hidden=settings["hidden"],
             intermediate=settings["intermediate"],
             device=device,
-            packed=[1, 1] if settings.get("packed") else None,
+            capacities=settings.get("capacities"),
+            packed=settings.get("packed_layout")
+            or ([1, 1] if settings.get("packed") else None),
             top_k=settings["top_k"],
         )
         if start_executor:
             w13, w2 = _weights(torch, settings)
+            w13, w2 = w13.to(device), w2.to(device)
+            if os.environ.get("SGLANG_EXPERTPLEX_PROFILE") == "1":
+                import ctypes
+
+                torch.cuda.synchronize(device)
+                # Nsight intercepts the driver API. The runtime wrapper may
+                # omit this call when it sees no current runtime context.
+                driver = ctypes.CDLL("libcuda.so.1")
+                if driver.cuProfilerStart() != 0:
+                    raise RuntimeError("cuProfilerStart failed")
             executor = native.PersistentExecutor(
                 buffers,
-                w13.to(device),
-                w2.to(device),
-                decode_sm_budget=2,
-                expected_decode_tiles=64,
+                w13,
+                w2,
+                decode_sm_budget=settings.get("decode_budget", 2),
+                expected_decode_tiles=settings.get("expected_tiles", 64),
                 max_decode_sm_fraction=0.75,
                 ctas=0,
+                trace_capacity=settings.get("trace_capacity", 0),
             )
         outbox.put(
             {
                 "state": "ready",
                 "descriptor": buffers.descriptor(),
                 "hardware": _hardware(torch, device),
+                "executor": executor.describe() if executor is not None else None,
             }
         )
         while not stop_event.wait(0.05):
@@ -91,6 +105,11 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
     finally:
         if executor is not None:
             executor.stop()
+            if os.environ.get("SGLANG_EXPERTPLEX_PROFILE") == "1":
+                if driver.cuProfilerStop() != 0:
+                    raise RuntimeError("cuProfilerStop failed")
+            if settings.get("trace_path"):
+                torch.save(executor.read_trace(), settings["trace_path"])
 
 
 class Exporter:
@@ -133,6 +152,7 @@ class Exporter:
                     raise RuntimeError(message["traceback"])
                 self.descriptor = message["descriptor"]
                 self.hardware = message["hardware"]
+                self.executor_info = message["executor"]
                 return self
             raise TimeoutError(f"CUDA owner did not become ready in {self.timeout_s}s")
         except BaseException:
@@ -264,6 +284,7 @@ def check_pair(torch, native, args, settings, report):
     with Exporter(
         settings, expert, execute=True, timeout_s=args.startup_timeout_s
     ) as owner:
+        report["executor"] = owner.executor_info
         remotes = []
         try:
             remotes = [
@@ -284,6 +305,10 @@ def check_pair(torch, native, args, settings, report):
                         skewed=slot == 0,
                         int64_ids=iteration == 0,
                     )
+                    if iteration == 1:
+                        case["ids"][-1:] = -1
+                    elif iteration == 2:
+                        case["ids"][:] = -1
                     expected = _reference(torch, case, w13, w2, settings)
                     prepared = _prepare(torch, case, attention)
                     torch.cuda.synchronize(attention)
@@ -306,6 +331,7 @@ def check_pair(torch, native, args, settings, report):
                         "rows": rows,
                         "layer": case["layer"],
                         "epoch": epochs[slot],
+                        "padding_routes": int((case["ids"] == -1).sum()),
                         "wall_latency_ms": latency,
                         **_numerics(torch, actual, expected, args),
                     }
@@ -513,6 +539,10 @@ def check_graph(torch, native, args, settings, report):
                     settings["seed"] + 301 + replay,
                     skewed=replay % 2 == 0,
                 )
+                if replay % 3 == 1:
+                    case["ids"][-2:] = -1
+                elif replay % 3 == 2:
+                    case["ids"][:] = -1
                 prepared["hidden"].copy_(case["hidden"])
                 prepared["ids"].copy_(case["ids"])
                 prepared["weights"].copy_(case["weights"])

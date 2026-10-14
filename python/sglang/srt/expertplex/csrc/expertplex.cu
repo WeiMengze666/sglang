@@ -69,11 +69,11 @@ struct DeviceBuffers {
   size_t base_rows[kMaxSlots];
 };
 
-__device__ __forceinline__ size_t expert_base(DeviceBuffers b, int slot,
+__device__ __forceinline__ size_t expert_base(const DeviceBuffers &b, int slot,
                                               int expert) {
   return b.base_rows[slot] +
          (b.packed[slot] ? b.offsets[slot * b.experts + expert]
-                         : static_cast<size_t>(expert) * b.capacity[slot]);
+                         : static_cast<size_t>(expert) * ((b.capacity[slot] + 127) / 128 * 128));
 }
 
 static std::string encode_handle(void *pointer) {
@@ -170,10 +170,10 @@ public:
       int64_t storage =
           packed[s]
               ? static_cast<int64_t>(capacities[s]) * std::min(top_k, experts) +
-                    63LL * experts
-              : static_cast<int64_t>(capacities[s]) * experts;
-      // Descriptor dimensions must admit a full 64-row zero-padded tile.
-      storage = (storage + 63) / 64 * 64;
+                    127LL * experts
+              : static_cast<int64_t>((capacities[s] + 127) / 128 * 128) * experts;
+      // Descriptor dimensions must admit a full 128-row zero-padded tile.
+      storage = (storage + 127) / 128 * 128;
       TORCH_CHECK(storage <= INT_MAX, "Mailbox exceeds TMA row indexing range");
       b.capacity[s] = capacities[s];
       b.packed[s] = packed[s];
@@ -238,7 +238,7 @@ public:
   }
   py::dict descriptor() const {
     py::dict d;
-    d["version"] = 2;
+    d["version"] = 3;
     d["device"] = device;
     d["slot_count"] = b.slots;
     d["local_experts"] = b.experts;
@@ -269,7 +269,7 @@ public:
   bool closed = false;
 
   RemoteBuffers(py::dict d, int slot_id, int dev) : device(dev), slot(slot_id) {
-    TORCH_CHECK(py::cast<int>(d["version"]) == 2,
+    TORCH_CHECK(py::cast<int>(d["version"]) == 3,
                 "Unsupported IPC descriptor version");
     b.slots = py::cast<int>(d["slot_count"]);
     b.experts = py::cast<int>(d["local_experts"]);
@@ -450,6 +450,11 @@ __global__ void count_routes(DeviceBuffers b, int slot, const Id *ids,
   for (int route = blockIdx.x * blockDim.x + threadIdx.x; route < routes;
        route += gridDim.x * blockDim.x) {
     Id expert = ids[route];
+    // SGLang marks CUDA Graph/TBO padding routes with -1.
+    if (expert == -1) {
+      row_map[route] = -1;
+      continue;
+    }
     if (expert < 0 || expert >= static_cast<Id>(b.experts) * world) {
       set_error(c, BAD_ROUTE);
       continue;
@@ -470,7 +475,7 @@ __global__ void pack_offsets(DeviceBuffers b, int slot) {
   for (int e = 0; e < b.experts; ++e) {
     b.offsets[slot * b.experts + e] = offset;
     int count = uncached_load_int(b.counts + slot * b.experts + e);
-    offset += (count + 63) / 64 * 64;
+    offset += (count + 127) / 128 * 128;
   }
   if (offset > b.storage_rows[slot])
     set_error(b.control + slot * kControlWords, ROW_OVERFLOW);
@@ -486,6 +491,11 @@ __global__ void dispatch_rows(DeviceBuffers b, int slot, const BF16 *hidden,
     return;
   int route = blockIdx.x;
   Id routed_expert = ids[route];
+  if (routed_expert == -1) {
+    if (threadIdx.x == 0)
+      row_map[route] = -1;
+    return;
+  }
   if (routed_expert < 0 ||
       routed_expert >= static_cast<Id>(b.experts) * world) {
     if (threadIdx.x == 0)
@@ -569,6 +579,8 @@ __global__ void combine_rows(DeviceBuffers b, int slot, float *output,
     for (int j = 0; j < k; ++j) {
       size_t route = static_cast<size_t>(token) * k + j;
       int expert = static_cast<int>(ids[route]);
+      if (expert < 0 || expert >= b.experts * world)
+        continue;
       if (expert % world != rank)
         continue;
       int row = row_map[route];
@@ -913,12 +925,16 @@ public:
   int *host_stop = nullptr;
   U64 *host_control = nullptr;
   bool running = false;
+  cudaFuncAttributes attributes{};
+  int launch_ctas = 0, launch_threads = 0, dynamic_shared = 0, cluster_size = 1;
+  std::string backend_name;
+  expertplex_sm100::Context native_context{};
 
   PersistentExecutor(std::shared_ptr<OwnedBuffers> buffers,
                      torch::Tensor gateup, torch::Tensor down,
                      int decode_budget, double expected_tiles,
                      double max_decode_fraction, int requested_ctas,
-                     const std::string &backend)
+                     const std::string &backend, int trace_capacity)
       : owner(std::move(buffers)), w13(std::move(gateup)), w2(std::move(down)) {
     TORCH_CHECK(!owner->active && !owner->started,
                 "A buffer set admits one executor lifetime; allocate fresh "
@@ -961,19 +977,31 @@ public:
     max_decode_ctas =
         std::min(ctas - cluster, max_decode_ctas / cluster * cluster);
     TORCH_CHECK(max_decode_ctas >= cluster, "Decode cap must fit one cluster");
+    // Specialize the two target models at compile time, retaining a generic
+    // shape only for small synthetic debugging checkpoints.
+    auto with_native_kernel = [&](auto &&fn) {
+      if (b.hidden == 6144 && b.intermediate == 2560)
+        return cluster == 2 ? fn(expertplex_sm100::executor<2, 6144, 2560>)
+                            : fn(expertplex_sm100::executor<1, 6144, 2560>);
+      if (b.hidden == 2048 && b.intermediate == 768)
+        return cluster == 2 ? fn(expertplex_sm100::executor<2, 2048, 768>)
+                            : fn(expertplex_sm100::executor<1, 2048, 768>);
+      return cluster == 2 ? fn(expertplex_sm100::executor<2>)
+                          : fn(expertplex_sm100::executor<1>);
+    };
     const void *kernel =
-        sm100 ? (cluster == 2 ? reinterpret_cast<const void *>(
-                                    expertplex_sm100::executor<2>)
-                              : reinterpret_cast<const void *>(
-                                    expertplex_sm100::executor<1>))
+        sm100 ? with_native_kernel(
+                    [](auto f) { return reinterpret_cast<const void *>(f); })
               : reinterpret_cast<const void *>(persistent_executor);
     const int threads = sm100 ? expertplex_sm100::Threads : 128;
-    expertplex_sm100::Context native_context{};
+    TORCH_CHECK(trace_capacity >= 0 && trace_capacity <= 65536,
+                "trace_capacity must be in [0, 65536]");
+    TORCH_CHECK(sm100 || trace_capacity == 0, "Tracing requires the SM100 backend");
     if (sm100)
       native_context = expertplex_sm100::prepare(
           *owner, reinterpret_cast<const BF16 *>(w13.data_ptr<at::BFloat16>()),
           reinterpret_cast<const BF16 *>(w2.data_ptr<at::BFloat16>()),
-          w13.size(0), ctas);
+          w13.size(0), ctas, trace_capacity, cluster);
     cudaFuncAttributes attrs;
     C10_CUDA_CHECK(cudaFuncGetAttributes(&attrs, kernel));
     int optin = 0;
@@ -993,6 +1021,12 @@ public:
     TORCH_CHECK(
         resident == 1,
         "Persistent scheduling requires exactly one resident CTA per SM");
+    attributes = attrs;
+    launch_ctas = ctas;
+    launch_threads = threads;
+    dynamic_shared = reserve;
+    cluster_size = cluster;
+    backend_name = backend;
     try {
       C10_CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
       C10_CUDA_CHECK(
@@ -1021,16 +1055,12 @@ public:
         attr.val.clusterDim = {static_cast<unsigned>(cluster), 1, 1};
         launch.attrs = &attr;
         launch.numAttrs = 1;
-        if (cluster == 2)
-          C10_CUDA_CHECK(cudaLaunchKernelEx(
-              &launch, expertplex_sm100::executor<2>, b, native_context,
-              static_cast<int>(w13.size(0)), decode_budget,
-              static_cast<float>(expected_tiles), max_decode_ctas));
-        else
-          C10_CUDA_CHECK(cudaLaunchKernelEx(
-              &launch, expertplex_sm100::executor<1>, b, native_context,
-              static_cast<int>(w13.size(0)), decode_budget,
-              static_cast<float>(expected_tiles), max_decode_ctas));
+        C10_CUDA_CHECK(with_native_kernel([&](auto f) {
+          return cudaLaunchKernelEx(
+              &launch, f, b, native_context, static_cast<int>(w13.size(0)),
+              decode_budget, static_cast<float>(expected_tiles),
+              max_decode_ctas);
+        }));
       } else
         persistent_executor<<<ctas, 128, reserve, stream>>>(
             b, reinterpret_cast<const BF16 *>(w13.data_ptr<at::BFloat16>()),
@@ -1047,6 +1077,34 @@ public:
     }
   }
   ~PersistentExecutor() { release_noexcept(); }
+  py::dict describe() const {
+    py::dict d;
+    d["trace_capacity_per_cta"] = native_context.trace_capacity;
+    d["backend"] = backend_name;
+    d["ctas"] = launch_ctas;
+    d["cluster_size"] = cluster_size;
+    d["threads_per_cta"] = launch_threads;
+    d["registers_per_thread"] = attributes.numRegs;
+    d["local_bytes_per_thread"] = attributes.localSizeBytes;
+    d["dynamic_shared_bytes_per_cta"] = dynamic_shared;
+    d["static_shared_bytes_per_cta"] = attributes.sharedSizeBytes;
+    d["hidden"] = owner->b.hidden;
+    d["intermediate"] = owner->b.intermediate;
+    d["prefill_tile_rows"] = backend_name == "wmma" ? 64 : expertplex_sm100::M;
+    d["decode_tile_rows"] = backend_name == "wmma" ? 16 : 32;
+    return d;
+  }
+  torch::Tensor read_trace() {
+    TORCH_CHECK(!running, "Stop the executor before reading diagnostic traces");
+    c10::cuda::CUDAGuard guard(owner->device);
+    auto result = torch::zeros(
+        {launch_ctas, native_context.trace_capacity, 8},
+        torch::TensorOptions().dtype(torch::kInt64).device(torch::kCPU));
+    if (native_context.trace_capacity)
+      C10_CUDA_CHECK(cudaMemcpy(result.data_ptr(), native_context.trace,
+                                result.numel() * sizeof(U64), cudaMemcpyDeviceToHost));
+    return result;
+  }
   void check_weight(const torch::Tensor &t, int dims, const char *name) {
     TORCH_CHECK(t.is_cuda() && t.device().index() == owner->device &&
                     t.is_contiguous() && t.scalar_type() == at::kBFloat16 &&
@@ -1142,7 +1200,7 @@ static void check_routes(const torch::Tensor &ids, const torch::Tensor &rows,
 
 static void dispatch(std::shared_ptr<RemoteBuffers> r, torch::Tensor hidden,
                      torch::Tensor ids, torch::Tensor rows, int64_t epoch,
-                     int layer, int phase, int rank, int world) {
+                     int layer, int phase, int rank, int world, bool publish) {
   check_tensor(hidden, *r, at::kBFloat16, 2, "hidden");
   check_routes(ids, rows, *r, rank, world);
   TORCH_CHECK(hidden.size(0) == ids.size(0) && hidden.size(1) == r->b.hidden,
@@ -1181,8 +1239,38 @@ static void dispatch(std::shared_ptr<RemoteBuffers> r, torch::Tensor hidden,
           ids.data_ptr<int64_t>(), rows.data_ptr<int>(), ids.size(0),
           ids.size(1), rank, world);
   }
-  publish_slot<<<1, 1, 0, stream>>>(r->b, r->slot, epoch);
+  if (publish)
+    publish_slot<<<1, 1, 0, stream>>>(r->b, r->slot, epoch);
   C10_CUDA_CHECK(cudaGetLastError());
+}
+
+// Diagnostic-only release of pre-staged payloads at a GPU-timed interval.
+// Both timestamps use the attention GPU timer; never subtract them from E's timer.
+__global__ void publish_pair_kernel(U64 *p, U64 *d, U64 delay_ns, U64 *stamps) {
+  if (system_load(p + ERROR) || system_load(d + ERROR))
+    return;
+  __threadfence_system();
+  stamps[0] = now_ns();
+  system_store(p + READY, uncached_load_u64(p + PENDING));
+  while (now_ns() - stamps[0] < delay_ns) {}
+  stamps[1] = now_ns();
+  system_store(d + READY, uncached_load_u64(d + PENDING));
+}
+static torch::Tensor publish_pair(std::shared_ptr<RemoteBuffers> p,
+                                  std::shared_ptr<RemoteBuffers> d, int delay_us) {
+  TORCH_CHECK(!p->closed && !d->closed && p->device == d->device &&
+              p->slot != d->slot && delay_us >= 0 && delay_us <= 1000000,
+              "Invalid diagnostic publication pair");
+  c10::cuda::CUDAGuard guard(p->device);
+  auto stamps = torch::zeros({2}, torch::TensorOptions().dtype(torch::kInt64)
+                                      .device(torch::kCUDA, p->device));
+  publish_pair_kernel<<<1, 1, 0, at::cuda::getCurrentCUDAStream(p->device)>>>(
+      p->b.control + p->slot * kControlWords,
+      d->b.control + d->slot * kControlWords,
+      static_cast<U64>(delay_us) * 1000,
+      reinterpret_cast<U64 *>(stamps.data_ptr<int64_t>()));
+  C10_CUDA_CHECK(cudaGetLastError());
+  return stamps;
 }
 
 static void combine(std::shared_ptr<RemoteBuffers> r, torch::Tensor output,
@@ -1260,12 +1348,15 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::class_<PersistentExecutor, std::shared_ptr<PersistentExecutor>>(
       m, "PersistentExecutor")
       .def(py::init<std::shared_ptr<OwnedBuffers>, torch::Tensor, torch::Tensor,
-                    int, double, double, int, const std::string &>())
+                    int, double, double, int, const std::string &, int>())
       .def("stop", &PersistentExecutor::stop,
            py::call_guard<py::gil_scoped_release>())
+      .def("describe", &PersistentExecutor::describe)
+      .def("read_trace", &PersistentExecutor::read_trace)
       .def("check_error", &PersistentExecutor::check_error,
            py::call_guard<py::gil_scoped_release>());
   m.def("dispatch", &dispatch);
   m.def("read_timing", &read_timing);
+  m.def("publish_pair", &publish_pair);
   m.def("combine", &combine, py::call_guard<py::gil_scoped_release>());
 }

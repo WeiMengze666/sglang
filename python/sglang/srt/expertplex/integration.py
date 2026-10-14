@@ -42,6 +42,19 @@ def is_routed_expert_weight(name: str) -> bool:
     return ".mlp.experts." in name or name.startswith("mlp.experts.")
 
 
+def bound_request_input_length(original_limit: int) -> int:
+    """Make unchunked P admission safe without shortening decode context.
+
+    SGLang's request validator rejects lengths >= the returned limit, while
+    max_prefill_tokens alone permits an oversized first request. Both P and D
+    advertise the same P mailbox input bound to the existing tokenizer/router.
+    """
+    if not expertplex_enabled():
+        return original_limit
+    config, _ = attention_config()
+    return min(original_limit, config.max_prefill_tokens + 1)
+
+
 def attention_weights_iterator(
     weight_files: Iterable[str],
 ) -> Iterator[tuple[str, Any]]:
@@ -97,6 +110,7 @@ def validate_server_args(cfg: Any) -> None:
         "enable_pd_role_switch",
         "enable_prefill_cp",
         "enable_dynamic_chunking",
+        "allow_auto_truncate",
     ):
         if getattr(cfg, name, False):
             errors.append(f"--{name.replace('_', '-')} is not supported")
@@ -129,7 +143,7 @@ def validate_server_args(cfg: Any) -> None:
         errors.append("redundant experts are not supported")
     if not getattr(cfg, "disable_overlap_schedule", False):
         errors.append(
-            "--disable-overlap-schedule is required for synchronous expert RPC"
+            "--disable-overlap-schedule is required by current ExpertPlex mailbox ownership"
         )
     if getattr(cfg, "startup_weight_load_mode", "serial") != "serial":
         errors.append("--startup-weight-load-mode must be serial")
@@ -160,11 +174,11 @@ def validate_server_args(cfg: Any) -> None:
     running = getattr(cfg, "max_running_requests", None)
     if running is None or not 0 < running <= capacity:
         errors.append(f"--max-running-requests must be in [1, {capacity}]")
-    # max_prefill_tokens alone is a soft limit in SGLang: a larger first
-    # request can exceed it. Require bounded chunking for every client,
-    # including decode warmup/extend forwards, to protect its IPC slot.
+    # P may run without chunking: tp_worker advertises a hard input bound.
+    # D warmup/extend still uses its own smaller mailbox chunk capacity.
     chunk = getattr(cfg, "chunked_prefill_size", None)
-    if chunk is None or not 0 < chunk <= capacity:
+    unchunked_prefill = client.phase == "prefill" and chunk in (None, -1)
+    if not unchunked_prefill and (chunk is None or not 0 < chunk <= capacity):
         errors.append(f"--chunked-prefill-size must be in [1, {capacity}]")
     prefill = getattr(cfg, "max_prefill_tokens", None)
     if prefill is None or not 0 < prefill <= capacity:

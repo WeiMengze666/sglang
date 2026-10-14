@@ -50,11 +50,11 @@ def estimate_buffer_bytes(
         if is_packed and top_k <= 0:
             raise ValueError("Packed layout requires top_k")
         storage = (
-            capacity * min(top_k, local_experts) + 63 * local_experts
+            capacity * min(top_k, local_experts) + 127 * local_experts
             if is_packed
-            else capacity * local_experts
+            else ((capacity + 127) // 128 * 128) * local_experts
         )
-        rows += (storage + 63) // 64 * 64
+        rows += (storage + 127) // 128 * 128
     result = {
         "input": rows * hidden * 2,
         "activation": rows * intermediate * 2,
@@ -106,7 +106,7 @@ def load_extension() -> Any:
 class OwnedBuffers:
     """Dedicated cudaMalloc allocations whose IPC handles stay valid until close.
 
-    Prefill can use contiguous routed rows with 64-row expert alignment;
+    Prefill can use contiguous routed rows with 128-row expert alignment;
     decode uses fixed per-expert masked capacity. A slot admits exactly one
     outstanding invocation. Descriptors and allocations stay fixed for replay.
     """
@@ -172,6 +172,7 @@ class PersistentExecutor:
         max_decode_sm_fraction: float = 0.875,
         ctas: int = 0,
         kernel: str | None = None,
+        trace_capacity: int = 0,
     ) -> None:
         self._buffers = buffers
         self._weights = (w13, w2)
@@ -185,10 +186,18 @@ class PersistentExecutor:
             max_decode_sm_fraction,
             ctas,
             self.kernel,
+            trace_capacity,
         )
 
     def stop(self) -> None:
         self._impl.stop()
+
+    def describe(self) -> dict[str, Any]:
+        return dict(self._impl.describe())
+
+    def read_trace(self):
+        """Return [CTA, record, field] diagnostics after stop(); never live polling."""
+        return self._impl.read_trace()
 
     def check_error(self) -> list[int]:
         errors = list(self._impl.check_error())
@@ -213,6 +222,8 @@ def dispatch(
     phase: int,
     expert_rank: int,
     expert_world_size: int,
+    *,
+    publish: bool = True,
 ) -> None:
     """Pack directly into peer final buffers and publish on the current stream.
 
@@ -231,7 +242,13 @@ def dispatch(
         phase,
         expert_rank,
         expert_world_size,
+        publish,
     )
+
+
+def publish_pair(prefill: RemoteBuffers, decode: RemoteBuffers, delay_us: int = 10):
+    """Diagnostic release of two pre-staged operations; returns A-side timestamps."""
+    return load_extension().publish_pair(prefill._impl, decode._impl, delay_us)
 
 
 def read_timing(remote: RemoteBuffers):

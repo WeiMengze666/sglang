@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
-from _bootstrap import module
+from _bootstrap import module  # noqa: E402
 
 config = module("config")
 rv = module("rendezvous")

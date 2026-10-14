@@ -46,6 +46,7 @@ def main():
         "cases": [],
     }
     with Exporter(settings, 1, execute=True, timeout_s=600) as owner:
+        report["executor"] = owner.executor_info
         peer = native.RemoteBuffers(owner.descriptor, 0, 0)
         try:
             for rows in args.rows:

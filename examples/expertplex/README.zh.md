@@ -28,7 +28,8 @@
 `sm100_cta1` 保留单 CTA 消融后端，`wmma` 保留功能参考。它们不能混作论文性能结果。
 
 当前仍缺完整的原生流水线性能校准、抢占上界测量、跨栈策略覆盖与跨节点 RDMA MoE。
-TBO 的双 mailbox client/graph 路径已通过，完整 SGLang TBO 仍需端到端验证。
+TBO 的双 mailbox client/graph 路径已通过；小 checkpoint 的 24×128-token 完整服务测试
+已确认 decode 实际使用 CUDA Graph，尚无真实 Coder 权重下的吞吐/精度验收。
 推测解码、LoRA、EPLB、CPU offload、量化、多节点、动态 P/D 切换均未支持。
 
 ## 权重与显存
@@ -161,8 +162,8 @@ python examples/expertplex/check_gpu.py \
 inactive experts、P/D 同时进展、empty-input 分支和独立 allocation 的有界超时。
 `--full-mesh` 检查 8 卡间全部 56 个有向 peer/atomic/IPC 映射。默认容差为
 `atol=0.01, rtol=0.03, relative_l2<=0.03`，测试报告保存每项误差；这些是初始测试阈值，
-不能替代真实模型精度验收。native gate/up 在 FP32 accumulator 上做 SiLU，之后转 BF16；
-标准 BF16 grouped GEMM 的中间舍入边界可能不同。
+不能替代真实模型精度验收。gate/up 的 FP32 accumulator 先舍入到 BF16，再执行 SiLU/mul，保持原生 BF16
+GEMM 输出边界；down 也先舍入到 BF16，再进行 FP32 weighted combine。
 
 随后先用 Qwen3-30B-A3B 跑完整服务，再换 480B。每次重启换一个 rendezvous 目录。
 所有进程必须使用完全相同的 CUDA device ordering；默认不设置 `CUDA_VISIBLE_DEVICES`，
@@ -174,9 +175,10 @@ python examples/expertplex/launch.py \
   --kv-tokens 65536 --log-dir /tmp/expertplex-coder480b-logs
 ```
 
-服务默认仅监听本机，router 为 `http://127.0.0.1:31000`。KV 传输沿用 Mooncake 默认
-RDMA 配置；若环境需要指定 HCA，向 launcher 传 `--ib-device`。单节点 MoE 数据仍走
-CUDA IPC/NVLink。部署环境的 Mooncake 安装与 KV 传输路径必须单独验证。
+服务默认仅监听本机，router 为 `http://127.0.0.1:31000`。单节点 KV 默认使用 Mooncake
+`INTRA_NODE_NVLINK`；显式传 `--kv-transport rdma --ib-device ...` 才选择 RDMA。
+MoE 数据走 CUDA IPC/NVLink。P 默认关闭 chunking，并向请求验证器发布硬输入长度上限；
+`--chunked-prefill` 仅用于消融。TBO 配置可同时传 `--cuda-graph` 启用 decode 图回放。
 
 检查完整模型功能与串行 baseline 对照：
 

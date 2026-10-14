@@ -99,18 +99,28 @@ def main():
     )
     parser.add_argument("--output-tokens", type=int, default=64)
     parser.add_argument("--rounds", type=int, default=2)
+    parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument(
+        "--prompt-repeat",
+        type=int,
+        default=1,
+        help="Repeat the prompt set to exercise multi-request TBO/graphs",
+    )
     parser.add_argument("--require-exact-tokens", action="store_true")
     args = parser.parse_args()
-    if args.output_tokens < 1 or args.rounds < 1:
-        parser.error("Output token count and rounds must be positive")
+    if min(args.output_tokens, args.rounds, args.concurrency, args.prompt_repeat) < 1:
+        parser.error("Counts and concurrency must be positive")
     prompts = (
         [[(i * 17 + 3) % 1000 for i in range(length)] for length in (1, 7, 63, 257)]
         if args.token_id_prompts
         else PROMPTS
     )
     outputs = []
+    prompts *= args.prompt_repeat
     for _ in range(args.rounds):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(PROMPTS)) as pool:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=args.concurrency
+        ) as pool:
             outputs.extend(
                 pool.map(
                     lambda prompt: generate(args.base_url, prompt, args.output_tokens),

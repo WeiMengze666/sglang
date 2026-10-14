@@ -16,7 +16,7 @@ Dependencies were installed in an isolated workspace venv; the original conda en
 
 | Scope | Evidence / result |
 |---|---|
-| CPU adapter, ownership, SLO, config and planner contracts | 34 passed; syntax and CLI checks passed |
+| CPU adapter, ownership, SLO, config and planner contracts | 36 passed; syntax and CLI checks passed |
 | CUDA IPC / native atomics | All 56 ordered pairs passed |
 | Device-generated epochs / CUDA graph | 20 replays with changing inputs/routes passed |
 | Full 62-layer 480B expert residency, synthetic BF16 | Four experts and four attention clients passed; initial masked version used about 227.65 GiB/E |
@@ -28,6 +28,9 @@ Dependencies were installed in an isolated workspace venv; the original conda en
 | Full tiny checkpoint 1P3D4E HTTP + KV | 8 requests × 32 output tokens completed with Mooncake INTRA_NODE_NVLINK |
 | Strict greedy token alignment vs Triton | Failed for some prompts; raw outputs and logprob differences retained |
 | Ordinary SGLang TRTLLM vs Triton | Also differs on some greedy sequences; this does not excuse additional candidate errors |
+| Full tiny TBO + decode graph | 24 requests × 128 tokens completed; decode workers logged actual graph replay |
+| Unchunked P input bound | 512 tokens accepted, 513 tokens rejected with HTTP 400 at capacity 512 |
+| Native 2-SM MMA / transposed operands / TMA store | Coder shape passed numerical/concurrent/padding/graph/timeout regression |
 | Real Coder weights / coding accuracy / paper goodput | Not validated; checkpoint download incomplete |
 
 The first default RDMA KV attempt failed with unregistered GPU memory. The repository's
@@ -50,7 +53,7 @@ were approximately 2032 MHz during the later run. Further isolated repetitions a
 
 No 1.5× serving gain has been demonstrated. The remaining native execution overhead is
 material, and paper preemption bounds, all baselines/ablations, measured optimizer profiles,
-full SGLang TBO and real-model end-to-end acceptance remain outstanding.
+real-model TBO and end-to-end acceptance remain outstanding.
 
 ## Reproducibility
 
@@ -65,3 +68,22 @@ historical evidence, not silently regenerated.
 Joint P90 goodput requires at least 90% of **all offered requests** to meet both TTFT and
 TPOT SLOs. Failed requests remain in the denominator. Kernel speed and synthetic routing
 cannot establish this metric.
+
+Subsequent M128/native-2SM/TMA-store iterations reduced P expert time to about 2.28 ms,
+still materially slower than the native baseline. Removing per-thread parameter copies
+reduced CUDA-reported local storage from 1456 bytes to zero, without a corresponding major speedup.
+The diagnostic preemption runner releases pre-staged P/D payloads about 10.016 us apart;
+traces include producer handoff and epilogue retirement. These are not yet a complete
+measurement of system-word-to-cluster preemption propagation.
+
+The larger deterministic tiny fixture (H=2048, I=768, 2 layers, 8 experts) also
+completed 24 requests × 128 tokens on native DP4/EP4 DeepEP-auto + DeepGEMM BF16
+with TBO. The earlier H=256 fixture is unsupported by DeepEP low-latency mode;
+both startup logs are retained. This DP4 run is a correctness reference, not an
+equal-8-GPU performance baseline.
+
+Nsight Compute application-range replay with explicit driver profiler markers
+reached the profiling range, but the server denied hardware counter access with
+`ERR_NVGPUCTRPERM`. No hardware-counter profile is available. Software tile traces
+show uneven work distribution and substantial gaps between claims; queue contention
+is an investigation hypothesis, not yet a measured causal conclusion.
