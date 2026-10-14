@@ -22,6 +22,7 @@ def main():
     overhead.add_argument("--input", required=True, type=Path)
     communication = sub.add_parser("communication")
     communication.add_argument("--inputs", required=True, type=Path, nargs="+")
+    communication.add_argument("--labels", nargs="+", help="One label per input report")
     for parser in (sharing, intervals, ablation, overhead, communication):
         parser.add_argument("--output-dir", required=True, type=Path)
     args = p.parse_args()
@@ -37,7 +38,7 @@ def main():
     if args.kind == "communication":
         sources = args.inputs
     provenance = {
-        str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sources
     }
     if args.kind == "sharing":
         native, apk, mps = [
@@ -263,6 +264,8 @@ def main():
         from summarize_experiments import read_json
 
         reports = [read_json(path) for path in args.inputs]
+        if args.labels and len(args.labels) != len(reports):
+            p.error("Supply exactly one communication label per report")
         identity = None
         for report in reports:
             settings = report["settings"]
@@ -277,7 +280,7 @@ def main():
             ):
                 raise ValueError("Communication identity failed")
         fig, axes = plt.subplots(2, 2, figsize=(9, 6), layout="constrained")
-        for report in reports:
+        for report_index, report in enumerate(reports):
             settings = report["settings"]
             row = 0 if settings["mode"] == "normal" else 1
             method = settings["backend"]
@@ -294,6 +297,8 @@ def main():
                 if len(revisions) != 1 or not next(iter(revisions)):
                     raise ValueError("DeepEP source revision must be recorded")
                 method += " v1"
+            if args.labels:
+                method = args.labels[report_index]
             for column, operation in enumerate(["dispatch_us", "combine_us"]):
                 axes[row, column].plot(
                     [r["rows"] for r in report["summary"]],
@@ -319,12 +324,32 @@ def main():
             "sources_sha256": provenance,
             "reports": [
                 {
-                    "settings": r["settings"],
+                    "settings": {
+                        key: value
+                        for key, value in r["settings"].items()
+                        if key
+                        in {
+                            "backend",
+                            "mode",
+                            "rows",
+                            "hidden",
+                            "experts",
+                            "top_k",
+                            "iterations",
+                            "group_transfers",
+                            "prefill_preprocess",
+                            "vary_routes",
+                            "cuda_graph",
+                            "seed",
+                            "deepep_revision",
+                        }
+                    },
                     "summary": r["summary"],
                     "scope": r["scope"],
                 }
                 for r in reports
             ],
+            "labels": args.labels,
         }
     (args.output_dir / "plot-data.json").write_text(json.dumps(data, indent=2) + "\n")
     for suffix in ["png", "svg", "pdf"]:

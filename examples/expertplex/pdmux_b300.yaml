@@ -1,10 +1,12 @@
 # B300 148 SMs; Green Context granularity leaves four SMs unassigned.
 # 160 experts require 80 cooperative DeepEP LL CTAs on this device. Decode
 # partitions below 80 SMs fail graph capture (cudaErrorCooperativeLaunchTooLarge).
-# This is a feasible starting grid, not a tuned Pareto optimum.
+# This is a feasible partition grid, not a global Pareto optimum.
+# Budget 8192 won the 64-request canonical ShareGPT pilot against 512/65536;
+# freeze it before held-out evaluation (see VALIDATION.md).
 sm_group_num: 5
 manual_divisions:
   - [64, 80, 1]
   - [48, 96, 8]
   - [32, 112, 16]
-split_forward_token_budget: 512
+split_forward_token_budget: 8192

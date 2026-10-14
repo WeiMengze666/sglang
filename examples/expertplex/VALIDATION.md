@@ -16,7 +16,7 @@ Dependencies were installed in an isolated workspace venv; the original conda en
 
 | Scope | Evidence / result |
 |---|---|
-| CPU adapter, ownership, SLO, config and planner contracts | 42 passed; syntax and CLI checks passed |
+| CPU adapter, ownership, SLO, config and planner contracts | 48 passed; syntax and CLI checks passed |
 | CUDA IPC / native atomics | All 56 ordered pairs passed |
 | Device-generated epochs / CUDA graph | 20 replays with changing inputs/routes passed |
 | Full 62-layer 480B expert residency, synthetic BF16 | Four experts and four attention clients passed; initial masked version used about 227.65 GiB/E |
@@ -27,6 +27,7 @@ Dependencies were installed in an isolated workspace venv; the original conda en
 | Native BF16 gate/up output rounding correction | Coder shape passed at weight std=0.02; earlier results used a different documented rounding contract |
 | Full tiny checkpoint 1P3D4E HTTP + KV | 8 requests × 32 output tokens completed with Mooncake INTRA_NODE_NVLINK |
 | Strict greedy token alignment vs Triton | Failed for some prompts; raw outputs and logprob differences retained |
+| Latest fixed-history tiny BF16 comparison | 24/24 next-token top-1 matches with and without cache reuse; top-k logprobs are not bitwise equal |
 | Ordinary SGLang TRTLLM vs Triton | Also differs on some greedy sequences; this does not excuse additional candidate errors |
 | Full tiny TBO + decode graph | 24 requests × 128 tokens completed; decode workers logged actual graph replay |
 | Unchunked P input bound | 512 tokens accepted, 513 tokens rejected with HTTP 400 at capacity 512 |
@@ -481,3 +482,31 @@ progress per host loop and is not its tuned baseline. Budget 8192 gives
 Checkpoint-2308 publishes this same-capacity comparison, including the worse
 ExpertPlex result. Larger PDMux budget and ExpertPlex SM-cap tuning continue;
 the held-out configuration must be frozen afterward. No 1.5x claim is supported.
+
+## Raw combine vectorization and frozen pilot choices, 23:25 UTC
+
+Raw combine now loads eight BF16 values per peer transaction and writes two
+float4 vectors. Per-element rank-major FP32 accumulation order is unchanged.
+The four-E/two-prefill suite, P257 four-client 30-round overlap/20-graph suite,
+and static/dynamic communication identity checks pass. At 128/2048 tokens,
+median raw combine latency changes from 98.208/380.464 us to 46.912/169.792 us;
+dispatch remains approximately 66/254 us. Summed combine ratio is 0.45272.
+This isolated transfer improvement is not an end-to-end goodput result.
+Checkpoint-2325 includes filtered numerical evidence and the §7.5 single-node
+comparison against the separately pinned DeepEP v1 reference. The matching
+APK decode communication matrix is still pending.
+
+PDMux budget 65536 attains 63/62/61 joint successes at 0.75/1/1.25 req/s.
+Budget 8192 wins the specified tie-break (187 versus 186 aggregate successes),
+so the checked-in policy now selects 8192. ExpertPlex q128 gives 64/56/35/22
+at 0.75/1/1.25/1.5 req/s, versus q96's 64/56/39/25; q96 is retained.
+Both saved node configs have max_decode_sm_fraction=0.875 and an aligned cap
+of 128 SMs. The controller's string `q96-cap110` was a labeling error, not the
+executed configuration; `sm-budget-tuning-audit.json` records that correction
+and hashes both original snapshots without replacing the old report.
+
+Static capacity estimates now distinguish raw buffers: P24576/D256/TBO uses
+18.420 GiB of fixed mailbox storage per E. A 3P1D4E TBO deployment would require
+283.14 GiB/E including a 16 GiB runtime reserve, above the configured 268 GiB.
+The no-TBO alternative estimates 258.55 GiB/E and requires a separately labeled
+experiment; it is not equivalent to the paper's complete overlap policy.

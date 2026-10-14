@@ -81,18 +81,32 @@ __global__ void group_raw_size(const GroupBuffers *g, int n) {
 }
 __global__ void group_combine_raw(const GroupBuffers *g, float *output, int n) {
   const int hidden = g->peer[0].hidden;
+  // Match the eight-BF16 transfer granularity of routed combine. Keep each
+  // element's rank-major FP32 addition order and bypass stale peer-data L1.
   for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-       i < static_cast<size_t>(n) * hidden;
+       i < static_cast<size_t>(n) * (hidden / 8);
        i += static_cast<size_t>(gridDim.x) * blockDim.x) {
-    float value = 0;
+    float value[8] = {};
     for (int rank = 0; rank < g->world; ++rank) {
       if (*g->status[rank] != OK)
         continue;
       const auto &b = g->peer[rank];
-      value += __bfloat162float(
-          uncached_load(b.raw_output + b.raw_base[g->slot] * hidden + i));
+      uint32_t words[4];
+      asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
+                   : "=r"(words[0]), "=r"(words[1]), "=r"(words[2]), "=r"(words[3])
+                   : "l"(b.raw_output + b.raw_base[g->slot] * hidden + i * 8)
+                   : "memory");
+#pragma unroll
+      for (int pair = 0; pair < 4; ++pair) {
+        value[2 * pair] +=
+            __bfloat162float(__ushort_as_bfloat16(words[pair] & 65535));
+        value[2 * pair + 1] +=
+            __bfloat162float(__ushort_as_bfloat16(words[pair] >> 16));
+      }
     }
-    output[i] = value;
+    auto *destination = reinterpret_cast<float4 *>(output + i * 8);
+    destination[0] = make_float4(value[0], value[1], value[2], value[3]);
+    destination[1] = make_float4(value[4], value[5], value[6], value[7]);
   }
 }
 __global__ void group_publish(const GroupBuffers *g, bool publish) {

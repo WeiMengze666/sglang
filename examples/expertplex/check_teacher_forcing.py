@@ -1,6 +1,7 @@
 """Compare next-token probabilities under identical token histories.
 
-Use a small real BF16 fixture with a manageable vocabulary. Free-running
+Use a small real BF16 fixture for full-vocabulary checks, or explicitly select
+top-k diagnostics for the full model. Free-running
 generations diverge after the first different token; their later logits are
 not directly comparable. This tool fixes histories from a reference run and
 reports numerical differences without claiming task accuracy or exact tokens.
@@ -52,7 +53,7 @@ def main():
         p.error("P/D metadata supports up to 128 top logprobs")
     config = json.loads((args.model_path / "config.json").read_text())
     vocab = config["vocab_size"]
-    if vocab > 8192:
+    if vocab > 8192 and not args.top_k:
         p.error("Full-vocabulary HTTP diagnostics are restricted to small fixtures")
     source = read(args.histories)
     if source["model_path"] != str(args.model_path.resolve()):
@@ -108,7 +109,7 @@ def main():
         if len(scores) != (min(args.top_k, vocab) if args.top_k else vocab) or not all(
             math.isfinite(v) for v in scores.values()
         ):
-            raise ValueError("Missing or nonfinite full-vocabulary probabilities")
+            raise ValueError("Missing or nonfinite requested probabilities")
         return {"history": history, "logprobs": [scores.get(i) for i in range(vocab)]}
 
     with concurrent.futures.ThreadPoolExecutor(

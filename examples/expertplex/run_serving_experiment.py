@@ -62,8 +62,31 @@ def main():
     p.add_argument("--port", type=int, default=31000)
     p.add_argument("--startup-timeout", type=int, default=900)
     p.add_argument("--benchmark-timeout", type=int, default=3600)
+    p.add_argument(
+        "--numerical-check",
+        action="store_true",
+        help="After timing, record deterministic generation and fixed-history top-128 scores",
+    )
+    p.add_argument(
+        "--numerical-reference-dir",
+        type=Path,
+        help="Earlier same-weight run's numerical directory; requires --numerical-check",
+    )
     p.add_argument("--output-dir", required=True, type=Path)
     args = p.parse_args()
+    if args.numerical_reference_dir and not args.numerical_check:
+        p.error("Numerical reference requires --numerical-check")
+    if args.numerical_reference_dir:
+        for name in ("generation.json", "teacher.json"):
+            if not (args.numerical_reference_dir / name).is_file():
+                p.error(f"Missing numerical reference {name}")
+        provenance = args.numerical_reference_dir.parent / "experiment.json"
+        if not provenance.is_file():
+            p.error("Numerical reference requires its original experiment.json")
+        reference_settings = json.loads(provenance.read_text())["settings"]
+        for field in ("model_path", "weight_mode", "canonical_synthetic_seed"):
+            if reference_settings.get(field) != getattr(args, field):
+                p.error(f"Numerical reference differs in {field}")
     if args.variant == "expertplex" and not args.config:
         p.error("ExpertPlex requires --config")
     if args.variant == "pdmux" and not args.pdmux_config:
@@ -198,6 +221,9 @@ def main():
             repo / "python/sglang/srt/model_loader/loader.py",
             scripts / "launch.py",
             scripts / "launch_baseline.py",
+            scripts / "bench_sweep.py",
+            scripts / "check_e2e.py",
+            scripts / "check_teacher_forcing.py",
             Path(__file__),
         ]
     )
@@ -232,7 +258,13 @@ def main():
         "hardware_at_start": hardware.stdout
         if hardware.returncode == 0
         else hardware.stderr,
-        "settings": vars(args) | {"output_dir": str(args.output_dir)},
+        "settings": vars(args)
+        | {
+            "output_dir": str(args.output_dir),
+            "numerical_reference_dir": str(args.numerical_reference_dir)
+            if args.numerical_reference_dir
+            else None,
+        },
         "launch_command": launch,
         "benchmark_command": bench,
         "environment": {
@@ -284,6 +316,73 @@ def main():
                 code = benchmark.wait(timeout=args.benchmark_timeout)
                 if code:
                     raise RuntimeError(f"Benchmark exited {code}")
+            if args.numerical_check:
+                # Run only after all timed sweeps, so these histories cannot
+                # change the benchmark's prefix-cache state or arrival stream.
+                numerical = args.output_dir / "numerical"
+                numerical.mkdir()
+                generation = [
+                    sys.executable,
+                    str(scripts / "check_e2e.py"),
+                    "--base-url",
+                    f"http://127.0.0.1:{args.port}",
+                    "--model-path",
+                    args.model_path,
+                    "--token-id-prompts",
+                    "--output-tokens",
+                    "32",
+                    "--rounds",
+                    "1",
+                    "--prompt-repeat",
+                    "1",
+                    "--concurrency",
+                    "4",
+                    "--output",
+                    str(numerical / "generation.json"),
+                ]
+                teacher = [
+                    sys.executable,
+                    str(scripts / "check_teacher_forcing.py"),
+                    "--base-url",
+                    f"http://127.0.0.1:{args.port}",
+                    "--model-path",
+                    args.model_path,
+                    "--histories",
+                    str(
+                        (args.numerical_reference_dir or numerical) / "generation.json"
+                    ),
+                    "--steps",
+                    "0",
+                    "1",
+                    "7",
+                    "31",
+                    "--top-k",
+                    "128",
+                    "--flush-between",
+                    "--output",
+                    str(numerical / "teacher.json"),
+                ]
+                if args.numerical_reference_dir:
+                    generation += [
+                        "--reference",
+                        str(args.numerical_reference_dir / "generation.json"),
+                    ]
+                    teacher += [
+                        "--reference",
+                        str(args.numerical_reference_dir / "teacher.json"),
+                    ]
+                report["numerical_commands"] = [generation, teacher]
+                save()
+                for name, command in (("generation", generation), ("teacher", teacher)):
+                    with (numerical / (name + ".log")).open("w") as numerical_log:
+                        benchmark = subprocess.Popen(
+                            command,
+                            stdout=numerical_log,
+                            stderr=subprocess.STDOUT,
+                            start_new_session=True,
+                        )
+                        if benchmark.wait(timeout=600):
+                            raise RuntimeError(f"Numerical diagnostic {name} failed")
             report["status"] = "completed"
     except BaseException as exc:
         report["status"] = "failed"

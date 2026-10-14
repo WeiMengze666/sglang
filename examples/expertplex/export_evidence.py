@@ -116,6 +116,12 @@ NUMERIC_KEYS = {
     "vary_routes",
     "isolated_us",
     "apk_overhead_us",
+    "common_prefix_tokens",
+    "reference_tokens",
+    "candidate_tokens",
+    "exact_token_match",
+    "all_exact_token_match",
+    "max_logprob_abs_difference_on_common_prefix",
 }
 CONTAINERS = {
     "settings",

@@ -289,7 +289,7 @@ E worker 使用相同的全局专家名称。公平对照的 64 请求 pilot 已
 1 req/s 时共置 54/64、Chunk2048 27/64、PDD 58/64、PDMux 初始预算 12/64、
 ExpertPlex 61/64。PDD 和 ExpertPlex 都通过同一已测到达率，不能据此声称 1.5×。
 PDMux 推进预算及更多边界点仍在调优，这些 pilot 不代替真实权重或独立留出集验收。
-这一服务测试配置使用 P24576 / D256、双 mailbox，实际固定 buffer 估算为 **17.291 GiB/E**，
+这一服务测试配置使用 P24576 / D256、双 mailbox，包含 raw hidden/路由 metadata 的固定 buffer 估算为 **18.420 GiB/E**，
 不能套用上方 P2048 单 mailbox 的容量数字。
 
 `run_serving_experiment.py` 会记录启动参数、环境、完整逐请求结果，并自动生成独立的
@@ -304,6 +304,9 @@ rendezvous。`bench_apk_sharing.py` 对 GateUp/Down 分别执行 §7.3 对照；
 该诊断不能作为服务路径无接收 kernel 的证明。
 `check_teacher_forcing.py --top-k 128 --flush-between` 比较同一历史、无前缀缓存复用的
 logprob；top-k 子集不能当作完整词表的 TV/KL。所有脚本的输出均明确实验范围。
+完整词表超过 8192 时只允许显式 top-k 诊断。`run_serving_experiment.py --numerical-check`
+在全部计时 sweep 之后记录生成及固定历史 top-128 分数；下一次同权重实验可使用
+`--numerical-reference-dir <前次输出>/numerical` 对照，原始 token/logprob 保留本地。
 
 ### 存储流水线诊断
 
@@ -326,6 +329,7 @@ python examples/expertplex/configure.py \
   --prefill 1 --decode 3 --experts 4 --overlap tbo \
   --max-prefill-tokens 24576 --max-decode-tokens 256 \
   --decode-sm-budget 96 --expected-decode-tiles 8 \
+  --max-decode-sm-fraction 0.875 \
   --rendezvous-dir /tmp/expertplex-full480b \
   --output /tmp/expertplex-full480b.json
 
@@ -347,3 +351,8 @@ ExpertPlex 的 3D 分配为每 rank 65536。早期总量 98304 的 DP8 只有每
 只覆盖已经完成的短请求 pilot；不能直接用于接近 24576 上限的长请求。
 `run_serving_experiment.py` 会复制 node/PDMux 配置到本次输出目录，并记录其哈希；
 后续调参不会覆盖该次实验的配置。
+
+`layout-capacity.json` 记录当前固定 buffer 的布局估算：在 P24576/D256、总 KV196608 下，
+1P3D4E+TBO 计入 16 GiB 预留约需 252.39 GiB/E；3P1D4E+TBO 约需 283.14 GiB/E，
+超过配置的 268 GiB。3P1D4E 关闭 TBO 的估算约 258.55 GiB/E，仅作为需单独验证的
+容量适配；不能把无 TBO 结果称为论文完整 overlap 配置。
