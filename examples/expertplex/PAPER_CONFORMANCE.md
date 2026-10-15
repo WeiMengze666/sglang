@@ -108,3 +108,26 @@ Triton 小模型基线已完成 8 个请求、每个 32 个输出 token；分离
 实测发布间隔约 10.016μs。trace 的 producer handoff→epilogue retirement 包含流水等待，
 CTA0 admission 时间不等于 attention publication 时间，当前不能把它称为完整抢占上界证明。
 TMA 全局 store 的完成通知使用不带 `.read` 的 bulk wait，避免仅等待共享内存读取结束便发布 DONE。
+
+## 对现有 SGLang / DeepEP 优化的保留审计
+
+本适配应扩展现有 serving 路径。当前 Qwen3 模型仍使用原生 attention、RMSNorm、RoPE、
+router/TopK、LM head 和 sampling；scheduler、KV allocator、radix cache、Mooncake KV 移交
+以及 CUDA Graph runner 也继续使用 SGLang。TBO 使用已有 OperationsStrategy / YieldOperation，
+在 MoE 边界插入异步 dispatch / combine，而不重新实现调度器。
+
+| 路径 | 当前处理与边界 |
+|---|---|
+| CPU/GPU scheduler overlap | 已移除适配器原先的强制关闭约束；forward 提交串行，跨层及跨迭代的 COMM 操作由 stream/event 排序，由真实模型并发回归单独验证。同步捕获 CPU 请求历史的数值诊断显式关闭此优化，不能用于性能测试。 |
+| Decode CUDA Graph | 使用现有 runner；启动器默认开启，`--no-cuda-graph` 仅用于消融/调试。 |
+| Sampling | 普通基线、ExpertPlex 与实验总入口均默认使用 FlashInfer；PyTorch 仍可显式用于数值诊断。 |
+| FlashInfer autotune | 删除无条件禁用参数；保留显式调试开关，普通启动遵循 SGLang 行为。 |
+| KV / prefix cache | 没有改写 allocator 或 radix cache，也没有默认关闭缓存；容量受论文跨方法相同 KV 预算约束。 |
+| Attention backend | 保留 SGLang backend 选择；Triton 的固定数值对照不能代表 FlashInfer/FA4 等路径的最佳性能。 |
+| Prefill graph / torch.compile | 当前 ExpertPlex 的 opaque Python/native 通信接口尚未完成该路径集成。这是实现差距，不应写成论文必然冲突。原生 DeepEP normal 路径自身也在参数解析中关闭 prefill graph。 |
+| DeepGEMM | 复用原生 TMA、TCGEN05、双 CTA multicast、STSM/TMA epilogue 和 BF16 舍入边界；新增的是长驻 operation 选择与合作阶段切换。负收益的替代实现不能替换已验证路径。 |
+| DeepEP | 普通 SGLang 基线继续调用原生 normal / low-latency dispatcher；ExpertPlex 的 attention-initiated M-to-N 不能直接套用要求 E 侧 receiver kernel 的原始 API。新的协议仍需继续对照 DeepEP 的路由布局、向量搬运和归并实现，不能据仅有功能通过宣称保留了全部性能优化。 |
+| Chunked prefill / SBO / TP | chunked prefill 有显式选项；SBO 与 attention TP>1 等当前尚未适配，不能以“论文冲突”代替实现与验证。默认整请求 P 是论文实验配置，不是 SGLang 能力被全局删除。 |
+
+基线启动器也应保留原生 overlap 与 autotune；PDMux 继续遵循其独立调度循环的约束。
+恢复这些默认值之后，旧的固定参数性能结果仍保留，但不能当成新配置的验收结果。

@@ -245,10 +245,14 @@ class IntegrationTests(unittest.TestCase):
             "--enable-eplb",
             "speculative",
             "quantization",
-            "--disable-overlap-schedule",
             "--cuda-graph-backend-decode",
         ):
             self.assertIn(fragment, str(caught.exception))
+
+    def test_native_schedule_overlap_is_not_rejected(self):
+        INTEGRATION.validate_server_args(
+            self.server_args(disable_overlap_schedule=False)
+        )
 
     def test_phase_and_checkpoint_mismatch_fail(self):
         with self.assertRaisesRegex(ValueError, "client phase"):

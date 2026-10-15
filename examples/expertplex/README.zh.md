@@ -418,3 +418,14 @@ Tile trace 在 exporter 停止后同时写入 `.trace.pt` 与 `.trace.metadata.j
 metadata 的每 CTA 最后工作序号用于判断截断，包括容量末尾是未记录的 flush 控制任务的情况；
 缺少 metadata、容量不一致或序号越界时，`bench_preemption.py` 将拒绝验收该 trace。
 旧版只保存 tensor 的 trace 可用于历史分析，但不能直接通过新版完整性检查。
+
+普通服务默认保留 SGLang 的 CPU/GPU scheduler overlap、TBO（由 node config 决定）
+与 FlashInfer autotune，并默认开启 decode CUDA Graph。`--disable-overlap-schedule`、
+`--disable-flashinfer-autotune` 和 `--no-cuda-graph` 是显式消融开关。
+`--diagnostic-logit-processor` 会关闭 CPU/GPU scheduler overlap，以便同步读取 CPU 请求历史；
+该数值捕获配置不能用于吞吐/延迟比较。普通基线同样保留 overlap/autotune，PDMux 使用自身调度循环。
+
+`launch_baseline.py` 与 `run_serving_experiment.py` 也默认使用 FlashInfer sampling；
+数值诊断可显式指定 `--sampling-backend pytorch`。实验总入口默认使用 FlashInfer attention，
+保留 `--attention-backend triton` 用于既有固定条件诊断。汇总工具检查 sampling backend
+和 serving defaults 版本，拒绝将恢复原生优化后的实验与旧默认配置混合计算加速比。

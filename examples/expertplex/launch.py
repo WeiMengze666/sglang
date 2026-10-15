@@ -74,8 +74,6 @@ def commands(node, args):
             "full" if args.cuda_graph else "disabled",
             "--cuda-graph-backend-prefill",
             "disabled",
-            "--disable-overlap-schedule",
-            "--disable-flashinfer-autotune",
             "--chunked-prefill-size",
             str(capacity if client.phase == "decode" or args.chunked_prefill else -1),
             "--max-prefill-tokens",
@@ -93,6 +91,15 @@ def commands(node, args):
         ]
         if args.ib_device:
             command += ["--disaggregation-ib-device", args.ib_device]
+        # Ordinary serving retains SGLang's CPU/GPU overlap. The diagnostic
+        # capture processor reads CPU request history synchronously and is not
+        # a performance configuration.
+        if getattr(args, "disable_overlap_schedule", False) or getattr(
+            args, "diagnostic_logit_processor", False
+        ):
+            command += ["--disable-overlap-schedule"]
+        if getattr(args, "disable_flashinfer_autotune", False):
+            command += ["--disable-flashinfer-autotune"]
         if node.overlap == "tbo":
             command += ["--enable-two-batch-overlap"]
         if node.prefill_mailbox_tokens is not None:
@@ -190,8 +197,13 @@ def main():
         help="Enable fixed-trajectory score capture on isolated diagnostic servers only",
     )
     parser.add_argument(
-        "--cuda-graph", action="store_true", help="Capture decode forward"
+        "--cuda-graph",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Capture decode forward (enabled by default)",
     )
+    parser.add_argument("--disable-overlap-schedule", action="store_true")
+    parser.add_argument("--disable-flashinfer-autotune", action="store_true")
     parser.add_argument(
         "--tokenizer-path", help="Optional separate tokenizer directory"
     )

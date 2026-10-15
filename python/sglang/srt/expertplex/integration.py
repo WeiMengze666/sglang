@@ -150,10 +150,6 @@ def validate_server_args(cfg: Any) -> None:
         errors.append("--moe-a2a-backend must be none")
     if getattr(cfg, "ep_num_redundant_experts", 0):
         errors.append("redundant experts are not supported")
-    if not getattr(cfg, "disable_overlap_schedule", False):
-        errors.append(
-            "--disable-overlap-schedule is required by current ExpertPlex mailbox ownership"
-        )
     if getattr(cfg, "startup_weight_load_mode", "serial") != "serial":
         errors.append("--startup-weight-load-mode must be serial")
     if getattr(cfg, "cpu_offload_gb", 0):

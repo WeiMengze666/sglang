@@ -64,6 +64,9 @@ class LaunchPlanTests(unittest.TestCase):
             _, servers, router = launch.commands(node, args)
             for _, command in servers:
                 self.assertNotIn("--enable-custom-logit-processor", command)
+                self.assertNotIn("--disable-overlap-schedule", command)
+                self.assertNotIn("--disable-flashinfer-autotune", command)
+                self.assertIn("--enable-two-batch-overlap", command)
             self.assertEqual(router[router.index("--decode-policy") + 1], policy)
             self.assertEqual(router.count("--prefill"), prefill)
             self.assertEqual(router.count("--decode"), decode)
@@ -80,6 +83,7 @@ class LaunchPlanTests(unittest.TestCase):
             _, diagnostic_servers, diagnostic_router = launch.commands(node, args)
             for _, command in diagnostic_servers:
                 self.assertIn("--enable-custom-logit-processor", command)
+                self.assertIn("--disable-overlap-schedule", command)
             self.assertNotIn("--enable-custom-logit-processor", diagnostic_router)
             args.diagnostic_logit_processor = False
 

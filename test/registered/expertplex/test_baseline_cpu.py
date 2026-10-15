@@ -34,10 +34,21 @@ class BaselineLaunchTests(unittest.TestCase):
         prefill, decode, router = baseline.commands(args)
         for server in (prefill, decode):
             self.assertNotIn("--enable-custom-logit-processor", server[1])
+            self.assertNotIn("--disable-overlap-schedule", server[1])
+            self.assertNotIn("--disable-flashinfer-autotune", server[1])
+            self.assertIn("--enable-two-batch-overlap", server[1])
+            self.assertEqual(
+                server[1][server[1].index("--sampling-backend") + 1], "flashinfer"
+            )
+        args.sampling_backend = "pytorch"
         args.diagnostic_logit_processor = True
         diagnostic = baseline.commands(args)
         for server in diagnostic[:2]:
             self.assertIn("--enable-custom-logit-processor", server[1])
+            self.assertIn("--disable-overlap-schedule", server[1])
+            self.assertEqual(
+                server[1][server[1].index("--sampling-backend") + 1], "pytorch"
+            )
         self.assertNotIn("--enable-custom-logit-processor", diagnostic[-1][1])
         args.diagnostic_logit_processor = False
         # The pinned PortArgs reserves dist_init_port + six derived TCP ports.

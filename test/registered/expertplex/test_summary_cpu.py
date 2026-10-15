@@ -81,6 +81,24 @@ class ServingSummaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "mismatch"):
                 SUMMARY.summarize([first, second])
 
+    def test_sampling_or_native_optimization_defaults_cannot_be_mixed(self):
+        for change in ("sampling", "serving_defaults"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as tmp:
+                first, second = Path(tmp) / "first", Path(tmp) / "second"
+                write_fixture(first)
+                write_fixture(second)
+                path = second / "experiment.json"
+                experiment = json.loads(path.read_text())
+                if change == "sampling":
+                    experiment["settings"]["sampling_backend"] = "flashinfer"
+                else:
+                    experiment["serving_defaults_version"] = (
+                        "native-overlap-autotune-v1"
+                    )
+                path.write_text(json.dumps(experiment))
+                with self.assertRaisesRegex(ValueError, "mismatch"):
+                    SUMMARY.summarize([first, second])
+
     def test_failed_partial_run_is_not_reported_as_complete(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "run"

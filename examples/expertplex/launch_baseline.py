@@ -52,7 +52,7 @@ def commands(args):
         "--attention-backend",
         args.attention_backend,
         "--sampling-backend",
-        "pytorch",
+        getattr(args, "sampling_backend", "flashinfer"),
         "--max-total-tokens",
         str(kv),
         "--max-running-requests",
@@ -71,7 +71,6 @@ def commands(args):
         str(args.graph_max_bs),
         "--chunked-prefill-size",
         str(args.chunk_size if args.variant == "chunked" else -1),
-        "--disable-flashinfer-autotune",
         "--host",
         "127.0.0.1",
     ]
@@ -81,6 +80,13 @@ def commands(args):
         common += ["--tokenizer-path", args.tokenizer_path]
     if getattr(args, "diagnostic_logit_processor", False):
         common += ["--enable-custom-logit-processor"]
+    if getattr(args, "disable_flashinfer_autotune", False):
+        common += ["--disable-flashinfer-autotune"]
+    if args.variant != "pdmux" and (
+        getattr(args, "disable_overlap_schedule", False)
+        or getattr(args, "diagnostic_logit_processor", False)
+    ):
+        common += ["--disable-overlap-schedule"]
     if args.variant == "pdmux":
         common += [
             "--enable-pdmux",
@@ -89,7 +95,7 @@ def commands(args):
             args.pdmux_config,
         ]
     elif not args.disable_tbo:
-        common += ["--enable-two-batch-overlap", "--disable-overlap-schedule"]
+        common += ["--enable-two-batch-overlap"]
     if not pdd:
         return [(args.variant, common + ["--port", str(args.port)], args.port)]
     servers = []
@@ -159,6 +165,9 @@ def main():
         "--attention-backend", choices=("triton", "flashinfer"), default="flashinfer"
     )
     p.add_argument(
+        "--sampling-backend", choices=("flashinfer", "pytorch"), default="flashinfer"
+    )
+    p.add_argument(
         "--decode-kv-tokens",
         type=int,
         default=98304,
@@ -175,6 +184,8 @@ def main():
     p.add_argument("--graph-max-bs", type=int, default=32)
     p.add_argument("--chunk-size", type=int, default=2048)
     p.add_argument("--disable-tbo", action="store_true")
+    p.add_argument("--disable-overlap-schedule", action="store_true")
+    p.add_argument("--disable-flashinfer-autotune", action="store_true")
     p.add_argument(
         "--pdmux-config", help="Explicit B300-tested Green Context divisions YAML"
     )

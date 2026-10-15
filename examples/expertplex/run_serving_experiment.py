@@ -40,7 +40,10 @@ def main():
     p.add_argument("--sequence-cap", type=int, default=24576)
     p.add_argument("--decode-kv-tokens", type=int, default=98304)
     p.add_argument(
-        "--attention-backend", choices=("triton", "flashinfer"), default="triton"
+        "--attention-backend", choices=("triton", "flashinfer"), default="flashinfer"
+    )
+    p.add_argument(
+        "--sampling-backend", choices=("flashinfer", "pytorch"), default="flashinfer"
     )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
@@ -127,6 +130,8 @@ def main():
         args.tokenizer_path,
         "--attention-backend",
         args.attention_backend,
+        "--sampling-backend",
+        args.sampling_backend,
         "--sequence-cap",
         str(args.sequence_cap),
         "--log-dir",
@@ -159,8 +164,6 @@ def main():
             str(node_path.resolve()),
             "--kv-tokens",
             str(args.decode_kv_tokens // decode_count),
-            "--sampling-backend",
-            "pytorch",
             "--cuda-graph",
             *common,
         ]
@@ -253,6 +256,7 @@ def main():
     )
     report = {
         "scope": __doc__,
+        "serving_defaults_version": "native-overlap-autotune-v1",
         "input_artifact_sha256": {
             str(path): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (

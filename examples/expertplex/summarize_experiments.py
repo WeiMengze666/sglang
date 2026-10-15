@@ -72,6 +72,12 @@ def summarize(paths):
             "SGLANG_EXPERTPLEX_SYNTHETIC_SEED"
         )
         identity["warmup_requests"] = settings.get("warmup_requests", 1)
+        # Legacy experiments forced PyTorch sampling and disabled scheduling
+        # overlap/autotune. Do not silently mix them with restored defaults.
+        identity["sampling_backend"] = settings.get("sampling_backend", "pytorch")
+        identity["serving_defaults_version"] = experiment.get(
+            "serving_defaults_version", "legacy-disabled-overlap-autotune"
+        )
         artifacts = experiment.get("input_artifact_sha256", {})
         identity["input_fingerprints"] = {
             label: artifacts.get(str(path))
