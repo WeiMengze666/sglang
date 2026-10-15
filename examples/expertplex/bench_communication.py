@@ -36,6 +36,10 @@ def worker(rank, settings):
     extension = native.load_extension() if args.backend == "expertplex" else None
     reports = []
     for rows in args.rows:
+        if rank == 0:
+            print(
+                f"BEGIN rows={rows} backend={args.backend} mode={args.mode}", flush=True
+            )
         active = rank == 0 if args.mode == "normal" else 1 <= rank <= 3
         tokens = rows if active else 0
         generator = torch.Generator(device=rank).manual_seed(args.seed + rank + rows)
@@ -206,12 +210,31 @@ def worker(rank, settings):
                     recv_x, mapped, weights, handle
                 )
 
-        def identity():
+        def identity(stage):
             expected = x.float() * (weights * (ids >= 0)).sum(-1, keepdim=True)
+            failure = None
             if active and not torch.allclose(
                 output.float(), expected, atol=0.01, rtol=0.03
             ):
-                raise AssertionError(f"Communication identity mismatch on rank {rank}")
+                failure = {
+                    "rank": rank,
+                    "rows": rows,
+                    "stage": stage,
+                    "max_abs_difference": (output.float() - expected)
+                    .abs()
+                    .max()
+                    .item(),
+                    "finite_outputs": bool(torch.isfinite(output).all()),
+                }
+            # All ranks enter cleanup together on a numerical failure. Without
+            # consensus, one rank enters its cleanup barrier while its peers
+            # launch the next GPU collective, obscuring the original failure
+            # with a process-group timeout. This is outside timed GPU intervals.
+            failures = [None] * 8
+            dist.all_gather_object(failures, failure)
+            failures = [item for item in failures if item is not None]
+            if failures:
+                raise AssertionError(f"Communication identity mismatch: {failures}")
 
         def vary(iteration):
             if not args.vary_routes:
@@ -263,7 +286,7 @@ def worker(rank, settings):
                     for _ in range(3):
                         step()
                 stream.synchronize()
-                identity()
+                identity("graph-warmup")
                 graph = torch.cuda.CUDAGraph()
                 with torch.cuda.graph(graph, stream=stream):
                     step()
@@ -273,7 +296,7 @@ def worker(rank, settings):
                     graph.replay()
                     torch.cuda.synchronize(rank)
                     wall_us = (time.perf_counter() - wall) * 1e6
-                    identity()
+                    identity(f"graph-replay-{iteration}")
                     if iteration >= 3:
                         samples.append(
                             {
@@ -312,7 +335,7 @@ def worker(rank, settings):
                     end.synchronize()
                     combine_us = start.elapsed_time(end) * 1000
                     combine_wall_us = (time.perf_counter() - wall) * 1e6
-                    identity()
+                    identity(f"eager-{iteration}")
                     if iteration >= 3:
                         samples.append(
                             {

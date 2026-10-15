@@ -90,6 +90,18 @@ def summarize(paths):
             {
                 "path": root.name,
                 "variant": settings.get("label") or settings["variant"],
+                "experiment_status": experiment.get("status", "unrecorded"),
+                "numerical_diagnostic_requested": settings.get(
+                    "numerical_check", False
+                ),
+                "requested_rates": settings.get("rates"),
+                "measured_rates": [r["request_rate"] for r in sweep["results"]],
+                "complete_requested_rate_grid": (
+                    set(settings["rates"])
+                    == {r["request_rate"] for r in sweep["results"]}
+                    if "rates" in settings
+                    else None
+                ),
                 "maximum_feasible_tested_rps": sweep[
                     "p90_goodput_max_tested_arrival_rps"
                 ],

@@ -81,6 +81,23 @@ class ServingSummaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "mismatch"):
                 SUMMARY.summarize([first, second])
 
+    def test_failed_partial_run_is_not_reported_as_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "run"
+            write_fixture(root)
+            path = root / "experiment.json"
+            experiment = json.loads(path.read_text())
+            experiment["status"] = "failed"
+            experiment["settings"].update(rates=[1, 2], numerical_check=True)
+            path.write_text(json.dumps(experiment))
+            report = SUMMARY.summarize([root])
+        run = report["runs"][0]
+        self.assertEqual(run["experiment_status"], "failed")
+        self.assertTrue(run["numerical_diagnostic_requested"])
+        self.assertFalse(run["complete_requested_rate_grid"])
+        self.assertEqual(run["measured_rates"], [1])
+        self.assertEqual(len(report["rows"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
