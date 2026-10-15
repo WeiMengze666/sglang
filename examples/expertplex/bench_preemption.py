@@ -13,6 +13,19 @@ from _bootstrap import module
 from check_gpu import Exporter
 
 
+def trace_overflow_ctas(metadata, ctas, capacity):
+    """Use producer sequence counts; an empty final trace slot proves nothing."""
+    counts = metadata.get("trace_sequence_counts")
+    if (
+        metadata.get("trace_capacity_per_cta") != capacity
+        or not isinstance(counts, list)
+        or len(counts) != ctas
+        or any(type(value) is not int or value < 0 for value in counts)
+    ):
+        raise ValueError("Missing or inconsistent trace sequence metadata")
+    return sum(value > capacity for value in counts)
+
+
 def validate_cluster_trace(records, cluster_size, truncated_ctas=0):
     """Check cooperative decisions and retirement ordering, not a latency bound."""
     if truncated_ctas or not records or cluster_size < 1:
@@ -234,14 +247,16 @@ def main():
         "stage",
     ]
     report["trace_record_count"] = len(records)
-    report["trace_truncated_ctas"] = (
-        int((trace[:, -1, 0] != 0).sum()) if args.trace_capacity else 0
-    )
     try:
+        metadata = json.loads(trace_path.with_suffix(".metadata.json").read_text())
+        report["trace_sequence_counts"] = metadata["trace_sequence_counts"]
+        report["trace_truncated_ctas"] = trace_overflow_ctas(
+            metadata, trace.shape[0], args.trace_capacity
+        )
         report["cooperative_trace_checks"] = validate_cluster_trace(
             records, report["executor"]["cluster_size"], report["trace_truncated_ctas"]
         )
-    except ValueError as exc:
+    except (OSError, ValueError, KeyError) as exc:
         report.update(status="failed", error=str(exc))
         args.output.write_text(json.dumps(report, indent=2) + "\n")
         raise

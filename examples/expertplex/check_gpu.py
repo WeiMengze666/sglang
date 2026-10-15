@@ -113,6 +113,9 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
                     raise RuntimeError("cuProfilerStop failed")
             if settings.get("trace_path"):
                 torch.save(executor.read_trace(), settings["trace_path"])
+                Path(settings["trace_path"]).with_suffix(".metadata.json").write_text(
+                    json.dumps(executor.describe(), indent=2) + "\n"
+                )
 
 
 class Exporter:

@@ -413,3 +413,8 @@ ExpertPlex 的 3D 分配为每 rank 65536。早期总量 98304 的 DP8 只有每
 所有被比较方法采用相同数量。此前 pilot/LooGLE 使用 1 个预热请求，无法保证多 P
 都经过相同 shape 的预热。可用 `--warmup-requests 1` 复原旧条件；汇总程序拒绝混合
 不同预热数量的结果。8 请求预热也不代表穷尽所有动态 batch/sequence shape。
+
+Tile trace 在 exporter 停止后同时写入 `.trace.pt` 与 `.trace.metadata.json`。
+metadata 的每 CTA 最后工作序号用于判断截断，包括容量末尾是未记录的 flush 控制任务的情况；
+缺少 metadata、容量不一致或序号越界时，`bench_preemption.py` 将拒绝验收该 trace。
+旧版只保存 tensor 的 trace 可用于历史分析，但不能直接通过新版完整性检查。

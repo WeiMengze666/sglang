@@ -25,7 +25,8 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
    CTA 内 `task_full` mbarrier 传播。`claim` 是 cluster leader 的唯一 tile 领取入口；
    `initialize` 和 `commit` 推进 Scatter1 → Scatter2 → GateUp → ACT → Down → Gather。
    Task ring 的 metadata-consumed barrier 与 output-retired barrier 分离。phase 切换
-   需要等待旧输出退休；这条实现路径和数值通过本身不能证明原文的“至多当前 tile”上界，
+   在流水模式下通过每 CTA 单调 64-bit 退役前缀等待旧输出，避免环形 barrier parity 的 ABA；
+   这条实现路径和数值通过本身不能证明原文的“至多当前 tile”上界，
    尤其需要检查预取深度、传播延迟和所有 warp/CTA 的收敛。
 4. **SM 自适应（Eq.4）**：`update_policy` 从实际 decode GateUp row tiles 计算 footprint，
    按期望 footprint 缩放 q，向 cluster 倍数取整并限制 Qmax。`claim` 在首选 phase 无可领取
@@ -58,7 +59,7 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
 | §4.2 | 启动前固定 operation templates、buffer、TMA descriptors；shape 在启动时编译为常量 | buffers / TMA descriptors 已固定；Coder/30B 的 H/I 已做编译期特化，小调试模型保留通用形状 | 多层、动态 batch、图 replay 的地址与描述符检查 |
 | §4.2 | 保留原生 CTA/cluster shape、TMA multicast、warp specialization | 默认双 CTA、2SM MMA、9-stage TMA、原生 STSM/TMA epilogue 已通过回归；GateUp/ACT/Down 独立调度。Nsight Systems 确认对应 native GEMM 几何；性能仍落后 | 原生算子形状及流水线代码审计，数值测试 |
 | §4.3 Fig.4 | system P → CTA0 → device p_i → cluster DSMEM → warp broadcast → mbarrier | 默认后端已实现该传播链；GPU 定时发布和 tile trace 已采集，尚未证明完整上界 | 可控时刻注入 urgent decode，记录各级 epoch/timestamp |
-| §4.3 | 决策在 check epoch 内固定；观察切换后不得再领取旧 phase tile | leader 是唯一领取者并向所有成员分发同一 Task；压力与 trace 验证仍待补齐 | 有预取、多 warp、多 CTA 的长时间压力测试 |
+| §4.3 | 决策在 check epoch 内固定；观察切换后不得再领取旧 phase tile | leader 是唯一领取者并向所有成员分发同一 Task；CAS 竞争不会被当成 phase 空闲；trace validator 检查成员决策与阶段退役，但完整传播上界仍待验证 | 有预取、多 warp、多 CTA 的长时间压力测试 |
 | §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 双 accumulator，延迟 store 退休与 Task ring 元数据复用已分离；跨 mailbox 回归通过，配对汇总仍慢约 0.73%。后期论文实验显式开启，库默认仍关闭 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
 | §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | NVLink IPC 路径已验证全部 56 个有向 GPU 对 | 多发送方、重复 epoch、容量边界、故障路径 |
 | §5.2 | E 无通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 默认服务路径已实现，E 侧预处理直接读取最终 raw buffer；通信微基准的 identity echo 仅为计时外诊断 | kernel trace、并发 P/D 数值验证 |

@@ -9,9 +9,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
 validate = importlib.import_module("bench_preemption").validate_cluster_trace
+overflow = importlib.import_module("bench_preemption").trace_overflow_ctas
 
 
 class CooperativeTraceTests(unittest.TestCase):
+    def test_sequence_counts_detect_overflow_past_unrecorded_flush(self):
+        metadata = {"trace_sequence_counts": [8, 10], "trace_capacity_per_cta": 8}
+        self.assertEqual(overflow(metadata, 2, 8), 1)
+        metadata["trace_sequence_counts"] = [8, 8]
+        self.assertEqual(overflow(metadata, 2, 8), 0)
+        for invalid in [
+            {},
+            {**metadata, "trace_sequence_counts": [8]},
+            {**metadata, "trace_sequence_counts": [8, -1]},
+            {**metadata, "trace_capacity_per_cta": 16},
+        ]:
+            with self.assertRaises(ValueError):
+                overflow(invalid, 2, 8)
+
     def fixture(self):
         return [
             dict(

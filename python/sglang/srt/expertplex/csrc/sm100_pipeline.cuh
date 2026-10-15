@@ -84,6 +84,7 @@ struct Context {
       0; // Diagnostic single-operation execution; 0 = full MoE.
   int column_group = 0;
   TraceRecord *trace = nullptr;
+  U64 *trace_sequence_counts = nullptr;
   int trace_capacity = 0;
   Maps *maps;
   WeightMaps *weights;
@@ -146,6 +147,10 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
         static_cast<size_t>(ctas) * trace_capacity * sizeof(TraceRecord);
     result.trace = static_cast<TraceRecord *>(owner.allocate(bytes));
     C10_CUDA_CHECK(cudaMemset(result.trace, 0, bytes));
+    result.trace_sequence_counts =
+        static_cast<U64 *>(owner.allocate(ctas * sizeof(U64)));
+    C10_CUDA_CHECK(cudaMemset(result.trace_sequence_counts, 0,
+                              ctas * sizeof(U64)));
   }
   result.maps = static_cast<Maps *>(owner.allocate(maps.size() * sizeof(Maps)));
   result.weights = static_cast<WeightMaps *>(
@@ -576,7 +581,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       if (rank == 0) {
         // Reuse metadata after every participating CTA has copied its Task.
         // Accumulator/store barriers independently protect data still in flight;
-        // cluster_empty remains the retirement barrier for phase transitions.
+        // Monotonic counters separately protect phase-transition retirement.
         if (context.pipelined_stores)
           s.cluster_consumed[index].wait(parity ^ 1);
         else
@@ -654,8 +659,11 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         task.row += rank * data_tile_rows(task.stage);
       else
         task.column += rank * N;
-      if (task.slot >= 0 && context.trace &&
-          sequence < context.trace_capacity) {
+      // Count real work even after the trace fills. A control-only flush may
+      // occupy the last ring index, so its timestamp cannot detect overflow.
+      if (task.slot >= 0 && context.trace)
+        context.trace_sequence_counts[blockIdx.x] = sequence + 1;
+      if (task.slot >= 0 && context.trace && sequence < context.trace_capacity) {
         auto &record = context.trace[static_cast<size_t>(blockIdx.x) *
                                          context.trace_capacity +
                                      sequence];

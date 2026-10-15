@@ -1307,6 +1307,14 @@ public:
   py::dict describe() const {
     py::dict d;
     d["trace_capacity_per_cta"] = native_context.trace_capacity;
+    if (!running && native_context.trace_capacity) {
+      c10::cuda::CUDAGuard guard(owner->device);
+      std::vector<U64> counts(launch_ctas);
+      C10_CUDA_CHECK(cudaMemcpy(counts.data(), native_context.trace_sequence_counts,
+                                counts.size() * sizeof(U64),
+                                cudaMemcpyDeviceToHost));
+      d["trace_sequence_counts"] = counts;
+    }
     d["backend"] = backend_name;
     d["benchmark_stage"] = native_context.benchmark_stage;
     d["pipelined_stores"] = native_context.pipelined_stores;
