@@ -1,0 +1,1621 @@
+{
+  "scope": "Single-node adaptation of paper section 7.5: dispatch/combine separately.\n\nRanks 0..3 are attention clients and 4..7 hold 40 active experts each. DeepEP\nrequires equal expert ranges on all ranks, so its first 160 expert IDs are\nunused and the 160 actual expert IDs are mapped onto ranks 4..7. Prefill uses\nclient 0; decode uses clients 1..3. This is an 8-GPU NVLink adaptation, not the\npaper's 16-GPU hierarchical RDMA experiment. Echo work is outside timing.\n",
+  "settings": {
+    "backend": "expertplex",
+    "mode": "low_latency",
+    "rows": [
+      1,
+      16,
+      128
+    ],
+    "hidden": 6144,
+    "experts": 40,
+    "top_k": 8,
+    "iterations": 10,
+    "group_transfers": true,
+    "vary_routes": true,
+    "cuda_graph": true,
+    "seed": 20261015,
+    "port": 29650,
+    "deepep_revision": null,
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/comm-group-ll-graph-vary-01.json"
+  },
+  "summary": [
+    {
+      "rows": 1,
+      "max_rank_samples": {
+        "dispatch_us": [
+          39.0079990029335,
+          51.00800096988678,
+          53.15199866890907,
+          38.94399851560593,
+          49.695998430252075,
+          51.231998950242996,
+          38.88000175356865,
+          51.263999193906784,
+          51.16799846291542,
+          40.608000010252
+        ],
+        "combine_us": [
+          44.863998889923096,
+          71.45600020885468,
+          75.80800354480743,
+          44.863998889923096,
+          71.42399996519089,
+          73.53600114583969,
+          44.67200115323067,
+          69.24799829721451,
+          73.47200065851212,
+          44.76799815893173
+        ],
+        "step_wall_us": [
+          503.32999671809375,
+          555.4060044232756,
+          537.8320056479424,
+          496.5930129401386,
+          527.9020115267485,
+          528.3520149532706,
+          485.85899639874697,
+          529.618002474308,
+          513.1259968038648,
+          483.12300350517035
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 50.35199970006943,
+        "combine_us": 70.3359991312027,
+        "step_wall_us": 520.5140041653067
+      }
+    },
+    {
+      "rows": 16,
+      "max_rank_samples": {
+        "dispatch_us": [
+          40.92799872159958,
+          61.3120011985302,
+          60.67200005054474,
+          40.73600098490715,
+          58.720000088214874,
+          59.20000001788139,
+          40.608000010252,
+          59.51999872922897,
+          59.42400172352791,
+          39.07199949026108
+        ],
+        "combine_us": [
+          45.024000108242035,
+          75.74400305747986,
+          79.96799796819687,
+          44.92799937725067,
+          75.80800354480743,
+          77.98399776220322,
+          45.152001082897186,
+          75.68000257015228,
+          77.88799703121185,
+          45.184001326560974
+        ],
+        "step_wall_us": [
+          553.5230156965554,
+          602.4859903845936,
+          577.1050055045635,
+          510.5090094730258,
+          569.1779952030629,
+          620.0849893502891,
+          543.4150225482881,
+          565.7250003423542,
+          564.6430072374642,
+          515.1400109753013
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 58.960000053048134,
+        "combine_us": 75.71200281381607,
+        "step_wall_us": 565.1840037899092
+      }
+    },
+    {
+      "rows": 128,
+      "max_rank_samples": {
+        "dispatch_us": [
+          40.991999208927155,
+          71.84000313282013,
+          73.60000163316727,
+          40.832001715898514,
+          72.03199714422226,
+          72.73600250482559,
+          40.76800122857094,
+          73.88799637556076,
+          71.48800045251846,
+          40.608000010252
+        ],
+        "combine_us": [
+          49.15200173854828,
+          75.87199658155441,
+          81.98399841785431,
+          49.0880012512207,
+          77.69600301980972,
+          81.82399719953537,
+          49.12000149488449,
+          77.82399654388428,
+          81.69600367546082,
+          47.040000557899475
+        ],
+        "step_wall_us": [
+          526.8229870125651,
+          592.9770122747868,
+          574.081001104787,
+          505.7259986642748,
+          570.5120274797082,
+          567.3790001310408,
+          512.5849856995046,
+          563.0989908240736,
+          573.701981920749,
+          508.4899894427508
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 71.6640017926693,
+        "combine_us": 76.78399980068207,
+        "step_wall_us": 565.2389954775572
+      }
+    }
+  ],
+  "ranks": [
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 38.55999931693077,
+            "combine_us": 30.271999537944794,
+            "step_wall_us": 498.6220155842602
+          },
+          {
+            "dispatch_us": 40.57599976658821,
+            "combine_us": 29.279999434947968,
+            "step_wall_us": 526.3159982860088
+          },
+          {
+            "dispatch_us": 38.46399858593941,
+            "combine_us": 28.12799997627735,
+            "step_wall_us": 533.6379981599748
+          },
+          {
+            "dispatch_us": 38.94399851560593,
+            "combine_us": 28.351999819278717,
+            "step_wall_us": 496.0399819537997
+          },
+          {
+            "dispatch_us": 39.0079990029335,
+            "combine_us": 28.672000393271446,
+            "step_wall_us": 522.6400098763406
+          },
+          {
+            "dispatch_us": 38.52799907326698,
+            "combine_us": 30.047999694943428,
+            "step_wall_us": 528.3520149532706
+          },
+          {
+            "dispatch_us": 38.11199963092804,
+            "combine_us": 30.239999294281006,
+            "step_wall_us": 482.33597772195935
+          },
+          {
+            "dispatch_us": 40.41599854826927,
+            "combine_us": 28.224000707268715,
+            "step_wall_us": 529.618002474308
+          },
+          {
+            "dispatch_us": 38.46399858593941,
+            "combine_us": 28.351999819278717,
+            "step_wall_us": 512.6640025991946
+          },
+          {
+            "dispatch_us": 40.608000010252,
+            "combine_us": 28.031999245285988,
+            "step_wall_us": 471.4299866463989
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 40.92799872159958,
+            "combine_us": 28.224000707268715,
+            "step_wall_us": 547.3470082506537
+          },
+          {
+            "dispatch_us": 38.975998759269714,
+            "combine_us": 28.351999819278717,
+            "step_wall_us": 590.2549892198294
+          },
+          {
+            "dispatch_us": 40.70400074124336,
+            "combine_us": 28.863999992609024,
+            "step_wall_us": 574.6789975091815
+          },
+          {
+            "dispatch_us": 40.73600098490715,
+            "combine_us": 28.60799990594387,
+            "step_wall_us": 510.5090094730258
+          },
+          {
+            "dispatch_us": 38.68800029158592,
+            "combine_us": 28.224000707268715,
+            "step_wall_us": 569.1779952030629
+          },
+          {
+            "dispatch_us": 39.03999924659729,
+            "combine_us": 28.60799990594387,
+            "step_wall_us": 617.6529859658331
+          },
+          {
+            "dispatch_us": 40.608000010252,
+            "combine_us": 28.60799990594387,
+            "step_wall_us": 542.7249998319894
+          },
+          {
+            "dispatch_us": 40.608000010252,
+            "combine_us": 30.527999624609947,
+            "step_wall_us": 565.7250003423542
+          },
+          {
+            "dispatch_us": 38.656000047922134,
+            "combine_us": 30.30399978160858,
+            "step_wall_us": 564.0489980578423
+          },
+          {
+            "dispatch_us": 39.07199949026108,
+            "combine_us": 29.983999207615852,
+            "step_wall_us": 468.42798474244773
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 40.991999208927155,
+            "combine_us": 30.400000512599945,
+            "step_wall_us": 525.6310105323792
+          },
+          {
+            "dispatch_us": 40.47999903559685,
+            "combine_us": 30.49599938094616,
+            "step_wall_us": 585.8319927938282
+          },
+          {
+            "dispatch_us": 40.64000025391579,
+            "combine_us": 30.6560005992651,
+            "step_wall_us": 566.5140051860362
+          },
+          {
+            "dispatch_us": 40.832001715898514,
+            "combine_us": 29.53599952161312,
+            "step_wall_us": 505.7259986642748
+          },
+          {
+            "dispatch_us": 40.44799879193306,
+            "combine_us": 30.368000268936157,
+            "step_wall_us": 567.323004361242
+          },
+          {
+            "dispatch_us": 40.57599976658821,
+            "combine_us": 28.575999662280083,
+            "step_wall_us": 567.3790001310408
+          },
+          {
+            "dispatch_us": 39.96799886226654,
+            "combine_us": 30.527999624609947,
+            "step_wall_us": 512.5849856995046
+          },
+          {
+            "dispatch_us": 40.800001472234726,
+            "combine_us": 28.16000021994114,
+            "step_wall_us": 563.0989908240736
+          },
+          {
+            "dispatch_us": 40.64000025391579,
+            "combine_us": 30.33600002527237,
+            "step_wall_us": 573.6189777962863
+          },
+          {
+            "dispatch_us": 40.608000010252,
+            "combine_us": 30.592000111937523,
+            "step_wall_us": 508.4899894427508
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": true,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 39.0079990029335,
+            "combine_us": 44.863998889923096,
+            "step_wall_us": 287.116999970749
+          },
+          {
+            "dispatch_us": 51.00800096988678,
+            "combine_us": 71.45600020885468,
+            "step_wall_us": 331.5980138722807
+          },
+          {
+            "dispatch_us": 53.15199866890907,
+            "combine_us": 75.80800354480743,
+            "step_wall_us": 346.2650056462735
+          },
+          {
+            "dispatch_us": 36.86400130391121,
+            "combine_us": 44.863998889923096,
+            "step_wall_us": 300.69801141507924
+          },
+          {
+            "dispatch_us": 49.695998430252075,
+            "combine_us": 71.42399996519089,
+            "step_wall_us": 344.56601133570075
+          },
+          {
+            "dispatch_us": 51.231998950242996,
+            "combine_us": 73.53600114583969,
+            "step_wall_us": 344.53198895789683
+          },
+          {
+            "dispatch_us": 38.88000175356865,
+            "combine_us": 44.67200115323067,
+            "step_wall_us": 307.6949797105044
+          },
+          {
+            "dispatch_us": 51.263999193906784,
+            "combine_us": 69.24799829721451,
+            "step_wall_us": 339.0949859749526
+          },
+          {
+            "dispatch_us": 51.16799846291542,
+            "combine_us": 73.47200065851212,
+            "step_wall_us": 339.051999617368
+          },
+          {
+            "dispatch_us": 38.91199827194214,
+            "combine_us": 44.76799815893173,
+            "step_wall_us": 299.47099392302334
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": true,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 39.45599868893623,
+            "combine_us": 45.024000108242035,
+            "step_wall_us": 289.4549979828298
+          },
+          {
+            "dispatch_us": 61.3120011985302,
+            "combine_us": 75.74400305747986,
+            "step_wall_us": 339.82700551860034
+          },
+          {
+            "dispatch_us": 60.67200005054474,
+            "combine_us": 79.96799796819687,
+            "step_wall_us": 350.40598595514894
+          },
+          {
+            "dispatch_us": 40.063999593257904,
+            "combine_us": 44.92799937725067,
+            "step_wall_us": 286.14699840545654
+          },
+          {
+            "dispatch_us": 58.720000088214874,
+            "combine_us": 75.80800354480743,
+            "step_wall_us": 333.79998058080673
+          },
+          {
+            "dispatch_us": 59.20000001788139,
+            "combine_us": 77.98399776220322,
+            "step_wall_us": 406.76299249753356
+          },
+          {
+            "dispatch_us": 40.41599854826927,
+            "combine_us": 45.152001082897186,
+            "step_wall_us": 287.51700301654637
+          },
+          {
+            "dispatch_us": 59.51999872922897,
+            "combine_us": 75.68000257015228,
+            "step_wall_us": 338.1580172572285
+          },
+          {
+            "dispatch_us": 59.42400172352791,
+            "combine_us": 77.88799703121185,
+            "step_wall_us": 336.7610042914748
+          },
+          {
+            "dispatch_us": 38.7520007789135,
+            "combine_us": 45.184001326560974,
+            "step_wall_us": 287.3179910238832
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": true,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 34.68799963593483,
+            "combine_us": 49.15200173854828,
+            "step_wall_us": 289.7540107369423
+          },
+          {
+            "dispatch_us": 71.84000313282013,
+            "combine_us": 75.87199658155441,
+            "step_wall_us": 347.1460076980293
+          },
+          {
+            "dispatch_us": 73.60000163316727,
+            "combine_us": 81.98399841785431,
+            "step_wall_us": 361.4230081439018
+          },
+          {
+            "dispatch_us": 40.54399952292442,
+            "combine_us": 49.0880012512207,
+            "step_wall_us": 292.9439942818135
+          },
+          {
+            "dispatch_us": 72.03199714422226,
+            "combine_us": 77.69600301980972,
+            "step_wall_us": 349.851994542405
+          },
+          {
+            "dispatch_us": 72.73600250482559,
+            "combine_us": 81.82399719953537,
+            "step_wall_us": 355.8589960448444
+          },
+          {
+            "dispatch_us": 40.76800122857094,
+            "combine_us": 49.12000149488449,
+            "step_wall_us": 289.8719976656139
+          },
+          {
+            "dispatch_us": 73.88799637556076,
+            "combine_us": 77.82399654388428,
+            "step_wall_us": 347.3590186331421
+          },
+          {
+            "dispatch_us": 71.48800045251846,
+            "combine_us": 81.69600367546082,
+            "step_wall_us": 358.3099751267582
+          },
+          {
+            "dispatch_us": 40.54399952292442,
+            "combine_us": 47.040000557899475,
+            "step_wall_us": 286.62398108281195
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": true,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 34.52799841761589,
+            "combine_us": 36.54399886727333,
+            "step_wall_us": 278.17601221613586
+          },
+          {
+            "dispatch_us": 34.2399999499321,
+            "combine_us": 57.08799883723259,
+            "step_wall_us": 318.3959925081581
+          },
+          {
+            "dispatch_us": 45.27999833226204,
+            "combine_us": 59.20000001788139,
+            "step_wall_us": 326.50900539010763
+          },
+          {
+            "dispatch_us": 34.912001341581345,
+            "combine_us": 34.55999866127968,
+            "step_wall_us": 275.12499946169555
+          },
+          {
+            "dispatch_us": 45.24800181388855,
+            "combine_us": 57.37600103020668,
+            "step_wall_us": 314.98499447479844
+          },
+          {
+            "dispatch_us": 45.24800181388855,
+            "combine_us": 59.20000001788139,
+            "step_wall_us": 317.8869956173003
+          },
+          {
+            "dispatch_us": 26.623999699950218,
+            "combine_us": 36.67199984192848,
+            "step_wall_us": 277.4450113065541
+          },
+          {
+            "dispatch_us": 45.152001082897186,
+            "combine_us": 57.151999324560165,
+            "step_wall_us": 314.990000333637
+          },
+          {
+            "dispatch_us": 44.89599913358688,
+            "combine_us": 59.23200026154518,
+            "step_wall_us": 321.06100115925074
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 34.78400036692619,
+            "step_wall_us": 278.4889948088676
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": true,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 36.86400130391121,
+            "combine_us": 36.959998309612274,
+            "step_wall_us": 301.6219998244196
+          },
+          {
+            "dispatch_us": 53.05600166320801,
+            "combine_us": 61.37600168585777,
+            "step_wall_us": 351.26699367538095
+          },
+          {
+            "dispatch_us": 53.279999643564224,
+            "combine_us": 63.391998410224915,
+            "step_wall_us": 339.6240063011646
+          },
+          {
+            "dispatch_us": 34.88000109791756,
+            "combine_us": 36.67199984192848,
+            "step_wall_us": 279.5959881041199
+          },
+          {
+            "dispatch_us": 53.37600037455559,
+            "combine_us": 61.40799820423126,
+            "step_wall_us": 330.798007780686
+          },
+          {
+            "dispatch_us": 53.15199866890907,
+            "combine_us": 63.45599889755249,
+            "step_wall_us": 331.82199695147574
+          },
+          {
+            "dispatch_us": 36.99199855327606,
+            "combine_us": 36.70400008559227,
+            "step_wall_us": 287.61697467416525
+          },
+          {
+            "dispatch_us": 52.5440014898777,
+            "combine_us": 61.40799820423126,
+            "step_wall_us": 330.14098880812526
+          },
+          {
+            "dispatch_us": 52.960000932216644,
+            "combine_us": 63.61600011587143,
+            "step_wall_us": 334.5139848534018
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 36.768000572919846,
+            "step_wall_us": 278.9209829643369
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": true,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 36.86400130391121,
+            "combine_us": 36.959998309612274,
+            "step_wall_us": 294.19001657515764
+          },
+          {
+            "dispatch_us": 65.60000032186508,
+            "combine_us": 65.60000032186508,
+            "step_wall_us": 357.34198172576725
+          },
+          {
+            "dispatch_us": 67.58400052785873,
+            "combine_us": 67.64800101518631,
+            "step_wall_us": 365.14498060569167
+          },
+          {
+            "dispatch_us": 36.83200106024742,
+            "combine_us": 36.83200106024742,
+            "step_wall_us": 292.12600202299654
+          },
+          {
+            "dispatch_us": 65.47199934720993,
+            "combine_us": 63.680000603199005,
+            "step_wall_us": 357.4680013116449
+          },
+          {
+            "dispatch_us": 67.55200028419495,
+            "combine_us": 67.61600077152252,
+            "step_wall_us": 361.7590118665248
+          },
+          {
+            "dispatch_us": 37.02399879693985,
+            "combine_us": 36.83200106024742,
+            "step_wall_us": 294.2669962067157
+          },
+          {
+            "dispatch_us": 65.63200056552887,
+            "combine_us": 65.2799978852272,
+            "step_wall_us": 352.04700543545187
+          },
+          {
+            "dispatch_us": 67.58400052785873,
+            "combine_us": 67.6800012588501,
+            "step_wall_us": 356.55201645568013
+          },
+          {
+            "dispatch_us": 37.05599904060364,
+            "combine_us": 36.959998309612274,
+            "step_wall_us": 284.1409877873957
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": true,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 35.0399985909462,
+            "combine_us": 36.70400008559227,
+            "step_wall_us": 306.9769882131368
+          },
+          {
+            "dispatch_us": 45.471999794244766,
+            "combine_us": 55.03999814391136,
+            "step_wall_us": 361.1999854911119
+          },
+          {
+            "dispatch_us": 45.31199857592583,
+            "combine_us": 57.28000029921532,
+            "step_wall_us": 360.3229997679591
+          },
+          {
+            "dispatch_us": 34.752000123262405,
+            "combine_us": 36.639999598264694,
+            "step_wall_us": 316.9399860780686
+          },
+          {
+            "dispatch_us": 47.13600128889084,
+            "combine_us": 55.00800162553787,
+            "step_wall_us": 356.6550149116665
+          },
+          {
+            "dispatch_us": 47.26399853825569,
+            "combine_us": 59.328000992536545,
+            "step_wall_us": 357.4069996830076
+          },
+          {
+            "dispatch_us": 34.752000123262405,
+            "combine_us": 34.97600182890892,
+            "step_wall_us": 313.9709879178554
+          },
+          {
+            "dispatch_us": 45.471999794244766,
+            "combine_us": 55.1999993622303,
+            "step_wall_us": 348.78801670856774
+          },
+          {
+            "dispatch_us": 47.200001776218414,
+            "combine_us": 57.21599981188774,
+            "step_wall_us": 349.02800689451396
+          },
+          {
+            "dispatch_us": 35.232000052928925,
+            "combine_us": 34.71999987959862,
+            "step_wall_us": 309.5919964835048
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": true,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 36.896001547575,
+            "combine_us": 37.05599904060364,
+            "step_wall_us": 323.9510115236044
+          },
+          {
+            "dispatch_us": 53.119998425245285,
+            "combine_us": 61.40799820423126,
+            "step_wall_us": 386.6500046569854
+          },
+          {
+            "dispatch_us": 53.247999399900436,
+            "combine_us": 63.48799914121628,
+            "step_wall_us": 380.19599742256105
+          },
+          {
+            "dispatch_us": 34.97600182890892,
+            "combine_us": 37.02399879693985,
+            "step_wall_us": 318.4440138284117
+          },
+          {
+            "dispatch_us": 53.47200110554695,
+            "combine_us": 61.40799820423126,
+            "step_wall_us": 372.6589784491807
+          },
+          {
+            "dispatch_us": 53.0879981815815,
+            "combine_us": 63.45599889755249,
+            "step_wall_us": 435.04900531843305
+          },
+          {
+            "dispatch_us": 34.71999987959862,
+            "combine_us": 36.80000081658363,
+            "step_wall_us": 350.90799792669713
+          },
+          {
+            "dispatch_us": 55.36000058054924,
+            "combine_us": 61.43999844789505,
+            "step_wall_us": 371.00602639839053
+          },
+          {
+            "dispatch_us": 55.03999814391136,
+            "combine_us": 63.61600011587143,
+            "step_wall_us": 381.1350034084171
+          },
+          {
+            "dispatch_us": 34.71999987959862,
+            "combine_us": 37.02399879693985,
+            "step_wall_us": 313.77500272355974
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": true,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 36.83200106024742,
+            "combine_us": 37.151999771595,
+            "step_wall_us": 318.17497801966965
+          },
+          {
+            "dispatch_us": 67.61600077152252,
+            "combine_us": 65.34399837255478,
+            "step_wall_us": 394.7160148527473
+          },
+          {
+            "dispatch_us": 69.5360004901886,
+            "combine_us": 67.391999065876,
+            "step_wall_us": 389.010994695127
+          },
+          {
+            "dispatch_us": 34.752000123262405,
+            "combine_us": 36.57599911093712,
+            "step_wall_us": 326.2530080974102
+          },
+          {
+            "dispatch_us": 67.23199784755707,
+            "combine_us": 63.391998410224915,
+            "step_wall_us": 385.1449873764068
+          },
+          {
+            "dispatch_us": 69.76000219583511,
+            "combine_us": 67.58400052785873,
+            "step_wall_us": 389.458000427112
+          },
+          {
+            "dispatch_us": 35.071998834609985,
+            "combine_us": 36.768000572919846,
+            "step_wall_us": 321.11600739881396
+          },
+          {
+            "dispatch_us": 67.6800012588501,
+            "combine_us": 63.71200084686279,
+            "step_wall_us": 379.25998913124204
+          },
+          {
+            "dispatch_us": 67.71200150251389,
+            "combine_us": 67.58400052785873,
+            "step_wall_us": 392.90901622734964
+          },
+          {
+            "dispatch_us": 37.248000502586365,
+            "combine_us": 36.607999354600906,
+            "step_wall_us": 323.29399255104363
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 2.976000076159835,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 503.32999671809375
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 555.4060044232756
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 537.8320056479424
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 496.5930129401386
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 527.9020115267485
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 528.0649929773062
+          },
+          {
+            "dispatch_us": 2.9440000653266907,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 484.7370146308094
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 528.2740166876465
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 2.848000032827258,
+            "step_wall_us": 512.6149917487055
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 483.12300350517035
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 2.976000076159835,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 552.184006664902
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 599.9659770168364
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 577.1050055045635
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 510.18199883401394
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 568.1790062226355
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 619.294005446136
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 543.3869955595583
+          },
+          {
+            "dispatch_us": 2.9440000653266907,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 562.8270155284554
+          },
+          {
+            "dispatch_us": 2.9440000653266907,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 564.3159965984523
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 513.7030093465
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 2.848000032827258,
+            "step_wall_us": 525.1710244920105
+          },
+          {
+            "dispatch_us": 2.976000076159835,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 592.9249746259302
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 572.7430107071996
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 504.19900799170136
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 568.4700154233724
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 566.1690083798021
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 2.8800000436604023,
+            "step_wall_us": 510.6799944769591
+          },
+          {
+            "dispatch_us": 2.9120000544935465,
+            "combine_us": 2.816000021994114,
+            "step_wall_us": 562.9069928545505
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 572.885008295998
+          },
+          {
+            "dispatch_us": 3.1679999083280563,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 506.84300367720425
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 3.295999951660633,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 493.74400987289846
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 527.6899901218712
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 537.4729807954282
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 487.7980099990964
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 527.8229946270585
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 528.3390055410564
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 3.2319999299943447,
+            "step_wall_us": 485.85899639874697
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.103999886661768,
+            "step_wall_us": 528.2530037220567
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.263999940827489,
+            "step_wall_us": 513.1259968038648
+          },
+          {
+            "dispatch_us": 3.1999999191612005,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 480.9760139323771
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 3.2319999299943447,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 553.5230156965554
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 3.103999886661768,
+            "step_wall_us": 602.0930013619363
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 574.7290269937366
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 509.81799722649157
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 3.1679999083280563,
+            "step_wall_us": 569.0600082743913
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 618.7999970279634
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 3.295999951660633,
+            "step_wall_us": 543.4150225482881
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 563.4980043396354
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.103999886661768,
+            "step_wall_us": 564.1110183205456
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 514.0099965501577
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 3.2319999299943447,
+            "combine_us": 3.2319999299943447,
+            "step_wall_us": 525.094976183027
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 581.9199723191559
+          },
+          {
+            "dispatch_us": 3.1999999191612005,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 571.8530155718327
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 505.55300549604
+          },
+          {
+            "dispatch_us": 3.1679999083280563,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 568.4929783456028
+          },
+          {
+            "dispatch_us": 2.976000076159835,
+            "combine_us": 3.1679999083280563,
+            "step_wall_us": 567.0079845003784
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 509.70600568689406
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 3.135999897494912,
+            "step_wall_us": 561.6209818981588
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.103999886661768,
+            "step_wall_us": 572.406017454341
+          },
+          {
+            "dispatch_us": 3.1679999083280563,
+            "combine_us": 3.1679999083280563,
+            "step_wall_us": 502.32300418429077
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 490.2909859083593
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 534.6960097085685
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.5520000383257866,
+            "step_wall_us": 520.7759968470782
+          },
+          {
+            "dispatch_us": 3.6800000816583633,
+            "combine_us": 3.0400000978261232,
+            "step_wall_us": 478.43699576333165
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 3.936000168323517,
+            "step_wall_us": 510.6370081193745
+          },
+          {
+            "dispatch_us": 3.42399999499321,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 509.00300266221166
+          },
+          {
+            "dispatch_us": 3.3279999624937773,
+            "combine_us": 3.263999940827489,
+            "step_wall_us": 471.23897820711136
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.936000168323517,
+            "step_wall_us": 504.53399308025837
+          },
+          {
+            "dispatch_us": 3.295999951660633,
+            "combine_us": 3.871999913826585,
+            "step_wall_us": 496.9680157955736
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 465.77100874856114
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 3.1999999191612005,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 550.021999515593
+          },
+          {
+            "dispatch_us": 3.008000086992979,
+            "combine_us": 3.1679999083280563,
+            "step_wall_us": 602.4859903845936
+          },
+          {
+            "dispatch_us": 3.871999913826585,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 576.4850066043437
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 509.3560030218214
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 3.5200000274926424,
+            "step_wall_us": 566.1390023306012
+          },
+          {
+            "dispatch_us": 3.936000168323517,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 620.0849893502891
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 2.9440000653266907,
+            "step_wall_us": 536.6140103433281
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.295999951660633,
+            "step_wall_us": 564.9219965562224
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.776000114157796,
+            "step_wall_us": 564.070011023432
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 515.1400109753013
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 3.263999940827489,
+            "combine_us": 2.9120000544935465,
+            "step_wall_us": 524.7489898465574
+          },
+          {
+            "dispatch_us": 3.903999924659729,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 591.7790113016963
+          },
+          {
+            "dispatch_us": 3.5520000383257866,
+            "combine_us": 3.8399999029934406,
+            "step_wall_us": 572.17400171794
+          },
+          {
+            "dispatch_us": 3.2319999299943447,
+            "combine_us": 3.3599999733269215,
+            "step_wall_us": 505.27299754321575
+          },
+          {
+            "dispatch_us": 3.6800000816583633,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 570.5120274797082
+          },
+          {
+            "dispatch_us": 3.103999886661768,
+            "combine_us": 3.3919999841600657,
+            "step_wall_us": 566.6030046995729
+          },
+          {
+            "dispatch_us": 3.0400000978261232,
+            "combine_us": 3.7120000924915075,
+            "step_wall_us": 510.99900156259537
+          },
+          {
+            "dispatch_us": 3.903999924659729,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 562.1529999189079
+          },
+          {
+            "dispatch_us": 3.5200000274926424,
+            "combine_us": 3.6800000816583633,
+            "step_wall_us": 573.5599843319505
+          },
+          {
+            "dispatch_us": 3.3599999733269215,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 502.2209952585399
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 3.903999924659729,
+            "combine_us": 4.095999989658594,
+            "step_wall_us": 494.7790002916008
+          },
+          {
+            "dispatch_us": 3.903999924659729,
+            "combine_us": 3.936000168323517,
+            "step_wall_us": 470.70099390111864
+          },
+          {
+            "dispatch_us": 3.871999913826585,
+            "combine_us": 3.8079998921602964,
+            "step_wall_us": 533.7329930625856
+          },
+          {
+            "dispatch_us": 4.095999989658594,
+            "combine_us": 4.095999989658594,
+            "step_wall_us": 487.0879929512739
+          },
+          {
+            "dispatch_us": 3.936000168323517,
+            "combine_us": 4.095999989658594,
+            "step_wall_us": 525.9590107016265
+          },
+          {
+            "dispatch_us": 3.903999924659729,
+            "combine_us": 3.936000168323517,
+            "step_wall_us": 525.9969912003726
+          },
+          {
+            "dispatch_us": 3.871999913826585,
+            "combine_us": 3.871999913826585,
+            "step_wall_us": 482.5100186280906
+          },
+          {
+            "dispatch_us": 3.936000168323517,
+            "combine_us": 4.064000211656094,
+            "step_wall_us": 525.0030080787838
+          },
+          {
+            "dispatch_us": 3.936000168323517,
+            "combine_us": 3.8399999029934406,
+            "step_wall_us": 509.00899805128574
+          },
+          {
+            "dispatch_us": 3.903999924659729,
+            "combine_us": 3.8079998921602964,
+            "step_wall_us": 473.21399324573576
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 3.295999951660633,
+            "combine_us": 3.1679999083280563,
+            "step_wall_us": 542.8370204754174
+          },
+          {
+            "dispatch_us": 3.3599999733269215,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 566.1569884978235
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 574.120000237599
+          },
+          {
+            "dispatch_us": 3.1999999191612005,
+            "combine_us": 3.3599999733269215,
+            "step_wall_us": 502.82900338061154
+          },
+          {
+            "dispatch_us": 3.2319999299943447,
+            "combine_us": 3.135999897494912,
+            "step_wall_us": 565.1100073009729
+          },
+          {
+            "dispatch_us": 3.2319999299943447,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 615.0839908514172
+          },
+          {
+            "dispatch_us": 3.1999999191612005,
+            "combine_us": 3.2319999299943447,
+            "step_wall_us": 541.123008588329
+          },
+          {
+            "dispatch_us": 3.0720001086592674,
+            "combine_us": 3.456000005826354,
+            "step_wall_us": 560.9329964499921
+          },
+          {
+            "dispatch_us": 3.1679999083280563,
+            "combine_us": 3.295999951660633,
+            "step_wall_us": 564.6430072374642
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.263999940827489,
+            "step_wall_us": 512.3520095366985
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 3.295999951660633,
+            "combine_us": 3.1679999083280563,
+            "step_wall_us": 526.8229870125651
+          },
+          {
+            "dispatch_us": 3.1679999083280563,
+            "combine_us": 3.263999940827489,
+            "step_wall_us": 592.9770122747868
+          },
+          {
+            "dispatch_us": 3.42399999499321,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 574.081001104787
+          },
+          {
+            "dispatch_us": 3.1679999083280563,
+            "combine_us": 3.103999886661768,
+            "step_wall_us": 496.50398432277143
+          },
+          {
+            "dispatch_us": 3.1679999083280563,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 569.1349797416478
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.0720001086592674,
+            "step_wall_us": 566.4420023094863
+          },
+          {
+            "dispatch_us": 3.295999951660633,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 511.6320098750293
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 2.976000076159835,
+            "step_wall_us": 560.8999927062541
+          },
+          {
+            "dispatch_us": 2.976000076159835,
+            "combine_us": 3.008000086992979,
+            "step_wall_us": 573.701981920749
+          },
+          {
+            "dispatch_us": 3.135999897494912,
+            "combine_us": 3.1999999191612005,
+            "step_wall_us": 506.0110124759376
+          }
+        ],
+        "identity_passed": true,
+        "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ]
+  ]
+}

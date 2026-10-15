@@ -1,0 +1,357 @@
+{
+  "scope": "Validate persistent E-side scatter/gather against native BF16 DeepGEMM.\n\nTwo expert GPUs test modulo expert placement and the normal-mode per-rank BF16\nEP gather boundary. Dynamic routing, all/partial padding, mixed P/D mailboxes,\nfixed-address CUDA Graph replay, and every persistent operation are exercised.\nThis is operator validation, not full-model accuracy or serving performance.\n",
+  "started_at_utc": "2026-10-14T21:10:56.055540+00:00",
+  "settings": {
+    "hidden": 6144,
+    "intermediate": 2560,
+    "capacity": 512,
+    "experts": 8,
+    "top_k": 8,
+    "world": 2,
+    "graph_replays": 20,
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/preprocess-native-top8-01.json"
+  },
+  "native_source_sha256": "98163b153510536131b86718e64f7891d8b92bbe76e6dff60c16f49a0f903c62",
+  "cases": [
+    {
+      "label": "eager-1",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "eager-31",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "eager-128",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.35527379825362e-05,
+      "passed": true,
+      "exact_fraction": 0.9999834895133972
+    },
+    {
+      "label": "eager-511",
+      "phase": 0,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 2.841010245901998e-05,
+      "passed": true,
+      "exact_fraction": 0.9999872446060181
+    },
+    {
+      "label": "eager-512",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.6214242350542918e-05,
+      "passed": true,
+      "exact_fraction": 0.9999930262565613
+    },
+    {
+      "label": "graph-0",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.1627303138084244e-05,
+      "passed": true,
+      "exact_fraction": 0.999988853931427
+    },
+    {
+      "label": "graph-1",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.7250788005185314e-05,
+      "passed": true,
+      "exact_fraction": 0.9999885559082031
+    },
+    {
+      "label": "graph-2",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-3",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 9.649135790823493e-06,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "graph-4",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.1627303138084244e-05,
+      "passed": true,
+      "exact_fraction": 0.999988853931427
+    },
+    {
+      "label": "graph-5",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.7250788005185314e-05,
+      "passed": true,
+      "exact_fraction": 0.9999885559082031
+    },
+    {
+      "label": "graph-6",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-7",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 9.649135790823493e-06,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "graph-8",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.1627303138084244e-05,
+      "passed": true,
+      "exact_fraction": 0.999988853931427
+    },
+    {
+      "label": "graph-9",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.7250788005185314e-05,
+      "passed": true,
+      "exact_fraction": 0.9999885559082031
+    },
+    {
+      "label": "graph-10",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-11",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 9.649135790823493e-06,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "graph-12",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.1627303138084244e-05,
+      "passed": true,
+      "exact_fraction": 0.999988853931427
+    },
+    {
+      "label": "graph-13",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.7250788005185314e-05,
+      "passed": true,
+      "exact_fraction": 0.9999885559082031
+    },
+    {
+      "label": "graph-14",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-15",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 9.649135790823493e-06,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "graph-16",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.1627303138084244e-05,
+      "passed": true,
+      "exact_fraction": 0.999988853931427
+    },
+    {
+      "label": "graph-17",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.7250788005185314e-05,
+      "passed": true,
+      "exact_fraction": 0.9999885559082031
+    },
+    {
+      "label": "graph-18",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-19",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 9.649135790823493e-06,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "concurrent-0",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.5489944416913204e-05,
+      "passed": true,
+      "exact_fraction": 0.9999876022338867
+    },
+    {
+      "label": "concurrent-0",
+      "phase": 1,
+      "max_absolute_error": 0.0001220703125,
+      "relative_l2_error": 3.587092805901193e-06,
+      "passed": true,
+      "exact_fraction": 0.9999425411224365
+    },
+    {
+      "label": "concurrent-1",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.5489944416913204e-05,
+      "passed": true,
+      "exact_fraction": 0.9999876022338867
+    },
+    {
+      "label": "concurrent-1",
+      "phase": 1,
+      "max_absolute_error": 0.0001220703125,
+      "relative_l2_error": 3.587092805901193e-06,
+      "passed": true,
+      "exact_fraction": 0.9999425411224365
+    },
+    {
+      "label": "concurrent-2",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.5489944416913204e-05,
+      "passed": true,
+      "exact_fraction": 0.9999876022338867
+    },
+    {
+      "label": "concurrent-2",
+      "phase": 1,
+      "max_absolute_error": 0.0001220703125,
+      "relative_l2_error": 3.587092805901193e-06,
+      "passed": true,
+      "exact_fraction": 0.9999425411224365
+    },
+    {
+      "label": "concurrent-3",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.5489944416913204e-05,
+      "passed": true,
+      "exact_fraction": 0.9999876022338867
+    },
+    {
+      "label": "concurrent-3",
+      "phase": 1,
+      "max_absolute_error": 0.0001220703125,
+      "relative_l2_error": 3.587092805901193e-06,
+      "passed": true,
+      "exact_fraction": 0.9999425411224365
+    },
+    {
+      "label": "concurrent-4",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.5489944416913204e-05,
+      "passed": true,
+      "exact_fraction": 0.9999876022338867
+    },
+    {
+      "label": "concurrent-4",
+      "phase": 1,
+      "max_absolute_error": 0.0001220703125,
+      "relative_l2_error": 3.587092805901193e-06,
+      "passed": true,
+      "exact_fraction": 0.9999425411224365
+    }
+  ],
+  "status": "passed",
+  "tolerances": {
+    "atol": 0.005,
+    "rtol": 0.02,
+    "relative_l2": 0.002
+  },
+  "executors": [
+    {
+      "trace_capacity_per_cta": 8192,
+      "backend": "sm100",
+      "benchmark_stage": 0,
+      "ctas": 148,
+      "cluster_size": 2,
+      "prefill_preprocess": true,
+      "operation_templates": "scatter1,scatter2,gate_up,activation,down,gather",
+      "loading_stages": 9,
+      "threads_per_cta": 256,
+      "registers_per_thread": 92,
+      "local_bytes_per_thread": 0,
+      "dynamic_shared_bytes_per_cta": 232448,
+      "static_shared_bytes_per_cta": 0,
+      "hidden": 6144,
+      "intermediate": 2560,
+      "prefill_tile_rows": 128,
+      "decode_tile_rows": 128
+    },
+    {
+      "trace_capacity_per_cta": 8192,
+      "backend": "sm100",
+      "benchmark_stage": 0,
+      "ctas": 148,
+      "cluster_size": 2,
+      "prefill_preprocess": true,
+      "operation_templates": "scatter1,scatter2,gate_up,activation,down,gather",
+      "loading_stages": 9,
+      "threads_per_cta": 256,
+      "registers_per_thread": 92,
+      "local_bytes_per_thread": 0,
+      "dynamic_shared_bytes_per_cta": 232448,
+      "static_shared_bytes_per_cta": 0,
+      "hidden": 6144,
+      "intermediate": 2560,
+      "prefill_tile_rows": 128,
+      "decode_tile_rows": 128
+    }
+  ],
+  "trace_files": [
+    "/home/alayadb/mengze/expertplex-b300/artifacts/preprocess-native-top8-01.rank0.trace.pt",
+    "/home/alayadb/mengze/expertplex-b300/artifacts/preprocess-native-top8-01.rank1.trace.pt"
+  ],
+  "observed_stages": [
+    0,
+    1,
+    2,
+    3,
+    5,
+    6,
+    7
+  ],
+  "finished_at_utc": "2026-10-14T21:11:32.889843+00:00"
+}

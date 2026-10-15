@@ -1,0 +1,91 @@
+{
+  "scope": "Static capacity estimate, not measured allocation or throughput. Includes 16 GiB runtime reserve; excludes exact CUDA allocator/driver behavior. The paper long-workload layout uses a different model/precision.",
+  "rows": [
+    {
+      "layout": "1P3D4E",
+      "max_prefill_tokens": 24576,
+      "max_decode_tokens": 256,
+      "total_decode_kv_tokens": 196608,
+      "overlap": "tbo",
+      "prefill_preprocess": true,
+      "estimate": {
+        "attention_weights_bytes": 24141097984,
+        "attention_kv_bytes": 16642998272,
+        "attention_buffers_bytes": 2420658176,
+        "expert_weights_bytes": 234042163200,
+        "expert_buffers_bytes": 19778768292,
+        "reserve_bytes_per_gpu": 17179869184,
+        "available_bytes_per_gpu": 287762808832,
+        "attention_total_gib": 56.237563133239746,
+        "expert_total_gib": 252.38916340842843,
+        "fits": true,
+        "note": "Capacity estimate only; verify allocated/reserved HBM after GPU startup."
+      }
+    },
+    {
+      "layout": "3P1D4E",
+      "max_prefill_tokens": 24576,
+      "max_decode_tokens": 256,
+      "total_decode_kv_tokens": 196608,
+      "overlap": "tbo",
+      "prefill_preprocess": true,
+      "estimate": {
+        "attention_weights_bytes": 24141097984,
+        "attention_kv_bytes": 49928994816,
+        "attention_buffers_bytes": 2420658176,
+        "expert_weights_bytes": 234042163200,
+        "expert_buffers_bytes": 52793183652,
+        "reserve_bytes_per_gpu": 17179869184,
+        "available_bytes_per_gpu": 287762808832,
+        "attention_total_gib": 87.23756313323975,
+        "expert_total_gib": 283.13623372092843,
+        "fits": false,
+        "note": "Capacity estimate only; verify allocated/reserved HBM after GPU startup."
+      }
+    },
+    {
+      "layout": "3P1D4E",
+      "max_prefill_tokens": 24576,
+      "max_decode_tokens": 256,
+      "total_decode_kv_tokens": 196608,
+      "overlap": "none",
+      "prefill_preprocess": true,
+      "estimate": {
+        "attention_weights_bytes": 24141097984,
+        "attention_kv_bytes": 49928994816,
+        "attention_buffers_bytes": 1210323968,
+        "expert_weights_bytes": 234042163200,
+        "expert_buffers_bytes": 26396591828,
+        "reserve_bytes_per_gpu": 17179869184,
+        "available_bytes_per_gpu": 287762808832,
+        "attention_total_gib": 86.1103515625,
+        "expert_total_gib": 258.55249186232686,
+        "fits": true,
+        "note": "Capacity estimate only; verify allocated/reserved HBM after GPU startup."
+      }
+    },
+    {
+      "layout": "3P1D4E",
+      "max_prefill_tokens": 24576,
+      "prefill_mailbox_tokens": 12288,
+      "max_decode_tokens": 256,
+      "total_decode_kv_tokens": 196608,
+      "overlap": "tbo",
+      "tbo_token_distribution_threshold": 0.5,
+      "prefill_preprocess": true,
+      "estimate": {
+        "attention_weights_bytes": 24141097984,
+        "attention_kv_bytes": 49928994816,
+        "attention_buffers_bytes": 2420658176,
+        "expert_weights_bytes": 234042163200,
+        "expert_buffers_bytes": 27418955172,
+        "reserve_bytes_per_gpu": 17179869184,
+        "available_bytes_per_gpu": 287762808832,
+        "attention_total_gib": 87.23756313323975,
+        "expert_total_gib": 259.50464192405343,
+        "fits": true,
+        "note": "Capacity estimate only; verify allocated/reserved HBM after GPU startup."
+      }
+    }
+  ]
+}

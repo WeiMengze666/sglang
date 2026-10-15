@@ -1,0 +1,45 @@
+{
+  "scope": "Serially smoke-test eight-GPU baseline deployments with one checkpoint.\n\nThis runs finite-generation checks, not paper accuracy or goodput acceptance.\nEach launcher owns and cleans its process groups; no global process killer is\nused. The output root must be new so failed runs are preserved.\n",
+  "settings": {
+    "model_path": "/home/alayadb/mengze/expertplex-b300/tiny-deepep-checkpoint",
+    "output_dir": "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-expertplex-fresh-02",
+    "variants": [
+      "expertplex"
+    ],
+    "port": 32000,
+    "pdmux_config": null,
+    "expertplex_config": "/home/alayadb/mengze/expertplex-b300/tiny-deepep-tbo-01.json",
+    "teacher_reference": "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-matrix-fresh-01/colocated-teacher.json",
+    "teacher_flush_between": true,
+    "teacher_histories": "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-colocated-tiny-01/colocated-e2e.json",
+    "startup_timeout": 600
+  },
+  "communication_environment": {},
+  "cases": [
+    {
+      "variant": "expertplex",
+      "command": [
+        "/home/alayadb/mengze/expertplex-b300/venv/bin/python",
+        "/home/alayadb/mengze/expertplex-b300/src/examples/expertplex/launch.py",
+        "--config",
+        "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-expertplex-fresh-02/node.json",
+        "--attention-backend",
+        "triton",
+        "--sampling-backend",
+        "pytorch",
+        "--skip-tokenizer-init",
+        "--cuda-graph",
+        "--sequence-cap",
+        "4096",
+        "--kv-tokens",
+        "8192",
+        "--port",
+        "32000",
+        "--log-dir",
+        "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-expertplex-fresh-02/expertplex"
+      ],
+      "status": "functional_pass",
+      "teacher_forcing_recorded": true
+    }
+  ]
+}

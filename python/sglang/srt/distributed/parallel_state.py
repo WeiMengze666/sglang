@@ -2206,6 +2206,14 @@ _DCP: Optional[GroupCoordinator] = None
 _PDMUX_PREFILL_TP_GROUP: Optional[GroupCoordinator] = None
 
 
+def is_pdmux_prefill() -> bool:
+    """Whether the current host launch scope belongs to PDMux prefill."""
+    return (
+        _PDMUX_PREFILL_TP_GROUP is not None
+        and get_parallel().tp_group is _PDMUX_PREFILL_TP_GROUP
+    )
+
+
 @contextmanager
 def pdmux_prefill_tp_group():
     """Use the duplicate TP communicator for the prefill stream.

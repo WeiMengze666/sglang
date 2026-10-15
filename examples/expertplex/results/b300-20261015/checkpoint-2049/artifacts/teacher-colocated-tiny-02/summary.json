@@ -1,0 +1,48 @@
+{
+  "scope": "Serially smoke-test eight-GPU baseline deployments with one checkpoint.\n\nThis runs finite-generation checks, not paper accuracy or goodput acceptance.\nEach launcher owns and cleans its process groups; no global process killer is\nused. The output root must be new so failed runs are preserved.\n",
+  "settings": {
+    "model_path": "/home/alayadb/mengze/expertplex-b300/tiny-deepep-checkpoint",
+    "output_dir": "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-colocated-tiny-02",
+    "variants": [
+      "colocated"
+    ],
+    "port": 32000,
+    "pdmux_config": null,
+    "expertplex_config": null,
+    "teacher_reference": null,
+    "teacher_histories": "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-colocated-tiny-01/colocated-e2e.json",
+    "startup_timeout": 600
+  },
+  "communication_environment": {
+    "NVSHMEM_HCA_LIST": "mlx5_0:1,mlx5_6:1,mlx5_8:1,mlx5_10:1,mlx5_12:1,mlx5_13:1,mlx5_14:1,mlx5_15:1,mlx5_16:1,mlx5_20:1",
+    "NVSHMEM_ENABLE_NIC_PE_MAPPING": "1"
+  },
+  "cases": [
+    {
+      "variant": "colocated",
+      "command": [
+        "/home/alayadb/mengze/expertplex-b300/venv/bin/python",
+        "/home/alayadb/mengze/expertplex-b300/src/examples/expertplex/launch_baseline.py",
+        "--variant",
+        "colocated",
+        "--model-path",
+        "/home/alayadb/mengze/expertplex-b300/tiny-deepep-checkpoint",
+        "--attention-backend",
+        "triton",
+        "--skip-tokenizer-init",
+        "--sequence-cap",
+        "4096",
+        "--max-prefill-tokens",
+        "2048",
+        "--port",
+        "32000",
+        "--log-dir",
+        "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-colocated-tiny-02/colocated",
+        "--startup-timeout",
+        "600"
+      ],
+      "status": "functional_pass",
+      "teacher_forcing_recorded": true
+    }
+  ]
+}

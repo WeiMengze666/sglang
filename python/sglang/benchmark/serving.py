@@ -1930,6 +1930,8 @@ async def benchmark(
         "input_lens": [output.prompt_len for output in outputs],
         "output_lens": output_lens,
         "ttfts": [output.ttft for output in outputs],
+        "latencies": [output.latency for output in outputs],
+        "successes": [output.success for output in outputs],
         "itls": [output.itl for output in outputs],
         "generated_texts": [output.generated_text for output in outputs],
         "errors": [output.error for output in outputs],

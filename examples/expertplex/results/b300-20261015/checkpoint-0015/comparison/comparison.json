@@ -1,0 +1,402 @@
+{
+  "scope": "Compare explicitly selected serving experiments with provenance checks.\n\nOutputs raw-derived JSON/CSV and publication-friendly PDF/SVG figures. Synthetic\nweights remain labeled on every figure. Maximum feasible tested rate is reported\nwithout interpolating the boundary or treating it as trained-model acceptance.\n",
+  "common_conditions": {
+    "model_path": "synthetic-480b",
+    "tokenizer_path": "coder-tokenizer-fixed",
+    "weight_mode": "synthetic",
+    "dataset_path": "loogle-24576.jsonl",
+    "requests": 32,
+    "seed": 42,
+    "sequence_cap": 24576,
+    "decode_kv_tokens": 196608,
+    "attention_backend": "triton",
+    "ttft_slo_ms": 10000.0,
+    "tpot_slo_ms": 100.0,
+    "canonical_seed": "1234"
+  },
+  "ordered_input_lengths_sha256": "c7ea334865d574f0178636d02c76c268fe6dd8b74baa9571a2f8b3bd97f941af",
+  "runs": [
+    {
+      "path": "full480-canonical-loogle-colocated-01",
+      "variant": "full480-canonical-loogle-colocated-01",
+      "maximum_feasible_tested_rps": null,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "8eaf320d205863c8d3a5d80d8ae289ad37256831fe3f4d42319654c982ed0079",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "9e9409ef0da46300c552885bc57fdad578833a83949ebc4bc3d41c774d462446",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "e8159ce340d9d2887984c92c63cfa800b1c56166e6e358749b4c9412de58af85",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "6e0d44676c61cfcbc813c2e7f574f4f92d2d976100e41d291bdbec332965909b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "885c7d4667234a9bdc7fe95ae8d99b40cd54d3dab3248e664008fa6c4a9ec63b",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "b0e97c671590ccb75b6758fdf442dc106140bc56d00991f872495d8a2a6cca98",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "3bf10a42c1f52fd5e09af0234d7206ade510d77f1a68a4829b0efc902cdbdbc5",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "4183afa4483841e5d0ea8d4bd08477e3d7c6608c27ec61067f03875ca0e859a6",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "25b44c49364f26b77eacf3d01943e45b35c1909afc9747a56c8be26d4448b824",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "7b4f9e543942e224ebdea56773e8786884635d3594ede6ff9077cfff626b1467"
+      },
+      "input_artifact_sha256": {
+        "loogle-24576.jsonl": "414008c3b81ed82a1aafd1d3d7dda01a8750111440f3f73d65ac2cc8702428a0",
+        "config.json": "5a6692a672438b49c5b8b36bcd3de4015261d984bf55e2c352f9ef89d7170091",
+        "tokenizer.json": "19564a48c4f71a2a1b937cce34c737a1e662b171c5f5d7edf641a15cd896f07d"
+      },
+      "runtime_controls": {
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": 1234
+      }
+    },
+    {
+      "path": "full480-canonical-loogle-chunked-01",
+      "variant": "full480-canonical-loogle-chunked-01",
+      "maximum_feasible_tested_rps": null,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "8eaf320d205863c8d3a5d80d8ae289ad37256831fe3f4d42319654c982ed0079",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "9e9409ef0da46300c552885bc57fdad578833a83949ebc4bc3d41c774d462446",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "e8159ce340d9d2887984c92c63cfa800b1c56166e6e358749b4c9412de58af85",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "6e0d44676c61cfcbc813c2e7f574f4f92d2d976100e41d291bdbec332965909b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "885c7d4667234a9bdc7fe95ae8d99b40cd54d3dab3248e664008fa6c4a9ec63b",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "b0e97c671590ccb75b6758fdf442dc106140bc56d00991f872495d8a2a6cca98",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "3bf10a42c1f52fd5e09af0234d7206ade510d77f1a68a4829b0efc902cdbdbc5",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "4183afa4483841e5d0ea8d4bd08477e3d7c6608c27ec61067f03875ca0e859a6",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "25b44c49364f26b77eacf3d01943e45b35c1909afc9747a56c8be26d4448b824",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "7b4f9e543942e224ebdea56773e8786884635d3594ede6ff9077cfff626b1467"
+      },
+      "input_artifact_sha256": {
+        "loogle-24576.jsonl": "414008c3b81ed82a1aafd1d3d7dda01a8750111440f3f73d65ac2cc8702428a0",
+        "config.json": "5a6692a672438b49c5b8b36bcd3de4015261d984bf55e2c352f9ef89d7170091",
+        "tokenizer.json": "19564a48c4f71a2a1b937cce34c737a1e662b171c5f5d7edf641a15cd896f07d"
+      },
+      "runtime_controls": {
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": 1234
+      }
+    },
+    {
+      "path": "full480-canonical-loogle-pdmux-01",
+      "variant": "full480-canonical-loogle-pdmux-01",
+      "maximum_feasible_tested_rps": 0.5,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "8eaf320d205863c8d3a5d80d8ae289ad37256831fe3f4d42319654c982ed0079",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "9e9409ef0da46300c552885bc57fdad578833a83949ebc4bc3d41c774d462446",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "e8159ce340d9d2887984c92c63cfa800b1c56166e6e358749b4c9412de58af85",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "6e0d44676c61cfcbc813c2e7f574f4f92d2d976100e41d291bdbec332965909b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "885c7d4667234a9bdc7fe95ae8d99b40cd54d3dab3248e664008fa6c4a9ec63b",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "b0e97c671590ccb75b6758fdf442dc106140bc56d00991f872495d8a2a6cca98",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "3bf10a42c1f52fd5e09af0234d7206ade510d77f1a68a4829b0efc902cdbdbc5",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "4183afa4483841e5d0ea8d4bd08477e3d7c6608c27ec61067f03875ca0e859a6",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "25b44c49364f26b77eacf3d01943e45b35c1909afc9747a56c8be26d4448b824",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "7b4f9e543942e224ebdea56773e8786884635d3594ede6ff9077cfff626b1467"
+      },
+      "input_artifact_sha256": {
+        "loogle-24576.jsonl": "414008c3b81ed82a1aafd1d3d7dda01a8750111440f3f73d65ac2cc8702428a0",
+        "config.json": "5a6692a672438b49c5b8b36bcd3de4015261d984bf55e2c352f9ef89d7170091",
+        "tokenizer.json": "19564a48c4f71a2a1b937cce34c737a1e662b171c5f5d7edf641a15cd896f07d",
+        "pdmux.yaml": "cbb118ef65494f1df5bb39576648d8f237a8145df2505dcbea05ad8d5a2c3dcd"
+      },
+      "runtime_controls": {
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": 1234
+      }
+    },
+    {
+      "path": "full480-canonical-loogle-expertplex-01",
+      "variant": "full480-canonical-loogle-expertplex-01",
+      "maximum_feasible_tested_rps": 0.1,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "8eaf320d205863c8d3a5d80d8ae289ad37256831fe3f4d42319654c982ed0079",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "9e9409ef0da46300c552885bc57fdad578833a83949ebc4bc3d41c774d462446",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "e8159ce340d9d2887984c92c63cfa800b1c56166e6e358749b4c9412de58af85",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "6e0d44676c61cfcbc813c2e7f574f4f92d2d976100e41d291bdbec332965909b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "885c7d4667234a9bdc7fe95ae8d99b40cd54d3dab3248e664008fa6c4a9ec63b",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "b0e97c671590ccb75b6758fdf442dc106140bc56d00991f872495d8a2a6cca98",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "3bf10a42c1f52fd5e09af0234d7206ade510d77f1a68a4829b0efc902cdbdbc5",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "4183afa4483841e5d0ea8d4bd08477e3d7c6608c27ec61067f03875ca0e859a6",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "25b44c49364f26b77eacf3d01943e45b35c1909afc9747a56c8be26d4448b824",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "7b4f9e543942e224ebdea56773e8786884635d3594ede6ff9077cfff626b1467"
+      },
+      "input_artifact_sha256": {
+        "loogle-24576.jsonl": "414008c3b81ed82a1aafd1d3d7dda01a8750111440f3f73d65ac2cc8702428a0",
+        "config.json": "5a6692a672438b49c5b8b36bcd3de4015261d984bf55e2c352f9ef89d7170091",
+        "tokenizer.json": "19564a48c4f71a2a1b937cce34c737a1e662b171c5f5d7edf641a15cd896f07d",
+        "node.json": "998b1dd4ca8ae936e07bcf600ab7174d2a53bf9496bdc26ba5b2dc4967a81a55"
+      },
+      "runtime_controls": {
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": 1234,
+        "SGLANG_EXPERTPLEX_PIPELINED_STORES": 1
+      }
+    }
+  ],
+  "rows": [
+    {
+      "variant": "full480-canonical-loogle-colocated-01",
+      "experiment": "full480-canonical-loogle-colocated-01",
+      "request_rate": 0.1,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 22,
+      "joint_attainment": 0.6875,
+      "joint_wilson95": [
+        0.5143332169904506,
+        0.8204745836638998
+      ],
+      "p90_ttft_ms_completed": 5573.830977003672,
+      "p90_tpot_ms_completed": 1659.8616952074142,
+      "output_tokens_per_second": 1.2519179834571759,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-loogle-colocated-01",
+      "experiment": "full480-canonical-loogle-colocated-01",
+      "request_rate": 0.25,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 12,
+      "joint_attainment": 0.375,
+      "joint_wilson95": [
+        0.2293388730945454,
+        0.5474559264692209
+      ],
+      "p90_ttft_ms_completed": 8171.925174197533,
+      "p90_tpot_ms_completed": 2036.4291976880597,
+      "output_tokens_per_second": 2.8130520582403418,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-loogle-colocated-01",
+      "experiment": "full480-canonical-loogle-colocated-01",
+      "request_rate": 0.5,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 1,
+      "joint_attainment": 0.03125,
+      "joint_wilson95": [
+        0.005537860164003344,
+        0.15744263820012042
+      ],
+      "p90_ttft_ms_completed": 37520.85281079927,
+      "p90_tpot_ms_completed": 3703.272210124126,
+      "output_tokens_per_second": 3.6307903914629724,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-loogle-chunked-01",
+      "experiment": "full480-canonical-loogle-chunked-01",
+      "request_rate": 0.1,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 0,
+      "joint_attainment": 0.0,
+      "joint_wilson95": [
+        0.0,
+        0.10717919825506533
+      ],
+      "p90_ttft_ms_completed": 22720.819040885544,
+      "p90_tpot_ms_completed": 252.66948791213508,
+      "output_tokens_per_second": 1.1858615095222398,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-loogle-chunked-01",
+      "experiment": "full480-canonical-loogle-chunked-01",
+      "request_rate": 0.25,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 0,
+      "joint_attainment": 0.0,
+      "joint_wilson95": [
+        0.0,
+        0.10717919825506533
+      ],
+      "p90_ttft_ms_completed": 26175.69525319268,
+      "p90_tpot_ms_completed": 278.1422867858055,
+      "output_tokens_per_second": 2.561934690519326,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-loogle-chunked-01",
+      "experiment": "full480-canonical-loogle-chunked-01",
+      "request_rate": 0.5,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 0,
+      "joint_attainment": 0.0,
+      "joint_wilson95": [
+        0.0,
+        0.10717919825506533
+      ],
+      "p90_ttft_ms_completed": 45005.45579849569,
+      "p90_tpot_ms_completed": 268.5789656214183,
+      "output_tokens_per_second": 3.2681448912413185,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-loogle-pdmux-01",
+      "experiment": "full480-canonical-loogle-pdmux-01",
+      "request_rate": 0.1,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 31,
+      "joint_attainment": 0.96875,
+      "joint_wilson95": [
+        0.8425573617998795,
+        0.9944621398359966
+      ],
+      "p90_ttft_ms_completed": 1273.2319119997555,
+      "p90_tpot_ms_completed": 37.00585731843603,
+      "output_tokens_per_second": 1.2559965245032707,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "full480-canonical-loogle-pdmux-01",
+      "experiment": "full480-canonical-loogle-pdmux-01",
+      "request_rate": 0.25,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 31,
+      "joint_attainment": 0.96875,
+      "joint_wilson95": [
+        0.8425573617998795,
+        0.9944621398359966
+      ],
+      "p90_ttft_ms_completed": 1479.545524198329,
+      "p90_tpot_ms_completed": 50.40137499781849,
+      "output_tokens_per_second": 3.132145498278574,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "full480-canonical-loogle-pdmux-01",
+      "experiment": "full480-canonical-loogle-pdmux-01",
+      "request_rate": 0.5,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 31,
+      "joint_attainment": 0.96875,
+      "joint_wilson95": [
+        0.8425573617998795,
+        0.9944621398359966
+      ],
+      "p90_ttft_ms_completed": 3649.992050221772,
+      "p90_tpot_ms_completed": 55.73734069912462,
+      "output_tokens_per_second": 6.1992842256020495,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "full480-canonical-loogle-expertplex-01",
+      "experiment": "full480-canonical-loogle-expertplex-01",
+      "request_rate": 0.1,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 32,
+      "joint_attainment": 1.0,
+      "joint_wilson95": [
+        0.8928208017449346,
+        1.0
+      ],
+      "p90_ttft_ms_completed": 7407.770577905467,
+      "p90_tpot_ms_completed": 36.468454002076015,
+      "output_tokens_per_second": 1.2518664338156231,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "full480-canonical-loogle-expertplex-01",
+      "experiment": "full480-canonical-loogle-expertplex-01",
+      "request_rate": 0.25,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 13,
+      "joint_attainment": 0.40625,
+      "joint_wilson95": [
+        0.25519634842665784,
+        0.5773997512461668
+      ],
+      "p90_ttft_ms_completed": 14740.452969496255,
+      "p90_tpot_ms_completed": 31.61352166285591,
+      "output_tokens_per_second": 2.9325488410790412,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-loogle-expertplex-01",
+      "experiment": "full480-canonical-loogle-expertplex-01",
+      "request_rate": 0.5,
+      "attempted": 32,
+      "completed": 32,
+      "joint_met": 2,
+      "joint_attainment": 0.0625,
+      "joint_wilson95": [
+        0.01731056703164152,
+        0.20147123144154067
+      ],
+      "p90_ttft_ms_completed": 40498.12780087814,
+      "p90_tpot_ms_completed": 0.14666178855501744,
+      "output_tokens_per_second": 3.568997106011096,
+      "meets_p90_joint_slo": false
+    }
+  ],
+  "uncertainty_note": "Wilson intervals describe finite-request attainment, not uncertainty in the arrival-rate boundary; repeated Poisson seeds remain necessary."
+}

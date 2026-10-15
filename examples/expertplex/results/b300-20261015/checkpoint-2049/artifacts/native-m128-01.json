@@ -1,0 +1,570 @@
+{
+  "schema_version": 1,
+  "native_source_sha256": "e0210394386f00385e469d6d1a05609cf0c1fe14428492c88225853e9a07ec0b",
+  "kernel": "sm100",
+  "scope": "native CUDA IPC primitive correctness/progress smoke; not full-model accuracy or goodput",
+  "started_at_utc": "2026-10-14T20:14:23.557829+00:00",
+  "geometry": {
+    "hidden": 6144,
+    "intermediate": 2560,
+    "layers": 2,
+    "experts": 40,
+    "top_k": 2,
+    "capacity": 128,
+    "seed": 20261013,
+    "weight_std": 0.02,
+    "packed": false
+  },
+  "reference": "CPU Torch FP32 gate/up and down; BF16 activation, expert output and final output",
+  "latency_scope": "host dispatch/combine, final BF16 cast and stream completion; validation D2H copy excluded; smoke only",
+  "tolerances": {
+    "absolute": 0.01,
+    "relative": 0.03,
+    "relative_l2": 0.03
+  },
+  "cases": [
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 127,
+      "layer": 0,
+      "epoch": 1,
+      "padding_routes": 0,
+      "wall_latency_ms": 42.1367299859412,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0010683650616556406,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0001220703125,
+        "relative_l2_error": 4.933547756991175e-07,
+        "passed": true,
+        "exact_elements_fraction": 0.9999858736991882
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 1,
+      "layer": 0,
+      "epoch": 1,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.3176140016876161,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0007873367867432535,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 127,
+      "layer": 1,
+      "epoch": 2,
+      "padding_routes": 2,
+      "wall_latency_ms": 0.3687219868879765,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.000995492096990347,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0009765625,
+        "relative_l2_error": 4.370256192487432e-06,
+        "passed": true,
+        "exact_elements_fraction": 0.9999820590019226
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 2,
+      "layer": 1,
+      "epoch": 2,
+      "padding_routes": 2,
+      "wall_latency_ms": 0.30394000350497663,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0008772995788604021,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 127,
+      "layer": 0,
+      "epoch": 3,
+      "padding_routes": 254,
+      "wall_latency_ms": 0.14305501827038825,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 3,
+      "layer": 0,
+      "epoch": 3,
+      "padding_routes": 6,
+      "wall_latency_ms": 0.13486001989804208,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 127,
+      "layer": 1,
+      "epoch": 4,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.3008740022778511,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.001102666836231947,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0001220703125,
+        "relative_l2_error": 5.44078375241952e-07,
+        "passed": true,
+        "exact_elements_fraction": 0.999984622001648
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 4,
+      "layer": 1,
+      "epoch": 4,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.37089799297973514,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0008395632612518966,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 127,
+      "layer": 0,
+      "epoch": 5,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.30775999766774476,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0010453653521835804,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.001953125,
+        "relative_l2_error": 1.17516292448272e-05,
+        "passed": true,
+        "exact_elements_fraction": 0.9999692440032959
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 5,
+      "layer": 0,
+      "epoch": 5,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.3954330168198794,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.001110989018343389,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 1.9073486328125e-06,
+        "relative_l2_error": 4.021266164500048e-08,
+        "passed": true,
+        "exact_elements_fraction": 0.9999674558639526
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 127,
+      "layer": 1,
+      "epoch": 6,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.3244150138925761,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0010405511129647493,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0009765625,
+        "relative_l2_error": 8.124909982143436e-06,
+        "passed": true,
+        "exact_elements_fraction": 0.9999769330024719
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 6,
+      "layer": 1,
+      "epoch": 6,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.4668160108849406,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0008854502812027931,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 3.814697265625e-06,
+        "relative_l2_error": 7.406929825037878e-08,
+        "passed": true,
+        "exact_elements_fraction": 0.9999457597732544
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 127,
+      "layer": 0,
+      "epoch": 7,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.3219619975425303,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0010738223791122437,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.00048828125,
+        "relative_l2_error": 2.9503746645787032e-06,
+        "passed": true,
+        "exact_elements_fraction": 0.9999820590019226
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 7,
+      "layer": 0,
+      "epoch": 7,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.4777840222232044,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0010301603469997644,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 1.52587890625e-05,
+        "relative_l2_error": 2.684733715341281e-07,
+        "passed": true,
+        "exact_elements_fraction": 0.9999535083770752
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 127,
+      "layer": 1,
+      "epoch": 8,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.31819299329072237,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0010308403288945556,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0009765625,
+        "relative_l2_error": 3.8800262700533494e-06,
+        "passed": true,
+        "exact_elements_fraction": 0.9999858736991882
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 1,
+      "layer": 1,
+      "epoch": 8,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.29798600007779896,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0007846013177186251,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    }
+  ],
+  "software": {
+    "pytorch": "2.14.1+cu130",
+    "cuda": "13.0"
+  },
+  "hardware": [
+    {
+      "device": 0,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 1,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 2,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 3,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 4,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 5,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 6,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 7,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    }
+  ],
+  "executor": {
+    "trace_capacity_per_cta": 0,
+    "backend": "sm100",
+    "benchmark_stage": 0,
+    "ctas": 148,
+    "cluster_size": 2,
+    "operation_templates": "gate_up,activation,down",
+    "loading_stages": 9,
+    "threads_per_cta": 256,
+    "registers_per_thread": 94,
+    "local_bytes_per_thread": 0,
+    "dynamic_shared_bytes_per_cta": 232448,
+    "static_shared_bytes_per_cta": 0,
+    "hidden": 6144,
+    "intermediate": 2560,
+    "prefill_tile_rows": 128,
+    "decode_tile_rows": 128
+  },
+  "zero_token_fast_path": {
+    "passed": true,
+    "ipc_dispatches": 0
+  },
+  "concurrent_phases": [
+    {
+      "phase": "prefill",
+      "wall_latency_ms": 1.8000919953919947,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0010853902203962207,
+      "passed": true
+    },
+    {
+      "phase": "decode",
+      "wall_latency_ms": 3.2486120180692524,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0006962832412682474,
+      "passed": true
+    }
+  ],
+  "cuda_graph_replays": [
+    {
+      "replay": 0,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0013951812870800495,
+      "passed": true
+    },
+    {
+      "replay": 1,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0009494357509538531,
+      "passed": true
+    },
+    {
+      "replay": 2,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 3,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0010141957318410277,
+      "passed": true
+    },
+    {
+      "replay": 4,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0012401217827573419,
+      "passed": true
+    },
+    {
+      "replay": 5,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 6,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0006738436059094965,
+      "passed": true
+    },
+    {
+      "replay": 7,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.001074187457561493,
+      "passed": true
+    },
+    {
+      "replay": 8,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 9,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0012545031495392323,
+      "passed": true
+    },
+    {
+      "replay": 10,
+      "max_absolute_error": 0.00390625,
+      "relative_l2_error": 0.0010894874576479197,
+      "passed": true
+    },
+    {
+      "replay": 11,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 12,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0012477509444579482,
+      "passed": true
+    },
+    {
+      "replay": 13,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0012783564161509275,
+      "passed": true
+    },
+    {
+      "replay": 14,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 15,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0007627145387232304,
+      "passed": true
+    },
+    {
+      "replay": 16,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0010588937439024448,
+      "passed": true
+    },
+    {
+      "replay": 17,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 18,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0011311575071886182,
+      "passed": true
+    },
+    {
+      "replay": 19,
+      "max_absolute_error": 0.0078125,
+      "relative_l2_error": 0.0008603890892118216,
+      "passed": true
+    }
+  ],
+  "timeout": {
+    "passed": true,
+    "configured_timeout_ms": 100,
+    "wall_latency_ms": 100.43391000363044,
+    "slot_reused": false,
+    "fresh_owner_allocation": true
+  },
+  "status": "passed",
+  "finished_at_utc": "2026-10-14T20:17:21.910864+00:00"
+}

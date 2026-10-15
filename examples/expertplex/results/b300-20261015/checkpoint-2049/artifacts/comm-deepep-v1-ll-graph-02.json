@@ -1,0 +1,1717 @@
+{
+  "scope": "Single-node adaptation of paper section 7.5: dispatch/combine separately.\n\nRanks 0..3 are attention clients and 4..7 hold 40 active experts each. DeepEP\nrequires equal expert ranges on all ranks, so its first 160 expert IDs are\nunused and the 160 actual expert IDs are mapped onto ranks 4..7. Prefill uses\nclient 0; decode uses clients 1..3. This is an 8-GPU NVLink adaptation, not the\npaper's 16-GPU hierarchical RDMA experiment. Echo work is outside timing.\n",
+  "settings": {
+    "backend": "deepep",
+    "mode": "low_latency",
+    "rows": [
+      1,
+      16,
+      128
+    ],
+    "hidden": 6144,
+    "experts": 40,
+    "top_k": 8,
+    "iterations": 10,
+    "group_transfers": false,
+    "vary_routes": false,
+    "cuda_graph": true,
+    "seed": 20261015,
+    "port": 29650,
+    "deepep_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/comm-deepep-v1-ll-graph-02.json"
+  },
+  "summary": [
+    {
+      "rows": 1,
+      "max_rank_samples": {
+        "dispatch_us": [
+          40.991999208927155,
+          42.43199899792671,
+          42.94399917125702,
+          40.76800122857094,
+          40.863998234272,
+          42.59200021624565,
+          41.08799993991852,
+          41.08799993991852,
+          42.91199892759323,
+          42.91199892759323
+        ],
+        "combine_us": [
+          38.656000047922134,
+          36.67199984192848,
+          36.70400008559227,
+          36.51199862360954,
+          36.51199862360954,
+          36.639999598264694,
+          34.752000123262405,
+          36.54399886727333,
+          36.607999354600906,
+          37.21600025892258
+        ],
+        "step_wall_us": [
+          356.5410152077675,
+          374.7949958778918,
+          369.67601045034826,
+          344.96301668696105,
+          349.62198697030544,
+          354.594987584278,
+          346.0689913481474,
+          343.6359984334558,
+          344.65797943994403,
+          342.32999314554036
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 41.759999468922615,
+        "combine_us": 36.6239994764328,
+        "step_wall_us": 347.8454891592264
+      }
+    },
+    {
+      "rows": 16,
+      "max_rank_samples": {
+        "dispatch_us": [
+          42.78400167822838,
+          44.89599913358688,
+          43.23200136423111,
+          42.7200011909008,
+          42.94399917125702,
+          44.92799937725067,
+          42.65600070357323,
+          42.367998510599136,
+          42.94399917125702,
+          42.62400045990944
+        ],
+        "combine_us": [
+          39.32800143957138,
+          36.768000572919846,
+          40.92799872159958,
+          39.135999977588654,
+          38.88000175356865,
+          38.88000175356865,
+          38.59199956059456,
+          36.83200106024742,
+          38.975998759269714,
+          38.88000175356865
+        ],
+        "step_wall_us": [
+          466.98699588887393,
+          421.23100138269365,
+          415.62700062058866,
+          402.81398105435073,
+          407.0450086146593,
+          422.525976318866,
+          409.5550102647394,
+          417.36799175851047,
+          419.25799450837076,
+          417.6200018264353
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 42.8640004247427,
+        "combine_us": 38.88000175356865,
+        "step_wall_us": 417.4939967924729
+      }
+    },
+    {
+      "rows": 128,
+      "max_rank_samples": {
+        "dispatch_us": [
+          59.4559982419014,
+          59.39200147986412,
+          59.58399921655655,
+          59.42400172352791,
+          57.34400078654289,
+          59.58399921655655,
+          59.42400172352791,
+          61.59999966621399,
+          59.74400043487549,
+          59.39200147986412
+        ],
+        "combine_us": [
+          55.07199838757515,
+          53.599998354911804,
+          55.135998874902725,
+          55.07199838757515,
+          55.58399856090546,
+          55.10399863123894,
+          55.07199838757515,
+          52.86400020122528,
+          55.10399863123894,
+          55.07199838757515
+        ],
+        "step_wall_us": [
+          444.23399958759546,
+          450.18098899163306,
+          435.32002018764615,
+          423.77898353151977,
+          438.6689979583025,
+          430.8439965825528,
+          440.52701559849083,
+          427.8490087017417,
+          444.755976786837,
+          420.5529985483736
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 59.43999998271465,
+        "combine_us": 55.07199838757515,
+        "step_wall_us": 436.9945090729743
+      }
+    }
+  ],
+  "ranks": [
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 38.7520007789135,
+            "combine_us": 34.81600061058998,
+            "step_wall_us": 356.5410152077675
+          },
+          {
+            "dispatch_us": 38.656000047922134,
+            "combine_us": 30.592000111937523,
+            "step_wall_us": 340.70498077198863
+          },
+          {
+            "dispatch_us": 38.40000182390213,
+            "combine_us": 32.86400064826012,
+            "step_wall_us": 365.46101910062134
+          },
+          {
+            "dispatch_us": 36.959998309612274,
+            "combine_us": 32.735999673604965,
+            "step_wall_us": 344.05599581077695
+          },
+          {
+            "dispatch_us": 36.768000572919846,
+            "combine_us": 32.735999673604965,
+            "step_wall_us": 347.55899105221033
+          },
+          {
+            "dispatch_us": 38.55999931693077,
+            "combine_us": 32.735999673604965,
+            "step_wall_us": 350.3920161165297
+          },
+          {
+            "dispatch_us": 38.68800029158592,
+            "combine_us": 32.44800120592117,
+            "step_wall_us": 346.0689913481474
+          },
+          {
+            "dispatch_us": 38.84800150990486,
+            "combine_us": 30.880000442266464,
+            "step_wall_us": 341.8969863560051
+          },
+          {
+            "dispatch_us": 38.84800150990486,
+            "combine_us": 30.880000442266464,
+            "step_wall_us": 340.53498529829085
+          },
+          {
+            "dispatch_us": 38.656000047922134,
+            "combine_us": 30.592000111937523,
+            "step_wall_us": 341.55999310314655
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 15977088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 41.02399945259094,
+            "combine_us": 32.607998698949814,
+            "step_wall_us": 464.9659967981279
+          },
+          {
+            "dispatch_us": 43.39199885725975,
+            "combine_us": 32.416000962257385,
+            "step_wall_us": 421.23100138269365
+          },
+          {
+            "dispatch_us": 40.92799872159958,
+            "combine_us": 34.591998904943466,
+            "step_wall_us": 409.02598993852735
+          },
+          {
+            "dispatch_us": 40.92799872159958,
+            "combine_us": 32.22399950027466,
+            "step_wall_us": 402.27099088951945
+          },
+          {
+            "dispatch_us": 42.94399917125702,
+            "combine_us": 32.48000144958496,
+            "step_wall_us": 402.17299829237163
+          },
+          {
+            "dispatch_us": 42.97599941492081,
+            "combine_us": 34.68799963593483,
+            "step_wall_us": 420.9750040899962
+          },
+          {
+            "dispatch_us": 40.800001472234726,
+            "combine_us": 30.688000842928886,
+            "step_wall_us": 408.5420223418623
+          },
+          {
+            "dispatch_us": 40.92799872159958,
+            "combine_us": 34.40000116825104,
+            "step_wall_us": 415.98500683903694
+          },
+          {
+            "dispatch_us": 39.0079990029335,
+            "combine_us": 32.735999673604965,
+            "step_wall_us": 418.88997657224536
+          },
+          {
+            "dispatch_us": 40.95999896526337,
+            "combine_us": 32.575998455286026,
+            "step_wall_us": 416.7589941062033
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 255593088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 58.97599831223488,
+            "combine_us": 46.84799909591675,
+            "step_wall_us": 442.9830005392432
+          },
+          {
+            "dispatch_us": 55.07199838757515,
+            "combine_us": 46.94399982690811,
+            "step_wall_us": 446.3719960767776
+          },
+          {
+            "dispatch_us": 59.26400050520897,
+            "combine_us": 44.863998889923096,
+            "step_wall_us": 435.32002018764615
+          },
+          {
+            "dispatch_us": 57.24800005555153,
+            "combine_us": 48.928000032901764,
+            "step_wall_us": 423.3590152580291
+          },
+          {
+            "dispatch_us": 55.10399863123894,
+            "combine_us": 44.415999203920364,
+            "step_wall_us": 432.4660112615675
+          },
+          {
+            "dispatch_us": 59.26400050520897,
+            "combine_us": 43.03999990224838,
+            "step_wall_us": 430.8439965825528
+          },
+          {
+            "dispatch_us": 57.40800127387047,
+            "combine_us": 46.84799909591675,
+            "step_wall_us": 440.52701559849083
+          },
+          {
+            "dispatch_us": 55.10399863123894,
+            "combine_us": 46.94399982690811,
+            "step_wall_us": 425.1050122547895
+          },
+          {
+            "dispatch_us": 59.328000992536545,
+            "combine_us": 46.911999583244324,
+            "step_wall_us": 441.41997932456434
+          },
+          {
+            "dispatch_us": 59.39200147986412,
+            "combine_us": 44.89599913358688,
+            "step_wall_us": 420.5529985483736
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 2044725888,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": true,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 40.991999208927155,
+            "combine_us": 38.656000047922134,
+            "step_wall_us": 195.9590008482337
+          },
+          {
+            "dispatch_us": 42.43199899792671,
+            "combine_us": 36.67199984192848,
+            "step_wall_us": 194.10799723118544
+          },
+          {
+            "dispatch_us": 42.94399917125702,
+            "combine_us": 36.70400008559227,
+            "step_wall_us": 191.22898811474442
+          },
+          {
+            "dispatch_us": 40.76800122857094,
+            "combine_us": 36.51199862360954,
+            "step_wall_us": 186.58701446838677
+          },
+          {
+            "dispatch_us": 40.863998234272,
+            "combine_us": 36.51199862360954,
+            "step_wall_us": 187.7770118881017
+          },
+          {
+            "dispatch_us": 42.59200021624565,
+            "combine_us": 36.639999598264694,
+            "step_wall_us": 192.46499869041145
+          },
+          {
+            "dispatch_us": 41.08799993991852,
+            "combine_us": 34.65599939227104,
+            "step_wall_us": 192.2369992826134
+          },
+          {
+            "dispatch_us": 41.08799993991852,
+            "combine_us": 36.54399886727333,
+            "step_wall_us": 190.29498798772693
+          },
+          {
+            "dispatch_us": 42.91199892759323,
+            "combine_us": 36.607999354600906,
+            "step_wall_us": 190.15397992916405
+          },
+          {
+            "dispatch_us": 42.91199892759323,
+            "combine_us": 37.21600025892258,
+            "step_wall_us": 190.83198276348412
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 15977088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": true,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 42.78400167822838,
+            "combine_us": 39.32800143957138,
+            "step_wall_us": 240.0430093985051
+          },
+          {
+            "dispatch_us": 44.89599913358688,
+            "combine_us": 36.73600032925606,
+            "step_wall_us": 212.03598589636385
+          },
+          {
+            "dispatch_us": 43.23200136423111,
+            "combine_us": 40.92799872159958,
+            "step_wall_us": 198.12799291685224
+          },
+          {
+            "dispatch_us": 42.7200011909008,
+            "combine_us": 39.135999977588654,
+            "step_wall_us": 204.7400048468262
+          },
+          {
+            "dispatch_us": 42.81599819660187,
+            "combine_us": 38.88000175356865,
+            "step_wall_us": 212.46998221613467
+          },
+          {
+            "dispatch_us": 44.92799937725067,
+            "combine_us": 38.88000175356865,
+            "step_wall_us": 201.8389932345599
+          },
+          {
+            "dispatch_us": 42.65600070357323,
+            "combine_us": 38.59199956059456,
+            "step_wall_us": 215.2480010408908
+          },
+          {
+            "dispatch_us": 42.367998510599136,
+            "combine_us": 36.80000081658363,
+            "step_wall_us": 199.88699932582676
+          },
+          {
+            "dispatch_us": 42.94399917125702,
+            "combine_us": 38.975998759269714,
+            "step_wall_us": 224.973977310583
+          },
+          {
+            "dispatch_us": 42.62400045990944,
+            "combine_us": 38.88000175356865,
+            "step_wall_us": 217.27700368501246
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 255593088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": true,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 59.4559982419014,
+            "combine_us": 55.07199838757515,
+            "step_wall_us": 236.2180093768984
+          },
+          {
+            "dispatch_us": 59.23200026154518,
+            "combine_us": 53.599998354911804,
+            "step_wall_us": 245.6689835526049
+          },
+          {
+            "dispatch_us": 59.58399921655655,
+            "combine_us": 55.135998874902725,
+            "step_wall_us": 230.77399237081409
+          },
+          {
+            "dispatch_us": 59.36000123620033,
+            "combine_us": 55.07199838757515,
+            "step_wall_us": 230.40201631374657
+          },
+          {
+            "dispatch_us": 51.32799968123436,
+            "combine_us": 55.58399856090546,
+            "step_wall_us": 226.4740178361535
+          },
+          {
+            "dispatch_us": 59.58399921655655,
+            "combine_us": 55.10399863123894,
+            "step_wall_us": 233.30000112764537
+          },
+          {
+            "dispatch_us": 59.42400172352791,
+            "combine_us": 55.07199838757515,
+            "step_wall_us": 232.80002642422915
+          },
+          {
+            "dispatch_us": 61.59999966621399,
+            "combine_us": 52.86400020122528,
+            "step_wall_us": 227.70001669414341
+          },
+          {
+            "dispatch_us": 59.74400043487549,
+            "combine_us": 55.10399863123894,
+            "step_wall_us": 253.93400574102998
+          },
+          {
+            "dispatch_us": 59.039998799562454,
+            "combine_us": 55.07199838757515,
+            "step_wall_us": 230.19200307317078
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 2044725888,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": true,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 32.86400064826012,
+            "combine_us": 32.83200040459633,
+            "step_wall_us": 198.13099061138928
+          },
+          {
+            "dispatch_us": 32.76799991726875,
+            "combine_us": 32.54399821162224,
+            "step_wall_us": 226.43999545834959
+          },
+          {
+            "dispatch_us": 34.623999148607254,
+            "combine_us": 32.575998455286026,
+            "step_wall_us": 207.35900034196675
+          },
+          {
+            "dispatch_us": 34.84800085425377,
+            "combine_us": 32.19199925661087,
+            "step_wall_us": 190.27700182050467
+          },
+          {
+            "dispatch_us": 34.52799841761589,
+            "combine_us": 34.623999148607254,
+            "step_wall_us": 186.23500363901258
+          },
+          {
+            "dispatch_us": 32.70399942994118,
+            "combine_us": 34.65599939227104,
+            "step_wall_us": 200.54401829838753
+          },
+          {
+            "dispatch_us": 33.92000123858452,
+            "combine_us": 34.752000123262405,
+            "step_wall_us": 190.96100004389882
+          },
+          {
+            "dispatch_us": 34.04799848794937,
+            "combine_us": 32.416000962257385,
+            "step_wall_us": 188.70100029744208
+          },
+          {
+            "dispatch_us": 32.6399989426136,
+            "combine_us": 34.591998904943466,
+            "step_wall_us": 192.095001693815
+          },
+          {
+            "dispatch_us": 34.33600068092346,
+            "combine_us": 32.67199918627739,
+            "step_wall_us": 189.39102301374078
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 15977088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": true,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 36.83200106024742,
+            "step_wall_us": 252.666010055691
+          },
+          {
+            "dispatch_us": 35.16799956560135,
+            "combine_us": 36.768000572919846,
+            "step_wall_us": 202.27200002409518
+          },
+          {
+            "dispatch_us": 37.02399879693985,
+            "combine_us": 36.768000572919846,
+            "step_wall_us": 205.09300520643592
+          },
+          {
+            "dispatch_us": 37.02399879693985,
+            "combine_us": 34.71999987959862,
+            "step_wall_us": 194.31099644862115
+          },
+          {
+            "dispatch_us": 34.68799963593483,
+            "combine_us": 36.83200106024742,
+            "step_wall_us": 208.37201736867428
+          },
+          {
+            "dispatch_us": 36.67199984192848,
+            "combine_us": 36.70400008559227,
+            "step_wall_us": 225.609983317554
+          },
+          {
+            "dispatch_us": 34.84800085425377,
+            "combine_us": 34.81600061058998,
+            "step_wall_us": 207.06999930553138
+          },
+          {
+            "dispatch_us": 34.52799841761589,
+            "combine_us": 36.83200106024742,
+            "step_wall_us": 211.5909883286804
+          },
+          {
+            "dispatch_us": 36.80000081658363,
+            "combine_us": 34.81600061058998,
+            "step_wall_us": 220.8010118920356
+          },
+          {
+            "dispatch_us": 28.831999748945236,
+            "combine_us": 34.78400036692619,
+            "step_wall_us": 193.45700275152922
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 255593088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": true,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 51.96800082921982,
+            "combine_us": 51.072001457214355,
+            "step_wall_us": 241.00899463519454
+          },
+          {
+            "dispatch_us": 51.16799846291542,
+            "combine_us": 51.04000121355057,
+            "step_wall_us": 247.6960071362555
+          },
+          {
+            "dispatch_us": 50.23999884724617,
+            "combine_us": 53.05600166320801,
+            "step_wall_us": 239.68899040482938
+          },
+          {
+            "dispatch_us": 51.32799968123436,
+            "combine_us": 50.944000482559204,
+            "step_wall_us": 227.627984713763
+          },
+          {
+            "dispatch_us": 51.04000121355057,
+            "combine_us": 51.04000121355057,
+            "step_wall_us": 234.60201919078827
+          },
+          {
+            "dispatch_us": 50.81599950790405,
+            "combine_us": 51.16799846291542,
+            "step_wall_us": 237.35998547635972
+          },
+          {
+            "dispatch_us": 51.42400041222572,
+            "combine_us": 51.04000121355057,
+            "step_wall_us": 234.37599884346128
+          },
+          {
+            "dispatch_us": 51.32799968123436,
+            "combine_us": 51.10400170087814,
+            "step_wall_us": 223.4760031569749
+          },
+          {
+            "dispatch_us": 53.119998425245285,
+            "combine_us": 51.04000121355057,
+            "step_wall_us": 252.0359994377941
+          },
+          {
+            "dispatch_us": 51.32799968123436,
+            "combine_us": 50.944000482559204,
+            "step_wall_us": 231.42501595430076
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 2044725888,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": true,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 32.54399821162224,
+            "step_wall_us": 195.4249746631831
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 32.607998698949814,
+            "step_wall_us": 225.43099476024508
+          },
+          {
+            "dispatch_us": 36.83200106024742,
+            "combine_us": 32.607998698949814,
+            "step_wall_us": 202.2660046350211
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 34.68799963593483,
+            "step_wall_us": 194.34100249782205
+          },
+          {
+            "dispatch_us": 34.752000123262405,
+            "combine_us": 32.54399821162224,
+            "step_wall_us": 192.29299505241215
+          },
+          {
+            "dispatch_us": 35.10399907827377,
+            "combine_us": 32.735999673604965,
+            "step_wall_us": 203.01100448705256
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 34.71999987959862,
+            "step_wall_us": 190.11599943041801
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 32.51200169324875,
+            "step_wall_us": 191.18300406262279
+          },
+          {
+            "dispatch_us": 34.94400158524513,
+            "combine_us": 32.607998698949814,
+            "step_wall_us": 192.5719843711704
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 32.575998455286026,
+            "step_wall_us": 192.21301772631705
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 15977088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": true,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 35.10399907827377,
+            "combine_us": 34.81600061058998,
+            "step_wall_us": 195.00800408422947
+          },
+          {
+            "dispatch_us": 37.18400001525879,
+            "combine_us": 34.78400036692619,
+            "step_wall_us": 203.40998889878392
+          },
+          {
+            "dispatch_us": 39.103999733924866,
+            "combine_us": 36.928001791238785,
+            "step_wall_us": 194.8910066857934
+          },
+          {
+            "dispatch_us": 35.13599932193756,
+            "combine_us": 34.68799963593483,
+            "step_wall_us": 199.05201043002307
+          },
+          {
+            "dispatch_us": 36.896001547575,
+            "combine_us": 34.68799963593483,
+            "step_wall_us": 196.89099281094968
+          },
+          {
+            "dispatch_us": 37.02399879693985,
+            "combine_us": 34.88000109791756,
+            "step_wall_us": 206.98600565083325
+          },
+          {
+            "dispatch_us": 37.02399879693985,
+            "combine_us": 34.81600061058998,
+            "step_wall_us": 194.34001296758652
+          },
+          {
+            "dispatch_us": 37.151999771595,
+            "combine_us": 36.83200106024742,
+            "step_wall_us": 191.37997878715396
+          },
+          {
+            "dispatch_us": 37.11999952793121,
+            "combine_us": 34.912001341581345,
+            "step_wall_us": 194.83902724459767
+          },
+          {
+            "dispatch_us": 34.36800092458725,
+            "combine_us": 34.88000109791756,
+            "step_wall_us": 205.360003747046
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 255593088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": true,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 53.37600037455559,
+            "combine_us": 51.00800096988678,
+            "step_wall_us": 231.69099586084485
+          },
+          {
+            "dispatch_us": 51.19999870657921,
+            "combine_us": 49.215998500585556,
+            "step_wall_us": 227.54399105906487
+          },
+          {
+            "dispatch_us": 53.279999643564224,
+            "combine_us": 48.96000027656555,
+            "step_wall_us": 231.104000704363
+          },
+          {
+            "dispatch_us": 51.35999992489815,
+            "combine_us": 51.231998950242996,
+            "step_wall_us": 230.0080086570233
+          },
+          {
+            "dispatch_us": 53.0879981815815,
+            "combine_us": 51.00800096988678,
+            "step_wall_us": 239.64099818840623
+          },
+          {
+            "dispatch_us": 51.35999992489815,
+            "combine_us": 50.912000238895416,
+            "step_wall_us": 228.76501316204667
+          },
+          {
+            "dispatch_us": 53.247999399900436,
+            "combine_us": 49.0880012512207,
+            "step_wall_us": 235.12198822572827
+          },
+          {
+            "dispatch_us": 51.16799846291542,
+            "combine_us": 51.04000121355057,
+            "step_wall_us": 231.17900127545
+          },
+          {
+            "dispatch_us": 53.247999399900436,
+            "combine_us": 51.04000121355057,
+            "step_wall_us": 229.95800827629864
+          },
+          {
+            "dispatch_us": 53.279999643564224,
+            "combine_us": 51.16799846291542,
+            "step_wall_us": 229.55899476073682
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 2044725888,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 32.76799991726875,
+            "combine_us": 24.159999564290047,
+            "step_wall_us": 355.65701546147466
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 24.512000381946564,
+            "step_wall_us": 367.8459906950593
+          },
+          {
+            "dispatch_us": 34.912001341581345,
+            "combine_us": 26.464000344276428,
+            "step_wall_us": 369.67601045034826
+          },
+          {
+            "dispatch_us": 33.15199911594391,
+            "combine_us": 26.399999856948853,
+            "step_wall_us": 344.4999747443944
+          },
+          {
+            "dispatch_us": 30.688000842928886,
+            "combine_us": 26.464000344276428,
+            "step_wall_us": 349.62198697030544
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 26.30399912595749,
+            "step_wall_us": 354.594987584278
+          },
+          {
+            "dispatch_us": 33.11999887228012,
+            "combine_us": 26.30399912595749,
+            "step_wall_us": 346.03301901370287
+          },
+          {
+            "dispatch_us": 34.591998904943466,
+            "combine_us": 26.528000831604004,
+            "step_wall_us": 342.4599999561906
+          },
+          {
+            "dispatch_us": 32.80000016093254,
+            "combine_us": 26.464000344276428,
+            "step_wall_us": 344.65797943994403
+          },
+          {
+            "dispatch_us": 34.97600182890892,
+            "combine_us": 28.704000636935234,
+            "step_wall_us": 342.32999314554036
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 15977088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 36.768000572919846,
+            "combine_us": 26.59199945628643,
+            "step_wall_us": 466.98699588887393
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 28.672000393271446,
+            "step_wall_us": 417.30800876393914
+          },
+          {
+            "dispatch_us": 36.896001547575,
+            "combine_us": 30.81599995493889,
+            "step_wall_us": 415.62700062058866
+          },
+          {
+            "dispatch_us": 32.6399989426136,
+            "combine_us": 26.623999699950218,
+            "step_wall_us": 400.8850082755089
+          },
+          {
+            "dispatch_us": 34.46400165557861,
+            "combine_us": 30.688000842928886,
+            "step_wall_us": 407.0450086146593
+          },
+          {
+            "dispatch_us": 34.84800085425377,
+            "combine_us": 26.464000344276428,
+            "step_wall_us": 422.525976318866
+          },
+          {
+            "dispatch_us": 35.19999980926514,
+            "combine_us": 28.672000393271446,
+            "step_wall_us": 409.5550102647394
+          },
+          {
+            "dispatch_us": 36.86400130391121,
+            "combine_us": 28.672000393271446,
+            "step_wall_us": 415.8919909968972
+          },
+          {
+            "dispatch_us": 34.623999148607254,
+            "combine_us": 26.464000344276428,
+            "step_wall_us": 419.25799450837076
+          },
+          {
+            "dispatch_us": 34.4959981739521,
+            "combine_us": 26.59199945628643,
+            "step_wall_us": 417.6200018264353
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 255593088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 57.18399956822395,
+            "combine_us": 42.847998440265656,
+            "step_wall_us": 444.23399958759546
+          },
+          {
+            "dispatch_us": 55.39200082421303,
+            "combine_us": 42.527999728918076,
+            "step_wall_us": 448.4310047701001
+          },
+          {
+            "dispatch_us": 55.1999993622303,
+            "combine_us": 42.847998440265656,
+            "step_wall_us": 433.6709971539676
+          },
+          {
+            "dispatch_us": 57.28000029921532,
+            "combine_us": 42.847998440265656,
+            "step_wall_us": 423.77898353151977
+          },
+          {
+            "dispatch_us": 53.47200110554695,
+            "combine_us": 44.863998889923096,
+            "step_wall_us": 438.6689979583025
+          },
+          {
+            "dispatch_us": 57.312000542879105,
+            "combine_us": 42.847998440265656,
+            "step_wall_us": 428.46097494475543
+          },
+          {
+            "dispatch_us": 55.424001067876816,
+            "combine_us": 42.81599819660187,
+            "step_wall_us": 438.5699867270887
+          },
+          {
+            "dispatch_us": 55.36000058054924,
+            "combine_us": 42.81599819660187,
+            "step_wall_us": 427.8490087017417
+          },
+          {
+            "dispatch_us": 53.119998425245285,
+            "combine_us": 42.527999728918076,
+            "step_wall_us": 444.755976786837
+          },
+          {
+            "dispatch_us": 55.00800162553787,
+            "combine_us": 42.7200011909008,
+            "step_wall_us": 420.29900941997766
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 2044725888,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 34.68799963593483,
+            "combine_us": 24.383999407291412,
+            "step_wall_us": 354.88599678501487
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 24.224000051617622,
+            "step_wall_us": 374.7949958778918
+          },
+          {
+            "dispatch_us": 36.83200106024742,
+            "combine_us": 26.464000344276428,
+            "step_wall_us": 368.1980015244335
+          },
+          {
+            "dispatch_us": 32.735999673604965,
+            "combine_us": 28.192000463604927,
+            "step_wall_us": 344.96301668696105
+          },
+          {
+            "dispatch_us": 32.67199918627739,
+            "combine_us": 24.383999407291412,
+            "step_wall_us": 349.3799886200577
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 24.383999407291412,
+            "step_wall_us": 353.36799919605255
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 25.95200017094612,
+            "step_wall_us": 346.04701795615256
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 24.351999163627625,
+            "step_wall_us": 343.6359984334558
+          },
+          {
+            "dispatch_us": 34.71999987959862,
+            "combine_us": 24.288000538945198,
+            "step_wall_us": 344.13099638186395
+          },
+          {
+            "dispatch_us": 34.68799963593483,
+            "combine_us": 28.511999174952507,
+            "step_wall_us": 341.94299951195717
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 15977088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 32.6399989426136,
+            "combine_us": 26.623999699950218,
+            "step_wall_us": 463.1580086424947
+          },
+          {
+            "dispatch_us": 36.639999598264694,
+            "combine_us": 30.62400035560131,
+            "step_wall_us": 417.7969822194427
+          },
+          {
+            "dispatch_us": 32.48000144958496,
+            "combine_us": 28.64000014960766,
+            "step_wall_us": 411.03397961705923
+          },
+          {
+            "dispatch_us": 32.44800120592117,
+            "combine_us": 28.64000014960766,
+            "step_wall_us": 402.7550166938454
+          },
+          {
+            "dispatch_us": 36.70400008559227,
+            "combine_us": 26.623999699950218,
+            "step_wall_us": 404.107995564118
+          },
+          {
+            "dispatch_us": 36.73600032925606,
+            "combine_us": 26.528000831604004,
+            "step_wall_us": 421.8599933665246
+          },
+          {
+            "dispatch_us": 34.65599939227104,
+            "combine_us": 28.64000014960766,
+            "step_wall_us": 405.1470023114234
+          },
+          {
+            "dispatch_us": 36.639999598264694,
+            "combine_us": 26.59199945628643,
+            "step_wall_us": 414.66200491413474
+          },
+          {
+            "dispatch_us": 36.607999354600906,
+            "combine_us": 26.59199945628643,
+            "step_wall_us": 417.704985011369
+          },
+          {
+            "dispatch_us": 34.65599939227104,
+            "combine_us": 26.59199945628643,
+            "step_wall_us": 414.0659875702113
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 255593088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 59.36000123620033,
+            "combine_us": 42.81599819660187,
+            "step_wall_us": 443.66600923240185
+          },
+          {
+            "dispatch_us": 59.39200147986412,
+            "combine_us": 42.847998440265656,
+            "step_wall_us": 448.6679972615093
+          },
+          {
+            "dispatch_us": 57.312000542879105,
+            "combine_us": 44.67200115323067,
+            "step_wall_us": 434.64498594403267
+          },
+          {
+            "dispatch_us": 57.24800005555153,
+            "combine_us": 42.81599819660187,
+            "step_wall_us": 422.0309783704579
+          },
+          {
+            "dispatch_us": 57.34400078654289,
+            "combine_us": 42.7200011909008,
+            "step_wall_us": 422.55298467352986
+          },
+          {
+            "dispatch_us": 57.28000029921532,
+            "combine_us": 42.847998440265656,
+            "step_wall_us": 427.28500557132065
+          },
+          {
+            "dispatch_us": 57.18399956822395,
+            "combine_us": 42.7200011909008,
+            "step_wall_us": 438.67799104191363
+          },
+          {
+            "dispatch_us": 57.18399956822395,
+            "combine_us": 42.78400167822838,
+            "step_wall_us": 423.68200956843793
+          },
+          {
+            "dispatch_us": 57.50399827957153,
+            "combine_us": 42.4639992415905,
+            "step_wall_us": 442.6119849085808
+          },
+          {
+            "dispatch_us": 56.89600110054016,
+            "combine_us": 42.87999868392944,
+            "step_wall_us": 419.52900937758386
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 2044725888,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 26.176000013947487,
+            "step_wall_us": 355.9789911378175
+          },
+          {
+            "dispatch_us": 35.00799834728241,
+            "combine_us": 24.73600022494793,
+            "step_wall_us": 374.22397872433066
+          },
+          {
+            "dispatch_us": 34.81600061058998,
+            "combine_us": 26.43200010061264,
+            "step_wall_us": 367.300002835691
+          },
+          {
+            "dispatch_us": 32.86400064826012,
+            "combine_us": 26.240000501275063,
+            "step_wall_us": 344.30899540893734
+          },
+          {
+            "dispatch_us": 32.735999673604965,
+            "combine_us": 26.240000501275063,
+            "step_wall_us": 346.02999221533537
+          },
+          {
+            "dispatch_us": 34.4959981739521,
+            "combine_us": 26.27200074493885,
+            "step_wall_us": 352.13600494898856
+          },
+          {
+            "dispatch_us": 34.752000123262405,
+            "combine_us": 26.240000501275063,
+            "step_wall_us": 342.32798498123884
+          },
+          {
+            "dispatch_us": 32.70399942994118,
+            "combine_us": 26.1439997702837,
+            "step_wall_us": 340.22200270555913
+          },
+          {
+            "dispatch_us": 32.6399989426136,
+            "combine_us": 26.208000257611275,
+            "step_wall_us": 343.60497375018895
+          },
+          {
+            "dispatch_us": 34.4959981739521,
+            "combine_us": 26.559999212622643,
+            "step_wall_us": 338.83401192724705
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 15977088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 34.432001411914825,
+            "combine_us": 26.496000587940216,
+            "step_wall_us": 466.2229912355542
+          },
+          {
+            "dispatch_us": 38.52799907326698,
+            "combine_us": 26.367999613285065,
+            "step_wall_us": 419.89798774011433
+          },
+          {
+            "dispatch_us": 34.65599939227104,
+            "combine_us": 26.559999212622643,
+            "step_wall_us": 411.579996580258
+          },
+          {
+            "dispatch_us": 34.36800092458725,
+            "combine_us": 26.335999369621277,
+            "step_wall_us": 400.0269982498139
+          },
+          {
+            "dispatch_us": 38.43199834227562,
+            "combine_us": 26.59199945628643,
+            "step_wall_us": 402.06999983638525
+          },
+          {
+            "dispatch_us": 38.72000053524971,
+            "combine_us": 26.335999369621277,
+            "step_wall_us": 417.52500692382455
+          },
+          {
+            "dispatch_us": 38.91199827194214,
+            "combine_us": 26.30399912595749,
+            "step_wall_us": 406.2390071339905
+          },
+          {
+            "dispatch_us": 34.52799841761589,
+            "combine_us": 27.936000376939774,
+            "step_wall_us": 410.5789994355291
+          },
+          {
+            "dispatch_us": 32.416000962257385,
+            "combine_us": 26.655999943614006,
+            "step_wall_us": 415.8079973421991
+          },
+          {
+            "dispatch_us": 38.72000053524971,
+            "combine_us": 26.335999369621277,
+            "step_wall_us": 411.8689976166934
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 255593088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 55.26399984955788,
+            "combine_us": 41.02399945259094,
+            "step_wall_us": 444.06100641936064
+          },
+          {
+            "dispatch_us": 52.960000932216644,
+            "combine_us": 40.800001472234726,
+            "step_wall_us": 436.93199404515326
+          },
+          {
+            "dispatch_us": 54.816000163555145,
+            "combine_us": 40.608000010252,
+            "step_wall_us": 431.5190017223358
+          },
+          {
+            "dispatch_us": 53.247999399900436,
+            "combine_us": 42.55999997258186,
+            "step_wall_us": 423.5150117892772
+          },
+          {
+            "dispatch_us": 53.0879981815815,
+            "combine_us": 42.81599819660187,
+            "step_wall_us": 424.99598930589855
+          },
+          {
+            "dispatch_us": 54.91200089454651,
+            "combine_us": 41.02399945259094,
+            "step_wall_us": 422.50799015164375
+          },
+          {
+            "dispatch_us": 53.37600037455559,
+            "combine_us": 40.57599976658821,
+            "step_wall_us": 438.70299123227596
+          },
+          {
+            "dispatch_us": 55.26399984955788,
+            "combine_us": 40.54399952292442,
+            "step_wall_us": 420.8410100545734
+          },
+          {
+            "dispatch_us": 53.18399891257286,
+            "combine_us": 42.847998440265656,
+            "step_wall_us": 437.6030119601637
+          },
+          {
+            "dispatch_us": 54.78399991989136,
+            "combine_us": 42.81599819660187,
+            "step_wall_us": 420.289026806131
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 2044725888,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 1,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 34.52799841761589,
+            "combine_us": 26.240000501275063,
+            "step_wall_us": 353.062991052866
+          },
+          {
+            "dispatch_us": 34.71999987959862,
+            "combine_us": 24.57600086927414,
+            "step_wall_us": 359.13000465370715
+          },
+          {
+            "dispatch_us": 30.880000442266464,
+            "combine_us": 26.464000344276428,
+            "step_wall_us": 365.90101080946624
+          },
+          {
+            "dispatch_us": 32.575998455286026,
+            "combine_us": 26.240000501275063,
+            "step_wall_us": 343.6280239839107
+          },
+          {
+            "dispatch_us": 32.96000137925148,
+            "combine_us": 26.240000501275063,
+            "step_wall_us": 345.8819992374629
+          },
+          {
+            "dispatch_us": 32.3840007185936,
+            "combine_us": 26.43200010061264,
+            "step_wall_us": 339.6749962121248
+          },
+          {
+            "dispatch_us": 34.33600068092346,
+            "combine_us": 28.192000463604927,
+            "step_wall_us": 338.4709998499602
+          },
+          {
+            "dispatch_us": 30.432000756263733,
+            "combine_us": 26.079999282956123,
+            "step_wall_us": 340.86298546753824
+          },
+          {
+            "dispatch_us": 30.368000268936157,
+            "combine_us": 26.240000501275063,
+            "step_wall_us": 341.44698292948306
+          },
+          {
+            "dispatch_us": 32.607998698949814,
+            "combine_us": 26.59199945628643,
+            "step_wall_us": 339.5910025574267
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 15977088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 16,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 32.287999987602234,
+            "combine_us": 28.543999418616295,
+            "step_wall_us": 464.1080158762634
+          },
+          {
+            "dispatch_us": 36.70400008559227,
+            "combine_us": 26.335999369621277,
+            "step_wall_us": 419.6370136924088
+          },
+          {
+            "dispatch_us": 32.607998698949814,
+            "combine_us": 28.60799990594387,
+            "step_wall_us": 411.8259821552783
+          },
+          {
+            "dispatch_us": 32.255999743938446,
+            "combine_us": 26.559999212622643,
+            "step_wall_us": 402.81398105435073
+          },
+          {
+            "dispatch_us": 34.36800092458725,
+            "combine_us": 30.559999868273735,
+            "step_wall_us": 404.36998824588954
+          },
+          {
+            "dispatch_us": 34.78400036692619,
+            "combine_us": 26.335999369621277,
+            "step_wall_us": 420.5610021017492
+          },
+          {
+            "dispatch_us": 34.432001411914825,
+            "combine_us": 28.31999957561493,
+            "step_wall_us": 408.2010127604008
+          },
+          {
+            "dispatch_us": 32.22399950027466,
+            "combine_us": 26.464000344276428,
+            "step_wall_us": 417.36799175851047
+          },
+          {
+            "dispatch_us": 32.32000023126602,
+            "combine_us": 26.496000587940216,
+            "step_wall_us": 416.5419959463179
+          },
+          {
+            "dispatch_us": 32.607998698949814,
+            "combine_us": 26.27200074493885,
+            "step_wall_us": 415.465998230502
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 255593088,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      },
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 55.36000058054924,
+            "combine_us": 41.05599969625473,
+            "step_wall_us": 441.7159943841398
+          },
+          {
+            "dispatch_us": 52.76799947023392,
+            "combine_us": 40.672000497579575,
+            "step_wall_us": 450.18098899163306
+          },
+          {
+            "dispatch_us": 53.119998425245285,
+            "combine_us": 42.527999728918076,
+            "step_wall_us": 435.0450180936605
+          },
+          {
+            "dispatch_us": 59.42400172352791,
+            "combine_us": 42.527999728918076,
+            "step_wall_us": 420.5819859635085
+          },
+          {
+            "dispatch_us": 53.21599915623665,
+            "combine_us": 42.81599819660187,
+            "step_wall_us": 428.08399302884936
+          },
+          {
+            "dispatch_us": 54.9440011382103,
+            "combine_us": 40.800001472234726,
+            "step_wall_us": 426.23799527063966
+          },
+          {
+            "dispatch_us": 52.73599922657013,
+            "combine_us": 40.47999903559685,
+            "step_wall_us": 438.5710053611547
+          },
+          {
+            "dispatch_us": 55.00800162553787,
+            "combine_us": 40.383998304605484,
+            "step_wall_us": 416.43300210125744
+          },
+          {
+            "dispatch_us": 53.3440001308918,
+            "combine_us": 40.41599854826927,
+            "step_wall_us": 436.8330119177699
+          },
+          {
+            "dispatch_us": 52.671998739242554,
+            "combine_us": 42.847998440265656,
+            "step_wall_us": 420.0899857096374
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 0,
+        "rdma_buffer_bytes": 2044725888,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+        "timing": "CUDA graph, uncached dynamic routing; GPU barriers and echo excluded"
+      }
+    ]
+  ]
+}

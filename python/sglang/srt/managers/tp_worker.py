@@ -551,6 +551,9 @@ class TpModelWorker(BaseTpWorker):
             kv_capacity - 1,
         )
         max_req_input_len = max_req_len - 5
+        from sglang.srt.expertplex.integration import bound_request_input_length
+
+        max_req_input_len = bound_request_input_length(max_req_input_len)
         if self.dllm_algorithm is not None:
             max_req_input_len -= self.dllm_algorithm.block_size
         return (

@@ -1,0 +1,523 @@
+{
+  "scope": "Validate persistent E-side scatter/gather against native BF16 DeepGEMM.\n\nTwo expert GPUs test modulo expert placement and the normal-mode per-rank BF16\nEP gather boundary. Dynamic routing, all/partial padding, mixed P/D mailboxes,\nfixed-address CUDA Graph replay, and every persistent operation are exercised.\nThis is operator validation, not full-model accuracy or serving performance.\n",
+  "started_at_utc": "2026-10-14T21:26:10.942910+00:00",
+  "settings": {
+    "hidden": 6144,
+    "intermediate": 2560,
+    "capacity": 512,
+    "experts": 8,
+    "top_k": 8,
+    "world": 4,
+    "graph_replays": 20,
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/preprocess-shuffle-top8-world4-01.json"
+  },
+  "native_source_sha256": "afe4d748cd876f5b40f0e30716ee49a422a4c5fe99a33d4f6f843c263d0a536f",
+  "cases": [
+    {
+      "label": "eager-1",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "eager-31",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "eager-128",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 2.060531005554367e-05,
+      "passed": true,
+      "exact_fraction": 0.9999898076057434
+    },
+    {
+      "label": "eager-511",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.2950893506058492e-05,
+      "passed": true,
+      "exact_fraction": 0.9999939203262329
+    },
+    {
+      "label": "eager-512",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 7.724283932475373e-06,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-0",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.3450622645905241e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-1",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.6838894225656986e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-2",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-3",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.3006883818889037e-05,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "graph-4",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.3450622645905241e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-5",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.6838894225656986e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-6",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-7",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.3006883818889037e-05,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "graph-8",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.3450622645905241e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-9",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.6838894225656986e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-10",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-11",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.3006883818889037e-05,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "graph-12",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.3450622645905241e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-13",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.6838894225656986e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-14",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-15",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.3006883818889037e-05,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "graph-16",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.3450622645905241e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-17",
+      "phase": 0,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 1.6838894225656986e-05,
+      "passed": true,
+      "exact_fraction": 0.999993622303009
+    },
+    {
+      "label": "graph-18",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "graph-19",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.3006883818889037e-05,
+      "passed": true,
+      "exact_fraction": 0.9999911189079285
+    },
+    {
+      "label": "concurrent-0",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.6669820979586802e-05,
+      "passed": true,
+      "exact_fraction": 0.9999901652336121
+    },
+    {
+      "label": "concurrent-0",
+      "phase": 1,
+      "max_absolute_error": 6.103515625e-05,
+      "relative_l2_error": 1.6086895584521699e-06,
+      "passed": true,
+      "exact_fraction": 0.9999616742134094
+    },
+    {
+      "label": "concurrent-1",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.6669820979586802e-05,
+      "passed": true,
+      "exact_fraction": 0.9999901652336121
+    },
+    {
+      "label": "concurrent-1",
+      "phase": 1,
+      "max_absolute_error": 6.103515625e-05,
+      "relative_l2_error": 1.6086895584521699e-06,
+      "passed": true,
+      "exact_fraction": 0.9999616742134094
+    },
+    {
+      "label": "concurrent-2",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.6669820979586802e-05,
+      "passed": true,
+      "exact_fraction": 0.9999901652336121
+    },
+    {
+      "label": "concurrent-2",
+      "phase": 1,
+      "max_absolute_error": 6.103515625e-05,
+      "relative_l2_error": 1.6086895584521699e-06,
+      "passed": true,
+      "exact_fraction": 0.9999616742134094
+    },
+    {
+      "label": "concurrent-3",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.6669820979586802e-05,
+      "passed": true,
+      "exact_fraction": 0.9999901652336121
+    },
+    {
+      "label": "concurrent-3",
+      "phase": 1,
+      "max_absolute_error": 6.103515625e-05,
+      "relative_l2_error": 1.6086895584521699e-06,
+      "passed": true,
+      "exact_fraction": 0.9999616742134094
+    },
+    {
+      "label": "concurrent-4",
+      "phase": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 1.6669820979586802e-05,
+      "passed": true,
+      "exact_fraction": 0.9999901652336121
+    },
+    {
+      "label": "concurrent-4",
+      "phase": 1,
+      "max_absolute_error": 6.103515625e-05,
+      "relative_l2_error": 1.6086895584521699e-06,
+      "passed": true,
+      "exact_fraction": 0.9999616742134094
+    }
+  ],
+  "status": "passed",
+  "tolerances": {
+    "atol": 0.005,
+    "rtol": 0.02,
+    "relative_l2": 0.002
+  },
+  "executors": [
+    {
+      "trace_capacity_per_cta": 8192,
+      "backend": "sm100",
+      "benchmark_stage": 0,
+      "ctas": 148,
+      "cluster_size": 2,
+      "prefill_preprocess": true,
+      "operation_templates": "scatter1,scatter2,gate_up,activation,down,gather",
+      "loading_stages": 9,
+      "threads_per_cta": 256,
+      "registers_per_thread": 92,
+      "local_bytes_per_thread": 0,
+      "dynamic_shared_bytes_per_cta": 232448,
+      "static_shared_bytes_per_cta": 0,
+      "hidden": 6144,
+      "intermediate": 2560,
+      "prefill_tile_rows": 128,
+      "decode_tile_rows": 128
+    },
+    {
+      "trace_capacity_per_cta": 8192,
+      "backend": "sm100",
+      "benchmark_stage": 0,
+      "ctas": 148,
+      "cluster_size": 2,
+      "prefill_preprocess": true,
+      "operation_templates": "scatter1,scatter2,gate_up,activation,down,gather",
+      "loading_stages": 9,
+      "threads_per_cta": 256,
+      "registers_per_thread": 92,
+      "local_bytes_per_thread": 0,
+      "dynamic_shared_bytes_per_cta": 232448,
+      "static_shared_bytes_per_cta": 0,
+      "hidden": 6144,
+      "intermediate": 2560,
+      "prefill_tile_rows": 128,
+      "decode_tile_rows": 128
+    },
+    {
+      "trace_capacity_per_cta": 8192,
+      "backend": "sm100",
+      "benchmark_stage": 0,
+      "ctas": 148,
+      "cluster_size": 2,
+      "prefill_preprocess": true,
+      "operation_templates": "scatter1,scatter2,gate_up,activation,down,gather",
+      "loading_stages": 9,
+      "threads_per_cta": 256,
+      "registers_per_thread": 92,
+      "local_bytes_per_thread": 0,
+      "dynamic_shared_bytes_per_cta": 232448,
+      "static_shared_bytes_per_cta": 0,
+      "hidden": 6144,
+      "intermediate": 2560,
+      "prefill_tile_rows": 128,
+      "decode_tile_rows": 128
+    },
+    {
+      "trace_capacity_per_cta": 8192,
+      "backend": "sm100",
+      "benchmark_stage": 0,
+      "ctas": 148,
+      "cluster_size": 2,
+      "prefill_preprocess": true,
+      "operation_templates": "scatter1,scatter2,gate_up,activation,down,gather",
+      "loading_stages": 9,
+      "threads_per_cta": 256,
+      "registers_per_thread": 92,
+      "local_bytes_per_thread": 0,
+      "dynamic_shared_bytes_per_cta": 232448,
+      "static_shared_bytes_per_cta": 0,
+      "hidden": 6144,
+      "intermediate": 2560,
+      "prefill_tile_rows": 128,
+      "decode_tile_rows": 128
+    }
+  ],
+  "trace_files": [
+    "/home/alayadb/mengze/expertplex-b300/artifacts/preprocess-shuffle-top8-world4-01.rank0.trace.pt",
+    "/home/alayadb/mengze/expertplex-b300/artifacts/preprocess-shuffle-top8-world4-01.rank1.trace.pt",
+    "/home/alayadb/mengze/expertplex-b300/artifacts/preprocess-shuffle-top8-world4-01.rank2.trace.pt",
+    "/home/alayadb/mengze/expertplex-b300/artifacts/preprocess-shuffle-top8-world4-01.rank3.trace.pt"
+  ],
+  "trace_task_counts": [
+    {
+      "passed": true,
+      "invocations": 31,
+      "diagnostic_tile_interval_us": {
+        "1": {
+          "median": 35.424,
+          "maximum": 51.904
+        },
+        "2": {
+          "median": 15.552,
+          "maximum": 20.16
+        },
+        "3": {
+          "median": 10.048,
+          "maximum": 19.584
+        },
+        "5": {
+          "median": 3.424,
+          "maximum": 12.384
+        },
+        "6": {
+          "median": 13.824,
+          "maximum": 54.848
+        },
+        "7": {
+          "median": 35.136,
+          "maximum": 94.656
+        }
+      },
+      "interval_scope": "producer handoff to epilogue retirement; includes pipeline wait, excludes attention publication propagation"
+    },
+    {
+      "passed": true,
+      "invocations": 31,
+      "diagnostic_tile_interval_us": {
+        "1": {
+          "median": 34.08,
+          "maximum": 52.352
+        },
+        "2": {
+          "median": 15.136,
+          "maximum": 19.744
+        },
+        "3": {
+          "median": 10.24,
+          "maximum": 20.608
+        },
+        "5": {
+          "median": 3.456,
+          "maximum": 11.776
+        },
+        "6": {
+          "median": 14.016,
+          "maximum": 55.04
+        },
+        "7": {
+          "median": 35.104,
+          "maximum": 93.312
+        }
+      },
+      "interval_scope": "producer handoff to epilogue retirement; includes pipeline wait, excludes attention publication propagation"
+    },
+    {
+      "passed": true,
+      "invocations": 31,
+      "diagnostic_tile_interval_us": {
+        "1": {
+          "median": 37.216,
+          "maximum": 52.416
+        },
+        "2": {
+          "median": 16.16,
+          "maximum": 20.448
+        },
+        "3": {
+          "median": 10.016,
+          "maximum": 19.488
+        },
+        "5": {
+          "median": 3.424,
+          "maximum": 12.288
+        },
+        "6": {
+          "median": 13.952,
+          "maximum": 58.688
+        },
+        "7": {
+          "median": 34.944,
+          "maximum": 92.512
+        }
+      },
+      "interval_scope": "producer handoff to epilogue retirement; includes pipeline wait, excludes attention publication propagation"
+    },
+    {
+      "passed": true,
+      "invocations": 31,
+      "diagnostic_tile_interval_us": {
+        "1": {
+          "median": 36.352,
+          "maximum": 55.072
+        },
+        "2": {
+          "median": 15.84,
+          "maximum": 19.84
+        },
+        "3": {
+          "median": 10.08,
+          "maximum": 20.512
+        },
+        "5": {
+          "median": 3.328,
+          "maximum": 12.352
+        },
+        "6": {
+          "median": 13.664,
+          "maximum": 56.64
+        },
+        "7": {
+          "median": 34.848,
+          "maximum": 91.008
+        }
+      },
+      "interval_scope": "producer handoff to epilogue retirement; includes pipeline wait, excludes attention publication propagation"
+    }
+  ],
+  "observed_stages": [
+    0,
+    1,
+    2,
+    3,
+    5,
+    6,
+    7
+  ],
+  "finished_at_utc": "2026-10-14T21:27:08.750193+00:00"
+}

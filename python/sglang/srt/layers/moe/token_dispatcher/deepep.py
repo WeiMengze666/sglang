@@ -28,7 +28,7 @@ from sglang.srt.layers.moe.utils import (
     get_deepep_output_dtype,
     is_tbo_enabled,
 )
-from sglang.srt.runtime_context import get_parallel
+from sglang.srt.runtime_context import get_disagg, get_parallel
 from sglang.srt.utils import (
     get_bool_env_var,
     get_cuda_version,
@@ -188,7 +188,15 @@ class DeepEPBuffer:
         from types import SimpleNamespace
 
         buffers = get_resources().buffers
-        state = buffers.get("deepep_ep_state")
+        key = "deepep_ep_state"
+        if get_disagg().enable_pdmux:
+            from sglang.srt.distributed.parallel_state import is_pdmux_prefill
+
+            # P and D may still be executing concurrently when their host
+            # launch scopes alternate. Never clean/reuse the other phase's
+            # communication buffers during a normal/LL mode transition.
+            key += "_prefill" if is_pdmux_prefill() else "_decode"
+        state = buffers.get(key)
         if state is None:
             state = SimpleNamespace(
                 buffer=None,
@@ -197,7 +205,7 @@ class DeepEPBuffer:
                 num_max_dispatch_tokens_per_rank=None,
                 num_experts=None,
             )
-            buffers["deepep_ep_state"] = state
+            buffers[key] = state
         return state
 
     @classmethod
@@ -301,6 +309,11 @@ class DeepEPBuffer:
         if not is_cu12 and use_mnnvl_fabric:
             buffer_kwargs["use_fabric"] = True
 
+        if get_disagg().enable_pdmux:
+            # Buffer construction exchanges small IPC descriptors. NCCL
+            # bootstrap on a phase stream can wait behind work on the other
+            # stream; use the corresponding duplicate/original CPU TP group.
+            group = get_parallel().tp_group.cpu_group
         state.buffer = Buffer(group, num_nvl_bytes, num_rdma_bytes, **buffer_kwargs)
         return state.buffer
 
@@ -735,7 +748,7 @@ class _DeepEPDispatcherImplNormal(_DeepEPDispatcherImplBase):
             self.group,
             self.hidden_size,
             self.params_bytes,
-            self.deepep_mode,
+            DeepEPMode.NORMAL if get_disagg().enable_pdmux else self.deepep_mode,
             self.num_max_dispatch_tokens_per_rank,
             self.num_experts,
         )

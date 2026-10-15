@@ -1,0 +1,102 @@
+{
+  "scope": "Export numerical experiment evidence without request/output or log payloads.\n\nRaw reports remain in the local archive. This allowlist deliberately excludes\ntext, token histories, logprobs, IPC handles, host paths, environment and logs.\nIt includes source-file hashes so an authorized local reviewer can match them.\n",
+  "records": [
+    {
+      "name": "joint-slo.json",
+      "source_file_sha256": "87be32d9781f479962e8882fecf7fc9b93f114798c909548cbc0ee9ef973d6bd",
+      "failure_recorded": false,
+      "metrics": {
+        "sequence_cap": 24576,
+        "seed": 42,
+        "ttft_slo_ms": 10000.0,
+        "tpot_slo_ms": 100.0,
+        "p90_goodput_max_tested_arrival_rps": null,
+        "results": [
+          {
+            "request_rate": 0.1,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 0,
+            "joint_slo_attainment": 0.0,
+            "observed_slo_goodput_rps": 0.0,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": false
+          },
+          {
+            "request_rate": 0.25,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 0,
+            "joint_slo_attainment": 0.0,
+            "observed_slo_goodput_rps": 0.0,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": false
+          },
+          {
+            "request_rate": 0.5,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 0,
+            "joint_slo_attainment": 0.0,
+            "observed_slo_goodput_rps": 0.0,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "joint-slo.json",
+      "source_file_sha256": "9e37441c9a715ef18decedc98b897e850a00beb6e2c3b7ed7063e186b4d19900",
+      "failure_recorded": false,
+      "metrics": {
+        "sequence_cap": 24576,
+        "seed": 42,
+        "ttft_slo_ms": 10000.0,
+        "tpot_slo_ms": 100.0,
+        "p90_goodput_max_tested_arrival_rps": null,
+        "results": [
+          {
+            "request_rate": 0.1,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 22,
+            "joint_slo_attainment": 0.6875,
+            "observed_slo_goodput_rps": 0.08661067810081091,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": false
+          },
+          {
+            "request_rate": 0.25,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 12,
+            "joint_slo_attainment": 0.375,
+            "observed_slo_goodput_rps": 0.10615290785812612,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": false
+          },
+          {
+            "request_rate": 0.5,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 1,
+            "joint_slo_attainment": 0.03125,
+            "observed_slo_goodput_rps": 0.011417579847367838,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "checkpoint-readiness-2330.json",
+      "source_file_sha256": "0ce33bf30c154aeb47a216d01315e253db8b6f719ec7f5e3a2d0cd053013ef59",
+      "failure_recorded": false,
+      "metrics": {
+        "present_safetensors_files": 68,
+        "status": "incomplete"
+      }
+    }
+  ]
+}
