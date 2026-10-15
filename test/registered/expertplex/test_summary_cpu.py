@@ -63,6 +63,19 @@ def write_fixture(root, warmup=1):
 
 
 class ServingSummaryTests(unittest.TestCase):
+    def test_memory_budget_or_capacity_policy_cannot_be_mixed(self):
+        for field, value in (("mem_fraction_static", 0.9), ("decode_kv_tokens", None)):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                roots = [Path(tmp) / "first", Path(tmp) / "second"]
+                for root in roots:
+                    write_fixture(root)
+                path = roots[1] / "experiment.json"
+                experiment = json.loads(path.read_text())
+                experiment["settings"][field] = value
+                path.write_text(json.dumps(experiment))
+                with self.assertRaisesRegex(ValueError, "mismatch"):
+                    SUMMARY.summarize(roots)
+
     def test_failed_requests_stay_in_each_attainment_denominator(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "run"

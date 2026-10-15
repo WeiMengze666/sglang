@@ -82,6 +82,19 @@ class LaunchPlanTests(unittest.TestCase):
                     self.assertEqual(
                         command[command.index("--max-prefill-tokens") + 1], "2048"
                     )
+            args.kv_tokens = None
+            args.mem_fraction_static = 0.9
+            _, automatic_servers, _ = launch.commands(node, args)
+            for _, command in automatic_servers:
+                self.assertNotIn("--max-total-tokens", command)
+                self.assertEqual(
+                    command[command.index("--mem-fraction-static") + 1], "0.9"
+                )
+            args.mem_fraction_static = None
+            _, native_servers, _ = launch.commands(node, args)
+            for _, command in native_servers:
+                self.assertNotIn("--mem-fraction-static", command)
+            args.kv_tokens = 65536
             args.diagnostic_logit_processor = True
             _, diagnostic_servers, diagnostic_router = launch.commands(node, args)
             for _, command in diagnostic_servers:

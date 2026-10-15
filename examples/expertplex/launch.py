@@ -22,6 +22,28 @@ config = module("config")
 rendezvous = module("rendezvous")
 
 
+def kv_token_limit(value):
+    """Leave capacity profiling to SGLang unless a control run requests a cap."""
+    if value == "auto":
+        return None
+    try:
+        tokens = int(value)
+        if tokens > 0:
+            return tokens
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("KV capacity must be 'auto' or a positive integer")
+
+
+def memory_fraction(value):
+    fraction = float(value)
+    if not 0 < fraction < 1:
+        raise argparse.ArgumentTypeError(
+            "Memory fraction must lie strictly between 0 and 1"
+        )
+    return fraction
+
+
 def commands(node, args):
     worker = [
         sys.executable,
@@ -90,15 +112,15 @@ def commands(node, args):
             str(capacity),
             "--max-running-requests",
             str(min(node.max_decode_tokens, capacity)),
-            "--max-total-tokens",
-            str(args.kv_tokens),
-            "--mem-fraction-static",
-            "0.75",
             "--attention-backend",
             args.attention_backend,
             "--sampling-backend",
             args.sampling_backend,
         ]
+        if args.kv_tokens is not None:
+            command += ["--max-total-tokens", str(args.kv_tokens)]
+        if getattr(args, "mem_fraction_static", None) is not None:
+            command += ["--mem-fraction-static", str(args.mem_fraction_static)]
         if args.ib_device:
             command += ["--disaggregation-ib-device", args.ib_device]
         # Ordinary serving retains SGLang's CPU/GPU overlap. The diagnostic
@@ -178,7 +200,17 @@ def main():
     parser.add_argument("--port", type=int, default=31000)
     parser.add_argument("--bootstrap-port", type=int, default=19000)
     parser.add_argument("--nccl-port", type=int, default=20000)
-    parser.add_argument("--kv-tokens", type=int, default=65536)
+    parser.add_argument(
+        "--kv-tokens",
+        type=kv_token_limit,
+        default=None,
+        help="Per-P/D KV token cap; default auto uses SGLang memory profiling",
+    )
+    parser.add_argument(
+        "--mem-fraction-static",
+        type=memory_fraction,
+        help="Forward the native weight+KV memory budget; default is SGLang's default",
+    )
     parser.add_argument("--ib-device")
     parser.add_argument(
         "--chunked-prefill",
@@ -228,8 +260,6 @@ def main():
     args = parser.parse_args()
     node = config.load_config(args.config)
     worker_command, server_commands, router_command = commands(node, args)
-    if args.kv_tokens <= 0:
-        parser.error("--kv-tokens must be positive")
     all_ports = (
         [args.port]
         + [c.port for c in node.clients]
@@ -254,7 +284,7 @@ def main():
         parser.error(
             "Use identical full CUDA visibility (0,1,2,3,4,5,6,7) for this launcher"
         )
-    if (
+    if args.kv_tokens is not None and (
         spec.attention_weight_bytes
         + args.kv_tokens * spec.kv_bytes_per_token
         + 8 * 2**30

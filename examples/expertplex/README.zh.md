@@ -248,7 +248,7 @@ GEMM 输出边界；down 也先舍入到 BF16，再进行 FP32 weighted combine�
 ```bash
 python examples/expertplex/launch.py \
   --config /tmp/expertplex-coder480b.json \
-  --kv-tokens 65536 --log-dir /tmp/expertplex-coder480b-logs
+  --kv-tokens auto --log-dir /tmp/expertplex-coder480b-logs
 ```
 
 服务默认仅监听本机，router 为 `http://127.0.0.1:31000`。单节点 KV 默认使用 Mooncake
@@ -272,7 +272,7 @@ python examples/expertplex/check_e2e.py \
 
 ## Goodput 测量
 
-使用相同 checkpoint、输入/输出分布、随机种子、SLO、KV 容量上限和 8 卡总预算，串行
+使用相同 checkpoint、输入/输出分布、随机种子、SLO、采样序列长度上限和 8 卡总预算，串行
 比较 ordinary SGLang colocated、chunked prefill、instance-level PDD 与本实现。480B BF16
 的 PDD 容量要先单独审查；每个 phase 完整复制约 960 GB 权重，4+4 卡通常只剩有限 KV
 空间。不能因为某 baseline OOM 就用不同请求长度悄悄比较。
@@ -442,14 +442,24 @@ python examples/expertplex/run_serving_experiment.py \
   --weight-mode checkpoint \
   --dataset-path /path/to/sharegpt-holdout-256.jsonl \
   --requests 256 --rates 0.75 1 1.25 1.5 \
-  --sequence-cap 24576 --decode-kv-tokens 196608 \
+  --sequence-cap 24576 --decode-kv-tokens auto --mem-fraction-static 0.95 \
   --ttft-slo-ms 1000 --tpot-slo-ms 50 \
   --output-dir /tmp/expertplex-full480b-evaluation
 ```
 
-`decode-kv-tokens` 是全部 D attention 的总容量。共置 DP8 分配为每 rank 24576；
-ExpertPlex 的 3D 分配为每 rank 65536。早期总量 98304 的 DP8 只有每 rank 12288，
-只覆盖已经完成的短请求 pilot；不能直接用于接近 24576 上限的长请求。
+三个启动入口默认使用 `auto`：不向原生 SGLang 传入 `--max-total-tokens`，由现有显存
+profiling 分配 KV pool；也不再硬编码不同的 `mem_fraction_static`。可以给所有方案显式
+传入相同的 `--mem-fraction-static`（上例为 0.95），保留各布局实际腾出的 KV 空间。
+预算包含权重和 KV，剩余空间用于运行时分配；仍需验证峰值负载不会 OOM。
+不能仅根据 ExpertPlex 的少量 A 权重选择比例；PDD 每个 phase 复制完整专家权重，
+统一预算还必须容纳 PDD 权重及满足采样长度要求的 KV。
+
+论文 §7.1 限制的是**采样请求的序列长度**，并不要求**总 KV pool 容量**相同。
+`--sequence-cap` 应在 PDD 实测容量允许范围内冻结，并对所有方案使用相同值。
+本目录先前将相同总 KV 写为论文要求，这是错误解读；旧数据只属于固定容量控制实验。
+若需复跑这种控制实验，可显式设置 `--decode-kv-tokens 196608`：共置 DP8 每 rank
+24576，ExpertPlex 的 3D 每 rank 65536。该选项为全部 D attention 的总容量；
+`launch.py --kv-tokens` 则是每个 P/D 实例的容量。不同容量策略、显存预算的结果不能混算。
 `run_serving_experiment.py` 会复制 node/PDMux 配置到本次输出目录，并记录其哈希；
 后续调参不会覆盖该次实验的配置。
 

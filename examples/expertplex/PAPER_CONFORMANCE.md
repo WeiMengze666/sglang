@@ -131,7 +131,7 @@ ServerArgs；通信 client 由 Runtime 资源容器持有，并接入 scheduler 
 | Decode CUDA Graph | 使用现有 runner；启动器默认开启，`--no-cuda-graph` 仅用于消融/调试。 |
 | Sampling | 普通基线、ExpertPlex 与实验总入口均默认使用 FlashInfer；PyTorch 仍可显式用于数值诊断。 |
 | FlashInfer autotune | 删除无条件禁用参数；保留显式调试开关，普通启动遵循 SGLang 行为。 |
-| KV / prefix cache | 没有改写 allocator 或 radix cache，也没有默认关闭缓存；容量受论文跨方法相同 KV 预算约束。 |
+| KV / prefix cache | 沿用原生 allocator、radix cache 和显存容量 profiling；启动器默认不传 `--max-total-tokens`。§7.1 统一的是按 PDD 容量限制的采样序列长度，并非各布局的总 KV pool 容量。显式固定总 KV 的实验仅作为额外控制实验。 |
 | Attention backend | 保留 SGLang backend 选择；Triton 的固定数值对照不能代表 FlashInfer/FA4 等路径的最佳性能。 |
 | Prefill graph / torch.compile | 当前 ExpertPlex 的 opaque Python/native 通信接口尚未完成该路径集成。这是实现差距，不应写成论文必然冲突。原生 DeepEP normal 路径自身也在参数解析中关闭 prefill graph。 |
 | DeepGEMM | 复用原生 TMA、TCGEN05、双 CTA multicast、STSM/TMA epilogue 和 BF16 舍入边界；新增的是长驻 operation 选择与合作阶段切换。负收益的替代实现不能替换已验证路径。 |

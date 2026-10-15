@@ -83,6 +83,22 @@ class BaselineLaunchTests(unittest.TestCase):
         self.assertEqual(
             prefill[1][prefill[1].index("--max-total-tokens") + 1], "32768"
         )
+        args.decode_kv_tokens = None
+        args.pdmux_config = "/pdmux.yaml"
+        for variant in ("pdd", "pdmux", "colocated", "chunked"):
+            args.variant = variant
+            for fraction in (None, 0.9):
+                args.mem_fraction_static = fraction
+                for name, command, _ in baseline.commands(args):
+                    if name == "router":
+                        continue
+                    self.assertNotIn("--max-total-tokens", command)
+                    if fraction is None:
+                        self.assertNotIn("--mem-fraction-static", command)
+                    else:
+                        self.assertEqual(
+                            command[command.index("--mem-fraction-static") + 1], "0.9"
+                        )
 
 
 if __name__ == "__main__":

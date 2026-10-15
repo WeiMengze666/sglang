@@ -15,14 +15,18 @@ import sys
 import time
 from pathlib import Path
 
-from launch import wait_http
+from launch import kv_token_limit, memory_fraction, wait_http
 
 
 def commands(args):
     pdd = args.variant == "pdd"
     tp = 4 if pdd else 8
     attention_dp = 1 if args.variant == "pdmux" else tp
-    kv = args.decode_kv_tokens // attention_dp
+    kv = (
+        args.decode_kv_tokens // attention_dp
+        if args.decode_kv_tokens is not None
+        else None
+    )
     common = [
         sys.executable,
         "-m",
@@ -53,16 +57,12 @@ def commands(args):
         args.attention_backend,
         "--sampling-backend",
         getattr(args, "sampling_backend", "flashinfer"),
-        "--max-total-tokens",
-        str(kv),
         "--max-running-requests",
         str(args.max_running),
         "--max-prefill-tokens",
         str(args.max_prefill_tokens),
         "--context-length",
         str(args.sequence_cap),
-        "--mem-fraction-static",
-        "0.95",
         "--cuda-graph-backend-prefill",
         "disabled",
         "--cuda-graph-backend-decode",
@@ -74,6 +74,10 @@ def commands(args):
         "--host",
         "127.0.0.1",
     ]
+    if kv is not None:
+        common += ["--max-total-tokens", str(kv)]
+    if getattr(args, "mem_fraction_static", None) is not None:
+        common += ["--mem-fraction-static", str(args.mem_fraction_static)]
     if getattr(args, "enable_dp_lm_head", False):
         if attention_dp <= 1:
             raise ValueError("DP LM head requires a baseline with DP attention")
@@ -124,11 +128,12 @@ def commands(args):
             str(args.bootstrap_port + gpu),
         ]
         if role == "prefill":
-            # P never decodes. Keep enough KV for the longest admitted prompt
-            # or prefill batch, without duplicating D's long-lived KV capacity.
-            command[command.index("--max-total-tokens") + 1] = str(
-                max(args.sequence_cap, args.max_prefill_tokens)
-            )
+            # Only the fixed-capacity control run bounds P's transient pool.
+            # Auto mode lets each phase use SGLang's memory profiler.
+            if kv is not None:
+                command[command.index("--max-total-tokens") + 1] = str(
+                    max(args.sequence_cap, args.max_prefill_tokens)
+                )
             command[command.index("--cuda-graph-backend-decode") + 1] = "disabled"
         servers.append((role, command, port))
     router = [
@@ -173,10 +178,11 @@ def main():
     )
     p.add_argument(
         "--decode-kv-tokens",
-        type=int,
-        default=98304,
-        help="Aggregate decode KV token capacity across attention DP ranks",
+        type=kv_token_limit,
+        default=None,
+        help="Aggregate decode KV cap across attention DP ranks; default auto profiles memory",
     )
+    p.add_argument("--mem-fraction-static", type=memory_fraction)
     p.add_argument(
         "--sequence-cap",
         type=int,
@@ -205,7 +211,7 @@ def main():
     p.add_argument("--startup-timeout", type=float, default=900)
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
-    if args.decode_kv_tokens <= 0 or args.decode_kv_tokens % 24:
+    if args.decode_kv_tokens is not None and args.decode_kv_tokens % 24:
         p.error("Aggregate KV token count must be a positive multiple of 24 (DP 3/4/8)")
     if (
         min(

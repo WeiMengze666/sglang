@@ -16,6 +16,8 @@ import sys
 import time
 from pathlib import Path
 
+from launch import kv_token_limit, memory_fraction
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -38,7 +40,13 @@ def main():
     p.add_argument("--ttft-slo-ms", type=float, required=True)
     p.add_argument("--tpot-slo-ms", type=float, required=True)
     p.add_argument("--sequence-cap", type=int, default=24576)
-    p.add_argument("--decode-kv-tokens", type=int, default=98304)
+    p.add_argument(
+        "--decode-kv-tokens",
+        type=kv_token_limit,
+        default=None,
+        help="Optional aggregate decode KV cap for control runs; default auto profiles memory",
+    )
+    p.add_argument("--mem-fraction-static", type=memory_fraction)
     p.add_argument(
         "--attention-backend", choices=("triton", "flashinfer"), default="flashinfer"
     )
@@ -144,6 +152,8 @@ def main():
         "--log-dir",
         str(args.output_dir / "service"),
     ]
+    if args.mem_fraction_static is not None:
+        common += ["--mem-fraction-static", str(args.mem_fraction_static)]
     if args.variant == "expertplex":
         node = json.loads(Path(args.config).read_text())
         if (
@@ -152,7 +162,7 @@ def main():
         ):
             p.error("Node config must match model path and weight mode")
         decode_count = sum(c["phase"] == "decode" for c in node["clients"])
-        if args.decode_kv_tokens % decode_count:
+        if args.decode_kv_tokens is not None and args.decode_kv_tokens % decode_count:
             p.error("Aggregate KV capacity must divide across D workers")
         if node["max_prefill_tokens"] < args.sequence_cap:
             p.error("P mailbox must cover the common input+output length cap")
@@ -170,7 +180,9 @@ def main():
             "--config",
             str(node_path.resolve()),
             "--kv-tokens",
-            str(args.decode_kv_tokens // decode_count),
+            str(args.decode_kv_tokens // decode_count)
+            if args.decode_kv_tokens is not None
+            else "auto",
             "--cuda-graph",
             *common,
         ]
@@ -187,7 +199,7 @@ def main():
             "--max-prefill-tokens",
             str(args.sequence_cap),
             "--decode-kv-tokens",
-            str(args.decode_kv_tokens),
+            str(args.decode_kv_tokens) if args.decode_kv_tokens is not None else "auto",
             "--startup-timeout",
             str(args.startup_timeout),
             *common,
@@ -265,7 +277,7 @@ def main():
     )
     report = {
         "scope": __doc__,
-        "serving_defaults_version": "native-overlap-autotune-apk-pipeline-v2",
+        "serving_defaults_version": "native-overlap-autotune-apk-pipeline-auto-kv-v3",
         "input_artifact_sha256": {
             str(path): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (
