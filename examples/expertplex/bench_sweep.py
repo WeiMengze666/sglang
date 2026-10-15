@@ -72,6 +72,7 @@ def main():
     parser.add_argument("--ttft-slo-ms", type=float, required=True)
     parser.add_argument("--tpot-slo-ms", type=float, required=True)
     parser.add_argument("--num-prompts", type=int, default=1000)
+    parser.add_argument("--warmup-requests", type=int, default=1)
     parser.add_argument(
         "--dataset-name", choices=("random", "sharegpt", "custom"), default="random"
     )
@@ -82,6 +83,8 @@ def main():
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.warmup_requests < 1:
+        parser.error("Warmup requests must be positive")
     if any(not math.isfinite(rate) or rate <= 0 for rate in args.rates):
         parser.error("Arrival rates must be finite and positive")
     if args.num_prompts < 1 or args.output_len < 2 or args.input_len < 1:
@@ -119,6 +122,8 @@ def main():
             args.dataset_name,
             "--num-prompts",
             str(args.num_prompts),
+            "--warmup-requests",
+            str(args.warmup_requests),
             "--random-input-len",
             str(args.input_len),
             "--random-output-len",
@@ -174,6 +179,7 @@ def main():
         "dataset": args.dataset_name,
         "dataset_path": args.dataset_path,
         "seed": args.seed,
+        "warmup_requests": args.warmup_requests,
         "ttft_slo_ms": args.ttft_slo_ms,
         "tpot_slo_ms": args.tpot_slo_ms,
         "p90_goodput_max_tested_arrival_rps": max(feasible, default=None),

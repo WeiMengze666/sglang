@@ -71,6 +71,7 @@ def summarize(paths):
         identity["canonical_seed"] = experiment["environment"].get(
             "SGLANG_EXPERTPLEX_SYNTHETIC_SEED"
         )
+        identity["warmup_requests"] = settings.get("warmup_requests", 1)
         if (
             identity["weight_mode"] == "synthetic"
             and identity["canonical_seed"] is None

@@ -568,3 +568,21 @@ for every worker at `/readiness`. Full1024/compact512 mailboxes each complete
 output tokens match exactly. CPU coverage is 54 passing tests, including actual
 SGLang split helpers on 1000 seeded length vectors and startup-policy checks.
 Full-geometry 480B 3P1D4E TBO validation is pending, not inferred from this test.
+
+## Full-geometry 3P1D4E TBO, 00:40 UTC
+
+The compact-mailbox 62-layer canonical BF16 synthetic deployment completes the
+same LooGLE 32-request sweep with 32/32/26 joint successes at 0.1/0.25/0.5.
+Its maximum feasible tested rate is 0.25, versus 0.1 for default 1P3D4E and
+at least 0.5 for PDMux. This improves the long-input layout but does not achieve
+1.5x against the strongest measured baseline. A running GPU-memory snapshot
+shows 249991 MiB (244.13 GiB) on each E GPU; this is not a peak measurement.
+
+These pilot sweeps used one untimed warmup request per rate. That does not
+ensure every P worker sees the same shapes before measurement. Before any
+held-out serving results, the common warmup count is increased to eight for
+all methods; prefix caches are flushed after warmup. The harness records the
+count and the aggregator rejects comparisons with mismatched counts. Earlier
+results are retained with their original one-request condition. Neither count
+proves that every dynamic shape has been warmed, and no causal attribution of
+the observed timing differences to compilation is claimed.

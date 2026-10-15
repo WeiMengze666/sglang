@@ -44,6 +44,12 @@ def main():
     )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
+        "--warmup-requests",
+        type=int,
+        default=8,
+        help="Untimed warmup requests per rate; use the same count for all layouts",
+    )
+    p.add_argument(
         "--chunk-size",
         type=int,
         default=2048,
@@ -74,6 +80,8 @@ def main():
     )
     p.add_argument("--output-dir", required=True, type=Path)
     args = p.parse_args()
+    if args.warmup_requests < 1:
+        p.error("Warmup requests must be positive")
     if args.numerical_reference_dir and not args.numerical_check:
         p.error("Numerical reference requires --numerical-check")
     if args.numerical_reference_dir:
@@ -201,6 +209,8 @@ def main():
         str(args.sequence_cap),
         "--num-prompts",
         str(args.requests),
+        "--warmup-requests",
+        str(args.warmup_requests),
         "--rates",
         *map(str, args.rates),
         "--ttft-slo-ms",

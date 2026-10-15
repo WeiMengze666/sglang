@@ -363,7 +363,14 @@ ExpertPlex 的 3D 分配为每 rank 65536。早期总量 98304 的 DP8 只有每
 的容量界限；client 在 dispatch 前拒绝超过单 mailbox 容量的调用。该配置估算为
 259.50 GiB/E（含 16 GiB 预留）。3P1D4E 小 BF16 checkpoint 的完整/半批容量对照
 已通过：两种容量各 14 个边界/并发请求，6 个固定输入的 96 个生成 token 完全一致。
-完整 480B 随机权重 GPU 测试仍在进行，真实权重尚未验收。默认容量不变。
+完整 480B 随机权重已完成同样本 LooGLE 三档：0.1/0.25/0.5 req/s 分别为
+32/32、32/32、26/32 联合 SLO 通过；E 卡运行中一次快照约 244.13 GiB/卡，
+不是峰值。真实权重尚未验收。默认容量不变。
 
 单 D 布局的 router 使用 `round_robin`；多 D 使用 `power_of_two`。启动器等待
 `/readiness` 中全部 attention workers 健康后才报告 Ready，避免异步注册阶段的 503。
+
+后续 `run_serving_experiment.py` 默认每档预热 8 个请求，随后清空前缀缓存再计时；
+所有被比较方法采用相同数量。此前 pilot/LooGLE 使用 1 个预热请求，无法保证多 P
+都经过相同 shape 的预热。可用 `--warmup-requests 1` 复原旧条件；汇总程序拒绝混合
+不同预热数量的结果。8 请求预热也不代表穷尽所有动态 batch/sequence shape。

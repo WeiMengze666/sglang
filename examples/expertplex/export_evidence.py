@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 NUMERIC_KEYS = {
+    "warmup_requests",
     "request_rate",
     "attempted_requests",
     "completed_requests",
