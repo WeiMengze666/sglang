@@ -512,3 +512,7 @@ python examples/expertplex/check_activation.py --output /tmp/expertplex-activati
 组的 logits 通信。它增加每个 attention rank 的 LM head 权重占用，应在独立调优集
 测量后冻结。严格逐位诊断还需要一致的专家布局与 LM head GEMM 形状；仅在诊断时
 对齐布局的结果，不能替代对未经该修改的性能基线进行比较。
+
+严格增量验收在 `check_incremental.py` 上同时指定 `--reference REF.json`、
+`--top-k 0` 和 `--require-exact-logprobs`。任一位置的任一词表项不同，或参考记录
+缺少完整词表，都会保存失败报告并返回非零状态；默认诊断模式仅记录差异。

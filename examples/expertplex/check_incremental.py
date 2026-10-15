@@ -190,6 +190,11 @@ def main():
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--histories", type=Path, required=True)
     parser.add_argument("--reference", type=Path)
+    parser.add_argument(
+        "--require-exact-logprobs",
+        action="store_true",
+        help="Fail unless every full-vocabulary score equals the reference exactly",
+    )
     parser.add_argument("--capture-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=32)
@@ -197,6 +202,8 @@ def main():
         "--top-k", type=int, default=128, help="Zero captures full vocabulary"
     )
     args = parser.parse_args()
+    if args.require_exact_logprobs and (not args.reference or args.top_k != 0):
+        parser.error("Exact logprob acceptance requires --reference and --top-k 0")
     if (args.prefill_url is None) != (args.bootstrap_port is None):
         parser.error("Direct P/D requires both prefill-url and bootstrap-port")
     if args.bootstrap_port is not None and not 1 <= args.bootstrap_port <= 65535:
@@ -226,6 +233,7 @@ def main():
         "cases": [],
         "status": "running",
         "transport": "direct-pd" if args.prefill_url else "single-endpoint",
+        "require_exact_logprobs": args.require_exact_logprobs,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -272,7 +280,15 @@ def main():
             save()
         if args.reference:
             report["comparisons"] = compare_distributions(read(args.reference), report)
-        # Completed means the diagnostic ran, not that numerical equality holds.
+            exact = all(
+                row["common_scored_tokens"] == vocab
+                and row["max_abs_logprob_difference"] == 0
+                for row in report["comparisons"]
+            )
+            report["all_full_vocab_logprobs_exact"] = exact
+            if args.require_exact_logprobs and not exact:
+                raise AssertionError("Full-vocabulary logprobs are not exactly equal")
+        # Without the strict option, completion only means the diagnostic ran.
         report["status"] = "completed"
     except BaseException as exc:
         report["status"] = "failed"

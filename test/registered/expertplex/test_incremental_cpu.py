@@ -1,6 +1,8 @@
 """Reject incomplete, forced-probability, or mismatched incremental evidence."""
 
 import importlib
+import contextlib
+import io
 import json
 import math
 import sys
@@ -16,6 +18,88 @@ incremental = importlib.import_module("check_incremental")
 
 
 class IncrementalCaptureTests(unittest.TestCase):
+    def test_strict_cli_rejects_tail_difference_and_partial_reference(self):
+        # Identical top-1 tokens are insufficient: a changed tail score or an
+        # unscored tail must fail the CLI and leave a failed report on disk.
+        for tail in (-3.0, math.nextafter(-3.0, 0.0), None):
+            with self.subTest(tail=tail), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp).resolve()
+                (root / "config.json").write_text('{"vocab_size": 3}')
+                histories = root / "histories.json"
+                histories.write_text(
+                    json.dumps(
+                        {
+                            "model_path": str(root),
+                            "outputs": [
+                                {
+                                    "prompt": [0],
+                                    "meta_info": {
+                                        "output_token_logprobs": [[-0.1, 1], [-0.1, 2]]
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                )
+                outputs = [
+                    {"history": [0], "logprobs": [-0.1, -2.0, -3.0]},
+                    {"history": [0, 1], "logprobs": [-0.1, -2.0, -3.0]},
+                ]
+                reference = root / "reference.json"
+                reference.write_text(
+                    json.dumps(
+                        {
+                            "model_path": str(root),
+                            "vocab_size": 3,
+                            "outputs": [
+                                outputs[0],
+                                dict(outputs[1], logprobs=[-0.1, -2.0, tail]),
+                            ],
+                        }
+                    )
+                )
+                output = root / "report.json"
+                argv = [
+                    "check_incremental.py",
+                    "--base-url",
+                    "http://unused",
+                    "--model-path",
+                    str(root),
+                    "--histories",
+                    str(histories),
+                    "--reference",
+                    str(reference),
+                    "--capture-dir",
+                    str(root / "capture"),
+                    "--output",
+                    str(output),
+                    "--steps",
+                    "2",
+                    "--top-k",
+                    "0",
+                    "--require-exact-logprobs",
+                ]
+                result = {"meta_info": {"output_token_logprobs": [[0, 1], [0, 2]]}}
+                with (
+                    patch.object(sys, "argv", argv),
+                    patch.object(incremental, "make_processor", return_value="fixture"),
+                    patch.object(incremental, "generate", return_value=result),
+                    patch.object(incremental, "collect", return_value=outputs),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    if tail == -3.0:
+                        incremental.main()
+                    else:
+                        with self.assertRaisesRegex(
+                            AssertionError, "not exactly equal"
+                        ):
+                            incremental.main()
+                saved = json.loads(output.read_text())
+                self.assertEqual(
+                    saved["status"], "completed" if tail == -3.0 else "failed"
+                )
+                self.assertEqual(saved["all_full_vocab_logprobs_exact"], tail == -3.0)
+
     def test_direct_pd_preserves_parameters_and_dispatches_concurrently(self):
         barrier = threading.Barrier(2, timeout=3)
         calls = []
