@@ -32,6 +32,14 @@ class BaselineLaunchTests(unittest.TestCase):
             bootstrap_port=19000,
         )
         prefill, decode, router = baseline.commands(args)
+        for server in (prefill, decode):
+            self.assertNotIn("--enable-custom-logit-processor", server[1])
+        args.diagnostic_logit_processor = True
+        diagnostic = baseline.commands(args)
+        for server in diagnostic[:2]:
+            self.assertIn("--enable-custom-logit-processor", server[1])
+        self.assertNotIn("--enable-custom-logit-processor", diagnostic[-1][1])
+        args.diagnostic_logit_processor = False
         # The pinned PortArgs reserves dist_init_port + six derived TCP ports.
         p_ports = set(range(prefill[2] + 233, prefill[2] + 241))
         d_ports = set(range(decode[2] + 233, decode[2] + 241))

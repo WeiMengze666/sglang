@@ -79,6 +79,8 @@ def commands(args):
         common += ["--skip-tokenizer-init"]
     if args.tokenizer_path:
         common += ["--tokenizer-path", args.tokenizer_path]
+    if getattr(args, "diagnostic_logit_processor", False):
+        common += ["--enable-custom-logit-processor"]
     if args.variant == "pdmux":
         common += [
             "--enable-pdmux",
@@ -148,6 +150,11 @@ def main():
         "--load-format", choices=("safetensors", "dummy"), default="safetensors"
     )
     p.add_argument("--skip-tokenizer-init", action="store_true")
+    p.add_argument(
+        "--diagnostic-logit-processor",
+        action="store_true",
+        help="Enable fixed-trajectory score capture on isolated diagnostic servers only",
+    )
     p.add_argument(
         "--attention-backend", choices=("triton", "flashinfer"), default="flashinfer"
     )

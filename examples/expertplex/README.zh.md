@@ -308,6 +308,29 @@ logprob；top-k 子集不能当作完整词表的 TV/KL。所有脚本的输出�
 在全部计时 sweep 之后记录生成及固定历史 top-128 分数；下一次同权重实验可使用
 `--numerical-reference-dir <前次输出>/numerical` 对照，原始 token/logprob 保留本地。
 
+上述逐历史单 token 请求重新执行 prefill，不单独覆盖连续 decode。另用
+`check_incremental.py` 固定整条参考 token 轨迹，在强制下一 token **之前**保存模型的
+FP32 log-softmax；第 0 步来自 prefill，后续步骤使用保留的 KV，发生 retraction 则报错。
+它通过 SGLang 的诊断 custom logit processor 完成，不改模型计算路径。启动隔离诊断
+服务时，给 `launch.py` 或 `launch_baseline.py` 添加 `--diagnostic-logit-processor`。
+该开关默认关闭；只在可信本机测试服务上开启。随后在服务器本机执行：
+
+```bash
+python examples/expertplex/check_incremental.py \
+  --base-url http://127.0.0.1:31000 --model-path /path/to/model \
+  --histories /path/to/reference/numerical/generation.json \
+  --steps 32 --top-k 128 --capture-dir /path/to/new-incremental-capture \
+  --output /path/to/incremental.json
+```
+
+捕获目录必须尚不存在，且服务进程与诊断进程共享该绝对路径。后续部署用相同
+`--histories`，再加 `--reference /path/to/incremental.json` 比较每步未强制的分布。
+`--top-k 0` 保存完整词表；top-k 子集仍不等于全词表精度。所有采样 rank 的记录均保留，
+副本分布不一致、历史不一致或缺步均拒绝生成成功报告。返回的 HTTP logprob 已被
+强制采样改变，仅用于校验 token 轨迹，数值比较只使用独立保存的未强制分布。
+CPU 拷贝和逐步文件写入会改变执行时序，因此该运行不能用于 TTFT/TPOT/吞吐测量。
+本工具的 GPU/P-D/图回放路径需在实际服务器上验证，CPU 合约测试不替代该验收。
+
 ### 存储流水线诊断
 
 `SGLANG_EXPERTPLEX_PIPELINED_STORES=1` 可启用 SM100 的延迟 store 退休实验。

@@ -62,6 +62,8 @@ class LaunchPlanTests(unittest.TestCase):
                 prefill_mailbox_tokens=1024,
             )
             _, servers, router = launch.commands(node, args)
+            for _, command in servers:
+                self.assertNotIn("--enable-custom-logit-processor", command)
             self.assertEqual(router[router.index("--decode-policy") + 1], policy)
             self.assertEqual(router.count("--prefill"), prefill)
             self.assertEqual(router.count("--decode"), decode)
@@ -74,6 +76,12 @@ class LaunchPlanTests(unittest.TestCase):
                     self.assertEqual(
                         command[command.index("--max-prefill-tokens") + 1], "2048"
                     )
+            args.diagnostic_logit_processor = True
+            _, diagnostic_servers, diagnostic_router = launch.commands(node, args)
+            for _, command in diagnostic_servers:
+                self.assertIn("--enable-custom-logit-processor", command)
+            self.assertNotIn("--enable-custom-logit-processor", diagnostic_router)
+            args.diagnostic_logit_processor = False
 
 
 if __name__ == "__main__":

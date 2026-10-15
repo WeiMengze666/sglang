@@ -101,6 +101,8 @@ def commands(node, args):
             command += ["--skip-tokenizer-init"]
         if args.tokenizer_path:
             command += ["--tokenizer-path", args.tokenizer_path]
+        if getattr(args, "diagnostic_logit_processor", False):
+            command += ["--enable-custom-logit-processor"]
         if getattr(args, "sequence_cap", None):
             command += ["--context-length", str(args.sequence_cap)]
         if args.cuda_graph:
@@ -182,6 +184,11 @@ def main():
     )
     parser.add_argument("--log-dir", default="expertplex-logs")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--diagnostic-logit-processor",
+        action="store_true",
+        help="Enable fixed-trajectory score capture on isolated diagnostic servers only",
+    )
     parser.add_argument(
         "--cuda-graph", action="store_true", help="Capture decode forward"
     )
