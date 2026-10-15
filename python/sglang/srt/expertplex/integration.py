@@ -120,6 +120,15 @@ def validate_server_args(cfg: Any) -> None:
         config.overlap == "tbo"
     ):
         errors.append("--enable-two-batch-overlap must match ExpertPlex config.overlap")
+    if config.prefill_mailbox_tokens is not None and (
+        getattr(cfg, "tbo_token_distribution_threshold", None) != 0.5
+        or not isinstance(getattr(cfg, "max_running_requests", None), int)
+        or cfg.max_running_requests > config.max_decode_tokens
+    ):
+        errors.append(
+            "compact P mailboxes require --tbo-token-distribution-threshold 0.5 "
+            "and max running requests <= configured max_decode_tokens"
+        )
     if getattr(cfg, "speculative_algorithm", None) is not None:
         errors.append("speculative decoding is not supported")
     if getattr(cfg, "quantization", None) not in (None, "unquant"):

@@ -17,6 +17,11 @@ def main():
     parser.add_argument("--decode", type=int, default=3)
     parser.add_argument("--experts", type=int, default=4)
     parser.add_argument("--max-prefill-tokens", type=int, default=2048)
+    parser.add_argument(
+        "--prefill-mailbox-tokens",
+        type=int,
+        help="Opt-in TBO mailbox capacity; requires equal-token splitting",
+    )
     parser.add_argument("--max-decode-tokens", type=int, default=256)
     parser.add_argument("--decode-sm-budget", type=int, default=32)
     parser.add_argument("--expected-decode-tiles", type=int, default=128)
@@ -58,6 +63,7 @@ def main():
         ),
         expert_devices=tuple(range(attention, 8)),
         max_prefill_tokens=args.max_prefill_tokens,
+        prefill_mailbox_tokens=args.prefill_mailbox_tokens,
         max_decode_tokens=args.max_decode_tokens,
         decode_sm_budget=args.decode_sm_budget,
         expected_decode_tiles=args.expected_decode_tiles,

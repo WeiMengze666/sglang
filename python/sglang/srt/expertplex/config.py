@@ -193,6 +193,7 @@ class NodeConfig:
     overlap: str = "none"
     kernel: str = "sm100"
     prefill_preprocess: bool = False
+    prefill_mailbox_tokens: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "clients", tuple(self.clients))
@@ -255,6 +256,21 @@ class NodeConfig:
             "expected_decode_tiles",
         ):
             _positive_integer(name, getattr(self, name))
+        if self.prefill_mailbox_tokens is not None:
+            _positive_integer("prefill_mailbox_tokens", self.prefill_mailbox_tokens)
+            # Equal-token TBO splits may fall back to a sequence boundary for
+            # degenerate batches with fewer than two tokens per sequence.
+            minimum = min(
+                self.max_prefill_tokens,
+                max((self.max_prefill_tokens + 1) // 2, 2 * self.max_decode_tokens),
+            )
+            if self.overlap != "tbo" or not (
+                minimum <= self.prefill_mailbox_tokens <= self.max_prefill_tokens
+            ):
+                raise ValueError(
+                    "prefill_mailbox_tokens requires TBO and capacity covering "
+                    "half the batch plus the degenerate sequence-boundary bound"
+                )
         _positive_integer("cta_count", self.cta_count, allow_zero=True)
         for name in ("startup_timeout_s", "operation_timeout_s", "gpu_memory_gib"):
             value = getattr(self, name)
@@ -296,13 +312,17 @@ class NodeConfig:
     def slot_count(self) -> int:
         return len(self.clients) * self.mailboxes_per_client
 
+    @property
+    def prefill_mailbox_capacity(self) -> int:
+        return self.prefill_mailbox_tokens or self.max_prefill_tokens
+
     def buffer_layout(self) -> tuple[list[int], list[int]]:
         """Mailbox order matches client_id * mailboxes_per_client + index."""
         capacities, packed = [], []
         for client in sorted(self.clients, key=lambda c: c.id):
             for _ in range(self.mailboxes_per_client):
                 capacities.append(
-                    self.max_prefill_tokens
+                    self.prefill_mailbox_capacity
                     if client.phase == "prefill"
                     else self.max_decode_tokens
                 )

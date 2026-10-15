@@ -491,6 +491,8 @@ class SearchResult:
             decode_sm_budget=self.decode_sm_budget,
             expected_decode_tiles=self.expected_decode_tiles,
         )
+        if self.overlap != "tbo":
+            overrides["prefill_mailbox_tokens"] = None
         return self.layout.config(source.model_path, **overrides)
 
 
@@ -645,7 +647,13 @@ def search(
         raise ValueError("overlap must be sequential, tbo or auto")
     # FitsMemory must account for the strategy being evaluated: TBO reserves
     # two complete mailboxes even when the input config uses sequential mode.
-    config = replace(config, overlap="tbo" if overlap == "tbo" else "none")
+    config = replace(
+        config,
+        overlap="tbo" if overlap == "tbo" else "none",
+        prefill_mailbox_tokens=config.prefill_mailbox_tokens
+        if overlap == "tbo"
+        else None,
+    )
     for name, value in (
         ("input_length", input_length),
         ("average_output_length", average_output_length),

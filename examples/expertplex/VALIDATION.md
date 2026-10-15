@@ -543,3 +543,28 @@ colocated/chunked outcomes and these two runs have identical ordered input
 length hashes, KV capacity, canonical weight seed and SLOs. Checkpoint-0015
 contains the filtered comparison and plotted TTFT/TPOT/joint curves. PDD's
 failed first sweep is excluded and its capacity-corrected retry remains separate.
+
+## PDD retry and compact TBO regression, 00:30 UTC
+
+PDD's P-KV24576 retry completes all three LooGLE rates with 30/22/3 joint
+successes. Allocator retry warnings occur at 0.5, but no fatal OOM is observed;
+the process exits successfully and releases all GPUs. This is capacity tuning,
+not a claim that the baseline's memory/performance tradeoff is globally optimal.
+
+An opt-in `prefill_mailbox_tokens` permits a smaller buffer per TBO microbatch
+without lowering the admitted batch/sequence cap. The launcher requires equal
+token splitting (threshold 0.5); validation retains capacity for degenerate
+sequence-boundary fallbacks, and the client checks the actual microbatch before
+dispatch. Default configurations retain their original capacity and split policy.
+For 3P1D4E P24576/D256, two P12288 mailboxes per client estimate 259.50 GiB/E
+including the 16 GiB reserve, permitting a TBO experiment without reducing the
+common sampled-length cap.
+
+The first small-checkpoint attempt discovers that a single-D router cannot use
+power-of-two selection; the second exposes a health/readiness registration race.
+Both failed attempts are retained. The third uses single-D round-robin and waits
+for every worker at `/readiness`. Full1024/compact512 mailboxes each complete
+14 requests (six sequential boundaries plus eight concurrent); all 96 sequential
+output tokens match exactly. CPU coverage is 54 passing tests, including actual
+SGLang split helpers on 1000 seeded length vectors and startup-policy checks.
+Full-geometry 480B 3P1D4E TBO validation is pending, not inferred from this test.

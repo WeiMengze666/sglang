@@ -10,6 +10,7 @@ import ast
 import importlib.util
 import json
 import os
+import random
 import sys
 import tempfile
 import time
@@ -64,6 +65,42 @@ def extracted_method(path, class_name, method_name, namespace):
 
 
 class SchedulerTboTests(unittest.TestCase):
+    def test_equal_token_split_fits_compact_mailboxes_at_boundaries(self):
+        path = SRT / "batch_overlap/two_batch_overlap.py"
+        names = {
+            "_is_two_chunk_split_enabled",
+            "_split_extend_seqs",
+            "_split_array_by_cum_less_than_half",
+            "_split_array_by_balanced_sum",
+        }
+        tree = ast.parse(path.read_text())
+        nodes = [
+            n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names
+        ]
+        future = ast.ImportFrom(
+            module="__future__", names=[ast.alias(name="annotations")], level=0
+        )
+        code = ast.fix_missing_locations(
+            ast.Module(body=[future, *nodes], type_ignores=[])
+        )
+        namespace = {"get_tbo_token_distribution_threshold": lambda: 0.5}
+        exec(compile(code, str(path), "exec"), namespace)
+        rng = random.Random(20261015)
+        cases = [[1], [2], [24575], [24576], [1] * 256, [1] * 255 + [24321]]
+        for _ in range(1000):
+            total = rng.randint(1, 24576)
+            count = rng.randint(1, min(total, 256))
+            cuts = [0, *sorted(rng.sample(range(1, total), count - 1)), total]
+            cases.append([b - a for a, b in zip(cuts, cuts[1:])])
+        for lengths in cases:
+            total = sum(lengths)
+            left = (
+                total // 2
+                if namespace["_is_two_chunk_split_enabled"](lengths)
+                else sum(lengths[: namespace["_split_extend_seqs"](lengths)])
+            )
+            self.assertLessEqual(max(left, total - left), 12288, lengths)
+
     def test_tp1_tbo_prepares_local_metadata(self):
         path = SRT / "utils/common.py"
         node = next(
@@ -172,6 +209,21 @@ class IntegrationTests(unittest.TestCase):
                         chunked_prefill_size=disabled,
                     )
                 )
+
+    def test_compact_mailboxes_require_equal_token_tbo_split(self):
+        node = CONFIG.NodeConfig.from_dict(
+            self.config.to_dict() | {"overlap": "tbo", "prefill_mailbox_tokens": 1024}
+        )
+        node.write_json(self.config_path)
+        INTEGRATION._load_attention_config.cache_clear()
+        args = self.server_args(enable_two_batch_overlap=True)
+        with self.assertRaisesRegex(ValueError, "compact P mailboxes"):
+            INTEGRATION.validate_server_args(args)
+        args.tbo_token_distribution_threshold = 0.5
+        INTEGRATION.validate_server_args(args)
+        args.max_running_requests = None
+        with self.assertRaisesRegex(ValueError, "compact P mailboxes"):
+            INTEGRATION.validate_server_args(args)
 
     def test_unsupported_modes_are_reported_together(self):
         args = self.server_args(

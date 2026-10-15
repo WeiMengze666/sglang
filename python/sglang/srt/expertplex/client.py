@@ -104,7 +104,7 @@ class ExpertPlexClient:
                 raise ValueError(f"Invalid ExpertPlex layer: {layer_id}")
             rows, hidden = hidden_states.shape
             capacity = (
-                self.config.max_prefill_tokens
+                self.config.prefill_mailbox_capacity
                 if self.client.phase == "prefill"
                 else self.config.max_decode_tokens
             )

@@ -5,6 +5,7 @@ has its own process group, so shutdown only terminates this launcher's children.
 """
 
 import argparse
+import json
 import os
 import shlex
 import signal
@@ -94,6 +95,8 @@ def commands(node, args):
             command += ["--disaggregation-ib-device", args.ib_device]
         if node.overlap == "tbo":
             command += ["--enable-two-batch-overlap"]
+        if node.prefill_mailbox_tokens is not None:
+            command += ["--tbo-token-distribution-threshold", "0.5"]
         if args.skip_tokenizer_init:
             command += ["--skip-tokenizer-init"]
         if args.tokenizer_path:
@@ -115,7 +118,9 @@ def commands(node, args):
         "--prefill-policy",
         "round_robin",
         "--decode-policy",
-        "power_of_two",
+        "power_of_two"
+        if sum(client.phase == "decode" for client in node.clients) > 1
+        else "round_robin",
     ]
     for client in node.clients:
         url = f"http://127.0.0.1:{client.port}"
@@ -126,7 +131,7 @@ def commands(node, args):
     return worker, servers, router
 
 
-def wait_http(url, children, deadline):
+def wait_http(url, children, deadline, expected_workers=None):
     while time.monotonic() < deadline:
         for name, process, _ in children:
             if process.poll() is not None:
@@ -134,8 +139,12 @@ def wait_http(url, children, deadline):
                     f"{name} exited with code {process.returncode}; inspect its log"
                 )
         try:
-            with urllib.request.urlopen(url + "/health", timeout=2) as response:
-                if response.status == 200:
+            endpoint = "/readiness" if expected_workers is not None else "/health"
+            with urllib.request.urlopen(url + endpoint, timeout=2) as response:
+                if response.status == 200 and (
+                    expected_workers is None
+                    or json.load(response).get("healthy_workers", 0) >= expected_workers
+                ):
                     return
         except (urllib.error.URLError, TimeoutError):
             pass
@@ -271,7 +280,12 @@ def main():
         for client, _ in server_commands:
             wait_http(f"http://127.0.0.1:{client.port}", children, deadline)
         spawn("router", router_command, base_env)
-        wait_http(f"http://{args.host}:{args.port}", children, time.monotonic() + 120)
+        wait_http(
+            f"http://{args.host}:{args.port}",
+            children,
+            time.monotonic() + 120,
+            expected_workers=len(node.clients),
+        )
         rendezvous.atomic_json(
             log_root / "processes.json",
             {

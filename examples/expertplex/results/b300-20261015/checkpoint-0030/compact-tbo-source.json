@@ -1,0 +1,12 @@
+{
+  "source_files_sha256": {
+    "python/sglang/srt/expertplex/config.py": "146f35a2d14cef10d4bd99c5a579686473762ab4af75358113a43666da0bd321",
+    "python/sglang/srt/expertplex/client.py": "6811c40a03321074c9b9c987e1144a96e4c937fe7315d04161dc8f63a6287352",
+    "python/sglang/srt/expertplex/integration.py": "01b841caf8f39d5b39eb5b010ef29f60d8f579a8131ab3d62314cc9a854e14c0",
+    "python/sglang/srt/expertplex/optimizer.py": "2755870ff42a62010e00bda15d33a3bb46798c928cb4ee91ad474f195c100bc4",
+    "examples/expertplex/configure.py": "9d5bd0f813e423db9cc1a2fe8be30b2a79e7ac71f74eb91b2f99ce5c9efb775e",
+    "examples/expertplex/launch.py": "79bf2c978b888f293085c260bfaa9b807394e8d11e7570a29ba0e0846c423ff0",
+    "examples/expertplex/launch_baseline.py": "16119335348ea25e39c86da9c7305b2f8991e19662204e145f2495989dee99e8",
+    "examples/expertplex/check_compact_tbo.py": "7c08338de0fb6a4c7edb1581f3338dc83d38294a5fbb67f38bcd09266cffbdb9"
+  }
+}

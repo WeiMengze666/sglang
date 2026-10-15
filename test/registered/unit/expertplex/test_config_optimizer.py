@@ -80,6 +80,32 @@ def profiles_dict(model):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_compact_prefill_capacity_preserves_batch_and_decode_bounds(self):
+        node = config.default_config(
+            "/models/coder",
+            prefill_count=3,
+            decode_count=1,
+            expert_count=4,
+            max_prefill_tokens=24576,
+            max_decode_tokens=256,
+            overlap="tbo",
+            prefill_mailbox_tokens=12288,
+        )
+        self.assertEqual(node.buffer_layout()[0], [12288] * 6 + [256] * 2)
+        self.assertEqual(node.max_prefill_tokens, 24576)
+        model = config.ModelSpec.from_dict(model_config(coder=True))
+        memory = optimizer.estimate_memory(
+            node, model, kv_tokens_per_attention_gpu=196608
+        )
+        self.assertLess(memory.expert_total_bytes, 268 * 2**30)
+        for invalid in [12287, 24577, 0, True]:
+            with self.assertRaises(ValueError):
+                config.NodeConfig.from_dict(
+                    node.to_dict() | {"prefill_mailbox_tokens": invalid}
+                )
+        with self.assertRaises(ValueError):
+            config.NodeConfig.from_dict(node.to_dict() | {"overlap": "none"})
+
     def test_transformers_canonical_expert_alias(self):
         raw = model_config(coder=True)
         canonical = {**raw, "num_local_experts": raw["num_experts"]}

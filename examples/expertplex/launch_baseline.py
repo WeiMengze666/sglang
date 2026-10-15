@@ -239,6 +239,7 @@ def main():
                 f"http://127.0.0.1:{port}",
                 children,
                 time.monotonic() + args.startup_timeout,
+                expected_workers=2 if name == "router" else None,
             )
         print(f"Ready: http://127.0.0.1:{args.port}", flush=True)
         while all(process.poll() is None for _, process, _ in children):

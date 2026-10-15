@@ -356,3 +356,14 @@ ExpertPlex 的 3D 分配为每 rank 65536。早期总量 98304 的 DP8 只有每
 1P3D4E+TBO 计入 16 GiB 预留约需 252.39 GiB/E；3P1D4E+TBO 约需 283.14 GiB/E，
 超过配置的 268 GiB。3P1D4E 关闭 TBO 的估算约 258.55 GiB/E，仅作为需单独验证的
 容量适配；不能把无 TBO 结果称为论文完整 overlap 配置。
+
+也可显式设置 `--prefill-mailbox-tokens 12288` 保留 3P1D4E 的 TBO：请求/batch 上限
+仍为 24576，每个 P 的两个 mailbox 分别容纳一个 microbatch。启动器强制
+`--tbo-token-distribution-threshold 0.5`，并校验半批及退化 sequence-boundary split
+的容量界限；client 在 dispatch 前拒绝超过单 mailbox 容量的调用。该配置估算为
+259.50 GiB/E（含 16 GiB 预留）。3P1D4E 小 BF16 checkpoint 的完整/半批容量对照
+已通过：两种容量各 14 个边界/并发请求，6 个固定输入的 96 个生成 token 完全一致。
+完整 480B 随机权重 GPU 测试仍在进行，真实权重尚未验收。默认容量不变。
+
+单 D 布局的 router 使用 `round_robin`；多 D 使用 `power_of_two`。启动器等待
+`/readiness` 中全部 attention workers 健康后才报告 Ready，避免异步注册阶段的 503。
