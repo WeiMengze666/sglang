@@ -54,6 +54,11 @@ def worker(rank, settings):
         weights = torch.full(
             ids.shape, 1 / args.top_k, device=rank, dtype=torch.float32
         )
+        if args.routing_weights == "nonuniform":
+            weights = torch.rand(ids.shape, generator=generator, device=rank)
+        elif args.routing_weights == "cancellation":
+            # Arithmetic stress only; negative weights are not router softmax.
+            weights = torch.rand(ids.shape, generator=generator, device=rank) * 2 - 1
         owner, remotes, buffer = None, [], None
         row_maps = []
         remote_group = None
@@ -348,6 +353,18 @@ def worker(rank, settings):
                 metadata["timing"] = (
                     "Eager calls; GPU events include host submission gaps and rank skew"
                 )
+            if args.capture_dir and active:
+                directory = Path(args.capture_dir)
+                directory.mkdir(parents=True, exist_ok=True)
+                torch.save(
+                    {
+                        "input": x.cpu(),
+                        "ids": ids.cpu(),
+                        "weights": weights.cpu(),
+                        "output": output.bfloat16().cpu(),
+                    },
+                    directory / f"rows-{rows}-rank-{rank}.pt",
+                )
             reports.append(
                 {
                     "rows_per_active_client": rows,
@@ -431,6 +448,16 @@ def main():
         help="Diagnostic changing routes and padding on every replay",
     )
     p.add_argument("--cuda-graph", action="store_true")
+    p.add_argument(
+        "--routing-weights",
+        choices=("uniform", "nonuniform", "cancellation"),
+        default="uniform",
+        help="Nonuniform/cancellation arithmetic diagnostics",
+    )
+    p.add_argument(
+        "--capture-dir",
+        help="Save final active-rank tensors for cross-backend comparison",
+    )
     p.add_argument("--seed", type=int, default=20261015)
     p.add_argument("--port", type=int, default=29650)
     p.add_argument(

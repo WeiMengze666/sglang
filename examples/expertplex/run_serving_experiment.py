@@ -47,6 +47,11 @@ def main():
     )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(
+        "--enable-dp-lm-head",
+        action="store_true",
+        help="Native DP-attention baseline tuning option",
+    )
+    p.add_argument(
         "--warmup-requests",
         type=int,
         default=8,
@@ -83,6 +88,8 @@ def main():
     )
     p.add_argument("--output-dir", required=True, type=Path)
     args = p.parse_args()
+    if args.enable_dp_lm_head and args.variant in ("expertplex", "pdmux"):
+        p.error("DP LM head tuning applies to colocated/chunked/PDD baselines")
     if args.warmup_requests < 1:
         p.error("Warmup requests must be positive")
     if args.numerical_reference_dir and not args.numerical_check:
@@ -191,6 +198,8 @@ def main():
             launch += ["--chunk-size", str(args.chunk_size)]
         if args.disable_tbo:
             launch += ["--disable-tbo"]
+        if args.enable_dp_lm_head:
+            launch += ["--enable-dp-lm-head"]
     bench = [
         sys.executable,
         str(scripts / "bench_sweep.py"),
@@ -256,7 +265,7 @@ def main():
     )
     report = {
         "scope": __doc__,
-        "serving_defaults_version": "native-overlap-autotune-v1",
+        "serving_defaults_version": "native-overlap-autotune-apk-pipeline-v2",
         "input_artifact_sha256": {
             str(path): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (

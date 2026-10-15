@@ -411,11 +411,11 @@ CPU 拷贝和逐步文件写入会改变执行时序，因此该运行不能用�
 流水 store 路径以每 CTA 的 64 位单调退休序号确认阶段交接，避免元数据提前复用后
 仅凭环形屏障奇偶位误认完成。该等待只发生在阶段切换，同阶段 tile 继续流水执行。
 
-`SGLANG_EXPERTPLEX_PIPELINED_STORES=1` 可启用 SM100 的延迟 store 退休实验。
-当前已通过多客户端、双 prefill、变化路由和图重放回归。分离 Task 元数据复用与 store
-退休后，原先明显的性能回退缩小到配对汇总约 0.73%；后续测试显式开启该选项，以保留
-原生 store pipeline。它仍不能作为已达成论文低开销目标的证据。
-`VALIDATION.md` 保留失败、修复和 A/B 结果。
+完整 `sm100` 后端默认启用延迟 store 退休，以保留原生 epilogue pipeline；
+`SGLANG_EXPERTPLEX_PIPELINED_STORES=0` 仅用于消融。其他参考后端保持各自的执行方式。
+阶段切换仍等待旧阶段输出退休。每个 phase 的 runnable 位图用于跳过空闲 mailbox，
+实际 tile 所有权仍由带 generation 的队列 CAS 决定；没有改成整批领取或减少阶段检查。
+这不代表已完成原论文抢占上界或低开销验收，历史记录保留于 `VALIDATION.md`。
 组件图由 `plot_components.py` 根据实际 JSON 数据绘制，并拒绝混用不同初始化算法或专家负载。
 
 ### 全尺寸实验参数
@@ -491,3 +491,24 @@ metadata 的每 CTA 最后工作序号用于判断截断，包括容量末尾是
 数值诊断可显式指定 `--sampling-backend pytorch`。实验总入口默认使用 FlashInfer attention，
 保留 `--attention-backend triton` 用于既有固定条件诊断。汇总工具检查 sampling backend
 和 serving defaults 版本，拒绝将恢复原生优化后的实验与旧默认配置混合计算加速比。
+
+数值路径继续对齐原生 SGLang/DeepEP：P 使用 contiguous CUDA SiLU，D 使用 masked
+Triton 对应的 FP32 运算顺序，最终激活舍入为 BF16。Decode combine 按 top-k 顺序
+使用同一个 FP32 累加器，最后才转 BF16；不能先按 E rank 求部分和再相加。
+Prefill 则保留原生 normal 路径的每 rank BF16 gather 边界。
+
+```bash
+python examples/expertplex/check_activation.py --output /tmp/expertplex-activation.json
+```
+
+该检查将生产 helper 与原生两个激活 kernel 逐位比较。升级 Triton、SGLang kernel
+或编译参数后需要重跑。通信诊断支持 `--routing-weights nonuniform` 和
+`--capture-dir PATH`，保存双方同输入/路由下的输出供交叉比较；`cancellation` 是包含
+负权重的算术压力测试，不代表模型 router。组件基准使用新的 native-activation-v2
+身份，拒绝与旧版 masked decode 使用 contiguous 激活的完整 MoE 结果混合。
+
+原生 DP-attention 基线可以通过 `launch_baseline.py --enable-dp-lm-head` 或
+`run_serving_experiment.py --enable-dp-lm-head` 启用 SGLang 的 DP LM head，避免跨 DP
+组的 logits 通信。它增加每个 attention rank 的 LM head 权重占用，应在独立调优集
+测量后冻结。严格逐位诊断还需要一致的专家布局与 LM head GEMM 形状；仅在诊断时
+对齐布局的结果，不能替代对未经该修改的性能基线进行比较。

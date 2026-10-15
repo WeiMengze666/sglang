@@ -135,10 +135,59 @@ template <typename Id>
 __global__ void group_combine_rows(const GroupBuffers *g, float *output,
                                    const Id *ids, const float *weights,
                                    const int *rows, int n, int k) {
-  // Preserve the reference rank-major FP32 accumulation order exactly.
-  for (int rank = 0; rank < g->world; ++rank)
-    combine_rows_body(g->local[rank], g->slot, output, ids, weights, rows, n, k,
-                      rank, g->world, g->status[rank]);
+  if (g->local[0].packed[g->slot]) {
+    // The routed-prefill ablation retains its rank-major contract. Normal
+    // serving uses group_combine_raw after E-side BF16 per-rank gather.
+    for (int rank = 0; rank < g->world; ++rank)
+      combine_rows_body(g->local[rank], g->slot, output, ids, weights, rows, n, k,
+                        rank, g->world, g->status[rank]);
+    return;
+  }
+  // DeepEP v1 low-latency combine reduces BF16 expert outputs in top-k order,
+  // with one FP32 accumulator and only a final BF16 conversion. Summing each
+  // rank first changes that order. Pull each route directly from its owner;
+  // retain vectorized peer loads and avoid four output read/modify/write passes.
+  const int hidden = g->local[0].hidden, experts = g->local[0].experts;
+  const int vectors = hidden / 8;
+  for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+       i < static_cast<size_t>(n) * vectors;
+       i += static_cast<size_t>(gridDim.x) * blockDim.x) {
+    const int token = i / vectors, h = (i % vectors) * 8;
+    float value[8] = {};
+    for (int choice = 0; choice < k; ++choice) {
+      const size_t route = static_cast<size_t>(token) * k + choice;
+      const int expert = static_cast<int>(ids[route]);
+      if (expert < 0 || expert >= experts * g->world)
+        continue;
+      const int rank = expert % g->world;
+      if (*g->status[rank] != OK)
+        continue;
+      const auto &b = g->local[rank];
+      const int row = rows[route];
+      if (row < 0 || row >= b.capacity[g->slot])
+        continue;
+      const size_t base =
+          (expert_base(b, g->slot, expert / g->world) + row) * hidden + h;
+      uint32_t words[4];
+      asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
+                   : "=r"(words[0]), "=r"(words[1]), "=r"(words[2]), "=r"(words[3])
+                   : "l"(b.output + base)
+                   : "memory");
+      const float weight = weights[route];
+#pragma unroll
+      for (int pair = 0; pair < 4; ++pair) {
+        value[2 * pair] = fmaf(
+            __bfloat162float(__ushort_as_bfloat16(words[pair] & 65535)), weight,
+            value[2 * pair]);
+        value[2 * pair + 1] = fmaf(
+            __bfloat162float(__ushort_as_bfloat16(words[pair] >> 16)), weight,
+            value[2 * pair + 1]);
+      }
+    }
+    auto *destination = reinterpret_cast<float4 *>(output + i * 8);
+    destination[0] = make_float4(value[0], value[1], value[2], value[3]);
+    destination[1] = make_float4(value[4], value[5], value[6], value[7]);
+  }
 }
 
 class RemoteGroup {

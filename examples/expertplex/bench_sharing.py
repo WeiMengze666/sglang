@@ -18,7 +18,9 @@ from pathlib import Path
 # CUDA random generation depends on the visible SM count (notably under MPS).
 # Generate on CPU, in fixed per-expert chunks, so partitions receive identical
 # weights and routing, not merely identical seeds.
-WORKLOAD_IDENTITY = "cpu-bf16-expert-chunks-v1"
+# Version the reference arithmetic too: older full-MoE profiles applied the
+# contiguous activation to masked decode and must not be mixed with this path.
+WORKLOAD_IDENTITY = "cpu-bf16-expert-chunks-native-activation-v2"
 
 
 def weights(args):
@@ -45,6 +47,7 @@ def workload(args, rows, phase, w13, w2, *, return_buffers=False):
     import torch
 
     from sglang.kernels.ops.activation.activation import silu_and_mul
+    from sglang.kernels.ops.moe.ep_moe_kernels import silu_and_mul_masked_fwd
 
     h, inner, experts = args.hidden, args.intermediate, args.experts
     gen = torch.Generator().manual_seed(rows)
@@ -117,7 +120,7 @@ def workload(args, rows, phase, w13, w2, *, return_buffers=False):
 
         def invoke():
             deep_gemm.m_grouped_bf16_gemm_nt_masked(a, w13, gateup, layout, expected)
-            silu_and_mul(gateup.view(-1, 2 * inner), activated.view(-1, inner))
+            silu_and_mul_masked_fwd(gateup, activated, layout)
             deep_gemm.m_grouped_bf16_gemm_nt_masked(
                 activated, w2, out, layout, expected
             )

@@ -173,7 +173,8 @@ class RemoteGroup:
     """Prebuilt attention-side templates spanning all expert peers of a slot.
 
     The caller retains mappings through every replay and synchronizes its COMM
-    stream before closing them. Results accumulate in the original rank order.
+    stream before closing them. Normal prefill combines BF16 rank partials;
+    masked decode follows the native DeepEP top-k FP32 reduction order.
     """
 
     def __init__(self, peers: list[RemoteBuffers]):

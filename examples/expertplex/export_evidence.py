@@ -174,7 +174,10 @@ ENUMS = {
         "gather",
     },
     "backend": {"sm100", "sm100_fused", "reference", "expertplex", "deepep"},
-    "workload_identity": {"cpu-bf16-expert-chunks-v1"},
+    "workload_identity": {
+        "cpu-bf16-expert-chunks-v1",
+        "cpu-bf16-expert-chunks-native-activation-v2",
+    },
 }
 
 

@@ -1217,8 +1217,11 @@ public:
     native_context.benchmark_stage = benchmark_stage;
     const char *pipeline_stores =
         std::getenv("SGLANG_EXPERTPLEX_PIPELINED_STORES");
-    native_context.pipelined_stores =
-        pipeline_stores && std::string(pipeline_stores) == "1";
+    // Keep the complete SM100 backend's native epilogue pipeline enabled.
+    // Explicit 0 is a diagnostic ablation; other backends retain their own path.
+    native_context.pipelined_stores = pipeline_stores
+        ? std::string(pipeline_stores) == "1"
+        : backend == "sm100";
     TORCH_CHECK(
         !native_context.pipelined_stores || backend == "sm100",
         "Pipelined store retirement requires the complete SM100 backend");

@@ -74,6 +74,10 @@ def commands(args):
         "--host",
         "127.0.0.1",
     ]
+    if getattr(args, "enable_dp_lm_head", False):
+        if attention_dp <= 1:
+            raise ValueError("DP LM head requires a baseline with DP attention")
+        common += ["--enable-dp-lm-head"]
     if args.skip_tokenizer_init:
         common += ["--skip-tokenizer-init"]
     if args.tokenizer_path:
@@ -184,6 +188,11 @@ def main():
     p.add_argument("--graph-max-bs", type=int, default=32)
     p.add_argument("--chunk-size", type=int, default=2048)
     p.add_argument("--disable-tbo", action="store_true")
+    p.add_argument(
+        "--enable-dp-lm-head",
+        action="store_true",
+        help="Use native DP LM head; tune and freeze with the baseline",
+    )
     p.add_argument("--disable-overlap-schedule", action="store_true")
     p.add_argument("--disable-flashinfer-autotune", action="store_true")
     p.add_argument(

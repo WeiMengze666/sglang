@@ -4,6 +4,8 @@
 // Included after the shared IPC protocol definitions in expertplex.cu.
 #pragma once
 
+#include "phase_activation.cuh"
+
 #include <cute/atom/copy_traits_sm100.hpp>
 #include <deep_gemm/common/tma_copy.cuh>
 #include <deep_gemm/epilogue/sm100_store_cd_swap_ab.cuh>
@@ -89,6 +91,8 @@ struct Context {
   Maps *maps;
   WeightMaps *weights;
   int *policy;
+  // One bit per mailbox and phase; queues remain the source of task ownership.
+  unsigned *runnable;
   U64 *retired_sequence;
   int *tile_prefix;
   QueueHead *queues;
@@ -156,6 +160,8 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
   result.weights = static_cast<WeightMaps *>(
       owner.allocate(weights.size() * sizeof(WeightMaps)));
   result.policy = static_cast<int *>(owner.allocate(ctas * sizeof(int)));
+  result.runnable = static_cast<unsigned *>(owner.allocate(2 * sizeof(unsigned)));
+  C10_CUDA_CHECK(cudaMemset(result.runnable, 0, 2 * sizeof(unsigned)));
   result.retired_sequence =
       static_cast<U64 *>(owner.allocate(ctas * sizeof(U64)));
   C10_CUDA_CHECK(cudaMemset(result.retired_sequence, 0, ctas * sizeof(U64)));
@@ -249,6 +255,8 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
     __threadfence();
     reset_queues(context, slot, epoch, SCATTER1);
     queue_store(&s->queue, queue_value(epoch, SCATTER1));
+    cuda::atomic_ref<unsigned, cuda::thread_scope_device>(context.runnable[s->phase])
+        .fetch_or(1u << slot, cuda::memory_order_release);
     return;
   }
   const int tile_m = s->phase == 0 ? M : DecodeM;
@@ -287,6 +295,8 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
     Stage first = context.benchmark_stage == DOWN ? DOWN : GATE;
     reset_queues(context, slot, epoch, first);
     queue_store(&s->queue, queue_value(epoch, first));
+    cuda::atomic_ref<unsigned, cuda::thread_scope_device>(context.runnable[s->phase])
+        .fetch_or(1u << slot, cuda::memory_order_release);
   }
 }
 
@@ -334,8 +344,16 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
                                       int phase, int cursor, Task &task,
                                       bool &contended) {
   contended = false;
-  for (int i = 0; i < b.slots; ++i) {
-    int slot = (cursor + i) % b.slots;
+  // Skip inactive mailboxes without changing per-tile phase checks, round-robin
+  // fairness, or generation-tagged CAS ownership in the operation queues.
+  unsigned available =
+      cuda::atomic_ref<unsigned, cuda::thread_scope_device>(context.runnable[phase])
+          .load(cuda::memory_order_acquire);
+  const unsigned before_cursor = (1u << cursor) - 1;
+  while (available) {
+    const unsigned later = available & ~before_cursor;
+    const int slot = __ffs(later ? later : available) - 1;
+    available &= ~(1u << slot);
     auto *state = b.states + slot;
     U64 q = queue_load(&state->queue);
     int stage = (q >> 32) & 7;
@@ -485,6 +503,10 @@ __device__ __forceinline__ void retire_task(const DeviceBuffers &b,
       reset_queues(context, task.slot, task.epoch, next);
       queue_store(&state->queue, queue_value(task.epoch, next));
     } else {
+      // Clear before DONE permits the next request to be published. Clearing
+      // after DONE could erase a new epoch's bit; intermediate stages keep it.
+      cuda::atomic_ref<unsigned, cuda::thread_scope_device>(context.runnable[task.phase])
+          .fetch_and(~(1u << task.slot), cuda::memory_order_release);
       queue_store(&state->queue, queue_value(task.epoch, IDLE));
       b.control[static_cast<size_t>(task.slot) * kControlWords + FINISH_NS] =
           now_ns();
@@ -902,7 +924,8 @@ __global__ __launch_bounds__(Threads, 1) void executor(
             for (int j = 0; j < 4; ++j) {
               float gate_value = gate_values[j];
               BF16 value = __float2bfloat16(
-                  gate_value / (1.f + expf(-gate_value)) * up_values[j]);
+                  expertplex_activation::silu_mul(
+                      gate_value, up_values[j], task.phase));
               b.activation[(base + task.row + token + j) * intermediate +
                            column] = value;
             }
@@ -943,7 +966,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
               value = __bfloat162float(__float2bfloat16(value));
               float up =
                   __bfloat162float(__float2bfloat16(__uint_as_float(u[j])));
-              value = value / (1.f + expf(-value)) * up;
+              value = expertplex_activation::silu_mul(value, up, task.phase);
             }
             converted[j] = __float2bfloat16(value);
           }

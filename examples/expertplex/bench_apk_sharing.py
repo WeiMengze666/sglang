@@ -46,6 +46,12 @@ def main():
         default=0,
         help="Offline-profile SM/CTA limit; zero uses the device",
     )
+    p.add_argument(
+        "--idle-mailboxes",
+        type=int,
+        default=0,
+        help="Additional inactive mailboxes for scheduler overhead diagnostics",
+    )
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
     if (
@@ -58,6 +64,8 @@ def main():
         and not 1 <= args.decode_active_experts <= args.experts
     ):
         p.error("Invalid decode active expert count")
+    if not 0 <= args.idle_mailboxes <= 30:
+        p.error("Use between zero and thirty inactive mailboxes")
     if args.device == args.control_device or min(args.iterations, *args.budgets) <= 0:
         p.error("Use distinct devices and positive counts")
     import torch
@@ -85,14 +93,15 @@ def main():
     for budget in args.budgets:
         torch.cuda.set_device(args.device)
         buffers = native.OwnedBuffers(
-            2,
+            2 + args.idle_mailboxes,
             args.experts,
             max(args.prefill_rows, args.decode_rows),
             args.hidden,
             args.intermediate,
             args.device,
-            capacities=[args.prefill_rows, args.decode_rows],
-            packed=[1, 0],
+            capacities=[args.prefill_rows, args.decode_rows]
+            + [1] * args.idle_mailboxes,
+            packed=[1, 0] + [0] * args.idle_mailboxes,
             top_k=args.top_k,
         )
         views, valid_rows = [], []

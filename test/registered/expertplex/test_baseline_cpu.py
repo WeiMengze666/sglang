@@ -40,6 +40,11 @@ class BaselineLaunchTests(unittest.TestCase):
             self.assertEqual(
                 server[1][server[1].index("--sampling-backend") + 1], "flashinfer"
             )
+        args.enable_dp_lm_head = True
+        dp_head = baseline.commands(args)
+        self.assertTrue(all("--enable-dp-lm-head" in row[1] for row in dp_head[:2]))
+        self.assertNotIn("--enable-dp-lm-head", dp_head[-1][1])
+        args.enable_dp_lm_head = False
         args.sampling_backend = "pytorch"
         args.diagnostic_logit_processor = True
         diagnostic = baseline.commands(args)

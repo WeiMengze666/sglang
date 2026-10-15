@@ -5,6 +5,10 @@
 PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`。
 本文件记录复现要求及当前差距，不表示全部要求已经实现。
 
+辅助阅读：[HaoyangPing 的 ExpertPlex 解读](https://pinghaoyang.com.cn/aigc/posts/expertplex/)。
+实现约束仍以以上原始 PDF 为准，尤其是 tile 提交后的协作切换、单边最终缓冲区访问、
+TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
+
 ## 可追踪的实现路径
 
 以下路径相对仓库根目录，按请求生命周期对应原文；函数名比随提交变化的行号更稳定。
@@ -32,7 +36,7 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
    这条实现路径和数值通过本身不能证明原文的“至多当前 tile”上界，
    尤其需要检查预取深度、传播延迟和所有 warp/CTA 的收敛。
 4. **SM 自适应（Eq.4）**：`update_policy` 从实际 decode GateUp row tiles 计算 footprint，
-   按期望 footprint 缩放 q，向 cluster 倍数取整并限制 Qmax。`claim` 在首选 phase 无可领取
+   按期望 footprint 缩放 q，向 cluster 倍数取整并限制 Qmax。每 phase 的 runnable 位图仅跳过空闲 mailbox；队列 CAS 仍按 tile 领取。`claim` 在首选 phase 无可领取
    工作时尝试另一 phase，实现空闲资源借用。CPU 对照是
    `optimizer.py::adaptive_sm_allocation`；CPU 公式对照不替代 GPU 调度轨迹验收。
 5. **离线选择（Eq.1–3、Algorithm 1）**：`optimizer.py::search` 枚举单节点布局，调用
@@ -63,7 +67,7 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
 | §4.2 | 保留原生 CTA/cluster shape、TMA multicast、warp specialization | 默认双 CTA、2SM MMA、9-stage TMA、原生 STSM/TMA epilogue 已通过回归；GateUp/ACT/Down 独立调度。Nsight Systems 确认对应 native GEMM 几何；性能仍落后 | 原生算子形状及流水线代码审计，数值测试 |
 | §4.3 Fig.4 | system P → CTA0 → device p_i → cluster DSMEM → warp broadcast → mbarrier | 默认后端已实现该传播链；GPU 定时发布和 tile trace 已采集，尚未证明完整上界 | 可控时刻注入 urgent decode，记录各级 epoch/timestamp |
 | §4.3 | 决策在 check epoch 内固定；观察切换后不得再领取旧 phase tile | leader 是唯一领取者并向所有成员分发同一 Task；CAS 竞争不会被当成 phase 空闲；trace validator 检查成员决策与阶段退役，但完整传播上界仍待验证 | 有预取、多 warp、多 CTA 的长时间压力测试 |
-| §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 双 accumulator，延迟 store 退休与 Task ring 元数据复用已分离；跨 mailbox 回归通过，配对汇总仍慢约 0.73%。后期论文实验显式开启，库默认仍关闭 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
+| §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 双 accumulator，延迟 store 退休与 Task ring 元数据复用已分离；跨 mailbox 回归通过，配对汇总仍慢约 0.73%。完整 SM100 后端默认开启，可显式关闭做消融 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
 | §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | NVLink IPC 路径已验证全部 56 个有向 GPU 对 | 多发送方、重复 epoch、容量边界、故障路径 |
 | §5.2 | E 无通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 默认服务路径已实现，E 侧预处理直接读取最终 raw buffer；通信微基准的 identity echo 仅为计时外诊断 | kernel trace、并发 P/D 数值验证 |
 | §5.2 Fig.5 | 单线程 WaitDone 位于 COMM stream；COMPUTE stream 可继续 TBO/SBO | 独立 COMM stream 和双 mailbox 已实现；client 的 TBO/graph 对照通过，小 checkpoint 完整 SGLang TBO/图回放通过，真实模型待验收 | CUDA timeline 及双 microbatch 生命周期检查 |
@@ -131,7 +135,7 @@ ServerArgs；通信 client 由 Runtime 资源容器持有，并接入 scheduler 
 | Attention backend | 保留 SGLang backend 选择；Triton 的固定数值对照不能代表 FlashInfer/FA4 等路径的最佳性能。 |
 | Prefill graph / torch.compile | 当前 ExpertPlex 的 opaque Python/native 通信接口尚未完成该路径集成。这是实现差距，不应写成论文必然冲突。原生 DeepEP normal 路径自身也在参数解析中关闭 prefill graph。 |
 | DeepGEMM | 复用原生 TMA、TCGEN05、双 CTA multicast、STSM/TMA epilogue 和 BF16 舍入边界；新增的是长驻 operation 选择与合作阶段切换。负收益的替代实现不能替换已验证路径。 |
-| DeepEP | 普通 SGLang 基线继续调用原生 normal / low-latency dispatcher；ExpertPlex 的 attention-initiated M-to-N 不能直接套用要求 E 侧 receiver kernel 的原始 API。新的协议仍需继续对照 DeepEP 的路由布局、向量搬运和归并实现，不能据仅有功能通过宣称保留了全部性能优化。 |
+| DeepEP | Decode combine 保持原生 low-latency 的 top-k 顺序 FP32 FMA 与最终 BF16 舍入；P 保持 normal 的每 rank BF16 gather 边界。普通 SGLang 基线继续调用原生 normal / low-latency dispatcher；ExpertPlex 的 attention-initiated M-to-N 不能直接套用要求 E 侧 receiver kernel 的原始 API。新的协议仍需继续对照 DeepEP 的路由布局、向量搬运和归并实现，不能据仅有功能通过宣称保留了全部性能优化。 |
 | Chunked prefill / SBO / TP | chunked prefill 有显式选项；SBO 与 attention TP>1 等当前尚未适配，不能以“论文冲突”代替实现与验证。默认整请求 P 是论文实验配置，不是 SGLang 能力被全局删除。 |
 
 基线启动器也应保留原生 overlap 与 autotune；PDMux 继续遵循其独立调度循环的约束。

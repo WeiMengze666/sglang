@@ -120,8 +120,8 @@ __global__ void benchmark_publish_kernel(U64 *p, U64 *d, U64 delay_ns,
 static torch::Tensor benchmark_publish(std::shared_ptr<OwnedBuffers> owner,
                                        int attention_device, bool run_p,
                                        bool run_d, int delay_us) {
-  TORCH_CHECK(owner->active && owner->b.slots == 2,
-              "Diagnostic publication requires a live two-slot executor");
+  TORCH_CHECK(owner->active && owner->b.slots >= 2,
+              "Diagnostic publication requires a live executor with at least two slots");
   TORCH_CHECK(attention_device != owner->device && delay_us >= 0 &&
                   delay_us <= 1000000 && (run_p || run_d),
               "Invalid diagnostic publication arguments");

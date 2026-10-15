@@ -58,6 +58,7 @@ class ExpertPlexClient:
         self.groups = (
             [native.RemoteGroup(peers) for peers in self.mailboxes]
             if self.config.prefill_preprocess
+            or self.client.phase == "decode"
             or os.environ.get("SGLANG_EXPERTPLEX_GROUP_COMM") == "1"
             else []
         )
