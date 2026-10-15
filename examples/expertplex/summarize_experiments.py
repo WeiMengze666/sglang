@@ -72,6 +72,15 @@ def summarize(paths):
             "SGLANG_EXPERTPLEX_SYNTHETIC_SEED"
         )
         identity["warmup_requests"] = settings.get("warmup_requests", 1)
+        artifacts = experiment.get("input_artifact_sha256", {})
+        identity["input_fingerprints"] = {
+            label: artifacts.get(str(path))
+            for label, path in (
+                ("dataset", Path(settings["dataset_path"])),
+                ("model_config", Path(settings["model_path"]) / "config.json"),
+                ("tokenizer", Path(settings["tokenizer_path"]) / "tokenizer.json"),
+            )
+        }
         if (
             identity["weight_mode"] == "synthetic"
             and identity["canonical_seed"] is None

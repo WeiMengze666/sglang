@@ -98,6 +98,18 @@ class ServingSummaryTests(unittest.TestCase):
         self.assertEqual(run["measured_rates"], [1])
         self.assertEqual(len(report["rows"]), 1)
 
+    def test_same_paths_and_lengths_cannot_hide_changed_input_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            roots = [Path(tmp) / "first", Path(tmp) / "second"]
+            for root, digest in zip(roots, ("a" * 64, "b" * 64)):
+                write_fixture(root)
+                path = root / "experiment.json"
+                experiment = json.loads(path.read_text())
+                experiment["input_artifact_sha256"] = {"/dataset": digest}
+                path.write_text(json.dumps(experiment))
+            with self.assertRaisesRegex(ValueError, "mismatch"):
+                SUMMARY.summarize(roots)
+
 
 if __name__ == "__main__":
     unittest.main()
