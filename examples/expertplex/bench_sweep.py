@@ -51,6 +51,35 @@ def joint_slo(result, ttft_slo_s, tpot_slo_s):
     }
 
 
+def save_sweep(args, results, *, complete):
+    feasible = [row["request_rate"] for row in results if row["meets_p90_joint_slo"]]
+    report = {
+        "label": args.label,
+        "model_path": args.model_path,
+        "tokenizer_path": args.tokenizer_path,
+        "weight_mode": args.weight_mode,
+        "sequence_cap": args.sequence_cap,
+        "dataset": args.dataset_name,
+        "dataset_path": args.dataset_path,
+        "seed": args.seed,
+        "warmup_requests": args.warmup_requests,
+        "ttft_slo_ms": args.ttft_slo_ms,
+        "tpot_slo_ms": args.tpot_slo_ms,
+        "p90_goodput_max_tested_arrival_rps": max(feasible, default=None),
+        "note": "Maximum among tested arrival rates only; extend/refine the sweep and repeat with multiple seeds.",
+        "results": results,
+    }
+    report.update(
+        status="completed" if complete else "partial",
+        requested_rates=sorted(set(args.rates)),
+    )
+    path = Path(args.output_dir) / "joint-slo.json"
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(report, indent=2) + "\n")
+    temporary.replace(path)
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:31000")
@@ -167,27 +196,12 @@ def main():
         measured = joint_slo(detailed, args.ttft_slo_ms / 1000, args.tpot_slo_ms / 1000)
         measured["details_file"] = str(path.resolve())
         results.append(measured)
+        # Preserve every completed rate even if a later benchmark fails or the
+        # allocation ends. Partial sweeps never claim the requested grid finished.
+        save_sweep(args, results, complete=False)
     if args.dry_run:
         return
-    feasible = [row["request_rate"] for row in results if row["meets_p90_joint_slo"]]
-    report = {
-        "label": args.label,
-        "model_path": args.model_path,
-        "tokenizer_path": args.tokenizer_path,
-        "weight_mode": args.weight_mode,
-        "sequence_cap": args.sequence_cap,
-        "dataset": args.dataset_name,
-        "dataset_path": args.dataset_path,
-        "seed": args.seed,
-        "warmup_requests": args.warmup_requests,
-        "ttft_slo_ms": args.ttft_slo_ms,
-        "tpot_slo_ms": args.tpot_slo_ms,
-        "p90_goodput_max_tested_arrival_rps": max(feasible, default=None),
-        "note": "Maximum among tested arrival rates only; extend/refine the sweep and repeat with multiple seeds.",
-        "results": results,
-    }
-    (output / "joint-slo.json").write_text(json.dumps(report, indent=2) + "\n")
-    print(json.dumps(report, indent=2))
+    print(json.dumps(save_sweep(args, results, complete=True), indent=2))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 """Generation/lifecycle and joint-SLO checks which need no GPU dependencies."""
 
 import importlib
+import contextlib
+import io
 import json
 import os
 import sys
@@ -104,6 +106,57 @@ class RendezvousTests(unittest.TestCase):
 
 
 class JointSloTests(unittest.TestCase):
+    def test_later_subprocess_failure_preserves_completed_rates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = []
+
+            def run(command, **kwargs):
+                calls.append(command)
+                if len(calls) == 2:
+                    raise bench.subprocess.CalledProcessError(1, command)
+                result = dict(
+                    request_rate=1,
+                    duration=3,
+                    ttfts=[0.1, 0.2],
+                    latencies=[0.15, 0.25],
+                    successes=[True, True],
+                    output_lens=[2, 2],
+                )
+                Path(command[command.index("--output-file") + 1]).write_text(
+                    json.dumps(result) + "\n"
+                )
+
+            argv = [
+                "bench_sweep.py",
+                "--model-path",
+                "/model",
+                "--label",
+                "test",
+                "--rates",
+                "1",
+                "2",
+                "--num-prompts",
+                "2",
+                "--ttft-slo-ms",
+                "1000",
+                "--tpot-slo-ms",
+                "100",
+                "--output-dir",
+                tmp,
+            ]
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(bench.subprocess, "run", side_effect=run),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                with self.assertRaises(bench.subprocess.CalledProcessError):
+                    bench.main()
+            report = json.loads((Path(tmp) / "joint-slo.json").read_text())
+        self.assertEqual(report["status"], "partial")
+        self.assertEqual(report["requested_rates"], [1, 2])
+        self.assertEqual(len(report["results"]), 1)
+        self.assertEqual(report["results"][0]["joint_slo_met_requests"], 2)
+
     def result(self):
         return {
             "request_rate": 4,
