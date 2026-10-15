@@ -8,6 +8,7 @@ This does not supply the attention/network profiles required by the optimizer.
 """
 
 import argparse
+import hashlib
 import json
 import statistics
 import subprocess
@@ -39,10 +40,13 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--sms", type=int, nargs="+", default=[32, 64, 84, 116, 148])
     p.add_argument(
-        "--prefill-expert-rows", type=int, nargs="+", default=[1, 128, 256, 512, 1024]
+        "--prefill-expert-rows",
+        type=int,
+        nargs="+",
+        default=[1, 128, 1024, 4096, 8192, 32768],
     )
     p.add_argument(
-        "--decode-active-experts", type=int, nargs="+", default=[1, 4, 8, 16, 40]
+        "--decode-active-experts", type=int, nargs="+", default=[1, 2, 4, 8, 16, 40]
     )
     p.add_argument(
         "--operations",
@@ -59,6 +63,14 @@ def main():
     root = Path(__file__).resolve().parent
     report = {
         "scope": __doc__,
+        "source_files_sha256": {
+            name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+            for name in (
+                "profile_operations.py",
+                "bench_sharing.py",
+                "bench_apk_sharing.py",
+            )
+        },
         "settings": vars(args) | {"output_dir": str(args.output_dir)},
         "cases": [],
     }
@@ -92,6 +104,10 @@ def main():
                             operation,
                             "--prefill-expert-rows",
                             str(p_rows),
+                            # Forty local experts/top-8 require this aggregate
+                            # token capacity for the controlled packed rows.
+                            "--prefill-rows",
+                            str(max(8192, p_rows * 5)),
                             "--decode-active-experts",
                             str(active),
                             "--iterations",

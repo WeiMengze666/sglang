@@ -42,6 +42,23 @@ class BaselineLaunchTests(unittest.TestCase):
             command = server[1]
             self.assertEqual(command[command.index("--tp-size") + 1], "4")
             self.assertEqual(command[command.index("--ep-size") + 1], "4")
+        args.sequence_cap = 24576
+        args.decode_kv_tokens = 196608
+        prefill, decode, _ = baseline.commands(args)
+        for server, capacity, graph in [
+            (prefill, "24576", "disabled"),
+            (decode, "49152", "full"),
+        ]:
+            command = server[1]
+            self.assertEqual(command[command.index("--max-total-tokens") + 1], capacity)
+            self.assertEqual(
+                command[command.index("--cuda-graph-backend-decode") + 1], graph
+            )
+        args.max_prefill_tokens = 32768
+        prefill, _, _ = baseline.commands(args)
+        self.assertEqual(
+            prefill[1][prefill[1].index("--max-total-tokens") + 1], "32768"
+        )
 
 
 if __name__ == "__main__":

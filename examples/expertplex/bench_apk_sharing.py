@@ -182,20 +182,30 @@ def main():
         for phase, view in enumerate(views):
             output = view["gateup" if args.operation == "gateup" else "output"]
             indices = torch.tensor(valid_rows[phase], device=args.device)
-            actual = output[indices[:, 0]].float()
-            reference = (
-                works[phase][1].reshape(-1, output.shape[-1])[indices[:, 1]].float()
-            )
-            delta = actual - reference
-            passed = torch.allclose(actual, reference, atol=0.01, rtol=0.03)
+            reference_output = works[phase][1].reshape(-1, output.shape[-1])
+            passed = True
+            delta_squared = reference_squared = exact = maximum = 0.0
+            elements = 0
+            # Cover every valid element while bounding diagnostic scratch.
+            # Fig.13's largest P size must not allocate three full FP32 copies.
+            for begin in range(0, len(indices), 4096):
+                part = indices[begin : begin + 4096]
+                actual = output[part[:, 0]].float()
+                reference = reference_output[part[:, 1]].float()
+                delta = actual - reference
+                passed &= bool(torch.allclose(actual, reference, atol=0.01, rtol=0.03))
+                delta_squared += float(delta.square().sum(dtype=torch.float64))
+                reference_squared += float(reference.square().sum(dtype=torch.float64))
+                exact += float((actual == reference).sum(dtype=torch.float64))
+                maximum = max(maximum, float(delta.abs().max()))
+                elements += actual.numel()
             numerics.append(
                 {
                     "passed": bool(passed),
-                    "relative_l2": float(
-                        delta.norm() / reference.norm().clamp_min(1e-30)
-                    ),
-                    "max_abs_difference": float(delta.abs().max()),
-                    "exact_fraction": float((actual == reference).float().mean()),
+                    "relative_l2": (delta_squared / max(reference_squared, 1e-60))
+                    ** 0.5,
+                    "max_abs_difference": maximum,
+                    "exact_fraction": exact / elements,
                 }
             )
         row["native_reference"] = numerics

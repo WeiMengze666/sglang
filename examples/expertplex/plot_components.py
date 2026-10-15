@@ -259,7 +259,27 @@ def main():
             f"B300 BF16 isolated native/APK profiles | {full} SMs\nMatched weights, inputs and expert-load vectors; communication excluded",
             fontsize=10,
         )
-        data = {"sources_sha256": provenance, "scope": report["scope"]}
+        data = {
+            "sources_sha256": provenance,
+            "scope": report["scope"],
+            "cases": [
+                {
+                    key: row[key]
+                    for key in (
+                        "sms",
+                        "operation",
+                        "prefill_expert_rows",
+                        "decode_active_experts",
+                        "apk_overhead_us",
+                    )
+                }
+                | {
+                    backend: {"isolated_us": row[backend]["isolated_us"]}
+                    for backend in ("native", "apk")
+                }
+                for row in report["cases"]
+            ],
+        }
     else:
         from summarize_experiments import read_json
 

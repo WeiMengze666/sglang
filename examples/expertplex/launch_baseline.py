@@ -111,6 +111,13 @@ def commands(args):
             "--disaggregation-bootstrap-port",
             str(args.bootstrap_port + gpu),
         ]
+        if role == "prefill":
+            # P never decodes. Keep enough KV for the longest admitted prompt
+            # or prefill batch, without duplicating D's long-lived KV capacity.
+            command[command.index("--max-total-tokens") + 1] = str(
+                max(args.sequence_cap, args.max_prefill_tokens)
+            )
+            command[command.index("--cuda-graph-backend-decode") + 1] = "disabled"
         servers.append((role, command, port))
     router = [
         sys.executable,

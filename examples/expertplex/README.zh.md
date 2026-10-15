@@ -236,7 +236,7 @@ python examples/expertplex/bench_sweep.py \
 
 ShareGPT 使用 `--dataset-name sharegpt --dataset-path /path/to/sharegpt.json`。
 长文本可使用同一份 `custom` 数据集，按本仓库 custom dataset 格式准备 LooGLE 样本；
-所有方法使用相同截断规则。正式结果需要足够样本、多个种子、SLO 边界附近更密集的
+所有方法使用相同的长度过滤规则，不截断已有样本。正式结果需要足够样本、多个种子、SLO 边界附近更密集的
 rate sweep，并记录 GPU、驱动、CUDA、commit、模型 revision、配置、功耗和 HBM。
 原生 smoke latency 或拟合模型预测不等于端到端 goodput。
 

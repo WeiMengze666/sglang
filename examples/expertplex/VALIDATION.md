@@ -510,3 +510,25 @@ Static capacity estimates now distinguish raw buffers: P24576/D256/TBO uses
 283.14 GiB/E including a 16 GiB runtime reserve, above the configured 268 GiB.
 The no-TBO alternative estimates 258.55 GiB/E and requires a separately labeled
 experiment; it is not equivalent to the paper's complete overlap policy.
+
+## LooGLE and PDD memory failure, 23:59 UTC
+
+With the same 32 samples, 574699 input / 318 output tokens, sequence cap 24576,
+aggregate decode KV 196608, and SLOs 10 s / 100 ms, colocated attains 22/12/1
+joint successes at 0.1/0.25/0.5 req/s; chunk size 2048 attains 0/0/0. This
+chunk size has not yet been tuned on LooGLE. PDD completes 30/32 at 0.1, then
+fails with CUDA OOM at 0.25 while allocating a 1.09 GiB GateUp temporary.
+Checkpoint-2359 preserves the incomplete sweep separately from completed runs.
+It cannot be counted as a successful three-point comparison.
+
+The PDD launcher now allocates P KV as max(sequence cap, max prefill tokens)
+and disables P's unused decode graphs. D retains 49152 tokens per rank and
+196608 aggregate; neither the sampled length cap nor precision changes.
+For this workload P KV changes from 49152 to 24576 per rank. CPU launch-plan
+checks pass; the GPU retry is pending. The real checkpoint still has only
+68 of the 241 named weight shards at the 23:30 check, with no ready index.
+
+The supplementary native/APK operation profiler now covers P rows per expert
+through 32768 and D active experts through the model's 40 local experts. It
+reserves the required packed rows and validates all output elements in bounded
+chunks, preserving the prior error thresholds. This larger GPU sweep is pending.
