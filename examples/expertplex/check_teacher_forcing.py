@@ -22,6 +22,78 @@ def read(path):
     return json.loads(gzip.decompress(data) if path.suffix == ".gz" else data)
 
 
+def compare_distributions(ref, report):
+    """Compare saved same-history scores without issuing another model request."""
+    if (
+        ref["model_path"] != report["model_path"]
+        or ref["vocab_size"] != report["vocab_size"]
+        or len(ref["outputs"]) != len(report["outputs"])
+        or not report["outputs"]
+    ):
+        raise ValueError("Reference checkpoint/vocabulary/history count mismatch")
+    vocab = report["vocab_size"]
+    comparisons = []
+    for before, after in zip(ref["outputs"], report["outputs"]):
+        if before["history"] != after["history"]:
+            raise ValueError("Reference histories differ")
+        left, right = before["logprobs"], after["logprobs"]
+        if (
+            len(left) != vocab
+            or len(right) != vocab
+            or any(
+                value is not None and not math.isfinite(value) for value in left + right
+            )
+        ):
+            raise ValueError("Recorded scores have wrong shape or nonfinite values")
+        common = [
+            i for i in range(vocab) if left[i] is not None and right[i] is not None
+        ]
+        if not common:
+            raise ValueError("No common scored token IDs")
+        lp, rp = (
+            [math.exp(left[i]) for i in common],
+            [math.exp(right[i]) for i in common],
+        )
+        ordered = sorted(
+            (i for i in range(vocab) if left[i] is not None),
+            key=left.__getitem__,
+            reverse=True,
+        )[:2]
+        first = ordered[0]
+        candidate = max(
+            (i for i in range(vocab) if right[i] is not None), key=right.__getitem__
+        )
+        differences = [left[i] - right[i] for i in common]
+        comparisons.append(
+            {
+                "history_tokens": len(before["history"]),
+                "common_scored_tokens": len(common),
+                "reference_mass_on_common_tokens": sum(lp),
+                "candidate_mass_on_common_tokens": sum(rp),
+                "max_abs_logprob_difference": max(abs(x) for x in differences),
+                "rms_logprob_difference": math.sqrt(
+                    sum(x * x for x in differences) / len(common)
+                ),
+                "total_variation_lower_bound": (
+                    sum(abs(a - b) for a, b in zip(lp, rp)) + abs(sum(lp) - sum(rp))
+                )
+                / 2,
+                "kl_reference_to_candidate": (
+                    sum(a * b for a, b in zip(lp, differences))
+                    if len(common) == vocab
+                    else None
+                ),
+                "reference_top1_margin": (
+                    left[first] - left[ordered[1]] if len(ordered) > 1 else None
+                ),
+                "reference_top1": first,
+                "candidate_top1": candidate,
+                "top1_equal": first == candidate,
+            }
+        )
+    return comparisons
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-url", required=True)
@@ -127,60 +199,7 @@ def main():
         "outputs": outputs,
     }
     if args.reference:
-        ref = read(args.reference)
-        if ref["model_path"] != report["model_path"] or len(ref["outputs"]) != len(
-            outputs
-        ):
-            raise ValueError("Reference checkpoint/history count mismatch")
-        comparisons = []
-        for before, after in zip(ref["outputs"], outputs):
-            if before["history"] != after["history"]:
-                raise ValueError("Reference histories differ")
-            left, right = before["logprobs"], after["logprobs"]
-            common = [
-                i for i in range(vocab) if left[i] is not None and right[i] is not None
-            ]
-            if not common:
-                raise ValueError("No common scored token IDs")
-            lp, rp = (
-                [math.exp(left[i]) for i in common],
-                [math.exp(right[i]) for i in common],
-            )
-            first, second = sorted(
-                (i for i in range(vocab) if left[i] is not None),
-                key=left.__getitem__,
-                reverse=True,
-            )[:2]
-            candidate = max(
-                (i for i in range(vocab) if right[i] is not None), key=right.__getitem__
-            )
-            differences = [left[i] - right[i] for i in common]
-            comparisons.append(
-                {
-                    "history_tokens": len(before["history"]),
-                    "common_scored_tokens": len(common),
-                    "reference_mass_on_common_tokens": sum(lp),
-                    "candidate_mass_on_common_tokens": sum(rp),
-                    "max_abs_logprob_difference": max(abs(x) for x in differences),
-                    "rms_logprob_difference": math.sqrt(
-                        sum(x * x for x in differences) / len(common)
-                    ),
-                    "total_variation_lower_bound": (
-                        sum(abs(a - b) for a, b in zip(lp, rp)) + abs(sum(lp) - sum(rp))
-                    )
-                    / 2,
-                    "kl_reference_to_candidate": (
-                        sum(a * b for a, b in zip(lp, differences))
-                        if len(common) == vocab
-                        else None
-                    ),
-                    "reference_top1_margin": left[first] - left[second],
-                    "reference_top1": first,
-                    "candidate_top1": candidate,
-                    "top1_equal": first == candidate,
-                }
-            )
-        report["comparisons"] = comparisons
+        report["comparisons"] = compare_distributions(read(args.reference), report)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k != "outputs"}, indent=2))
 
