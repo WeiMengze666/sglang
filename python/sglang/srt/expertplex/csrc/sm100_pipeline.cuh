@@ -88,6 +88,7 @@ struct Context {
   Maps *maps;
   WeightMaps *weights;
   int *policy;
+  U64 *retired_sequence;
   int *tile_prefix;
   QueueHead *queues;
 };
@@ -150,6 +151,9 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
   result.weights = static_cast<WeightMaps *>(
       owner.allocate(weights.size() * sizeof(WeightMaps)));
   result.policy = static_cast<int *>(owner.allocate(ctas * sizeof(int)));
+  result.retired_sequence =
+      static_cast<U64 *>(owner.allocate(ctas * sizeof(U64)));
+  C10_CUDA_CHECK(cudaMemset(result.retired_sequence, 0, ctas * sizeof(U64)));
   result.tile_prefix =
       static_cast<int *>(owner.allocate(b.slots * 2 * b.experts * sizeof(int)));
   result.queues = static_cast<QueueHead *>(
@@ -322,7 +326,9 @@ __device__ __forceinline__ void update_policy(const DeviceBuffers &b,
 
 template <int Cluster, bool Fused>
 __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
-                                      int phase, int cursor, Task &task) {
+                                      int phase, int cursor, Task &task,
+                                      bool &contended) {
+  contended = false;
   for (int i = 0; i < b.slots; ++i) {
     int slot = (cursor + i) % b.slots;
     auto *state = b.states + slot;
@@ -353,6 +359,15 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
           break;
         }
       }
+      // A bounded CAS retry prevents one claimant from monopolizing a check
+      // epoch. Exhausting that retry budget does not mean this phase is idle:
+      // work may still be available. Do not lend its cluster to the other
+      // phase merely because another claimant won these CAS races.
+      if (!reserved &&
+          (ticket & ~static_cast<U64>(UINT_MAX)) == generation &&
+          static_cast<unsigned>(ticket) < total &&
+          (queue_load(&state->queue) & ~static_cast<U64>(UINT_MAX)) == generation)
+        contended = true;
     }
     if (!reserved ||
         (queue_load(&state->queue) & ~static_cast<U64>(UINT_MAX)) != generation)
@@ -435,7 +450,7 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
 template <int Cluster, bool Fused>
 __device__ __forceinline__ void retire_task(const DeviceBuffers &b,
                                             Context context, const Task &task,
-                                            uint32_t sequence) {
+                                            U64 sequence) {
   auto *state = b.states + task.slot;
   unsigned total = operation_tiles(state, task.stage);
   if (atomicAdd(&state->completed, 1U) == total * Cluster - 1) {
@@ -552,7 +567,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
     bool previous_was_flush = false;
     Task deferred{};
     deferred.slot = -1;
-    for (uint32_t sequence = 0;; ++sequence) {
+    for (U64 sequence = 0;; ++sequence) {
       const int index = sequence % OutputStages,
                 parity = (sequence / OutputStages) & 1;
       s.task_empty[index].wait(parity ^ 1);
@@ -584,12 +599,16 @@ __global__ __launch_bounds__(Threads, 1) void executor(
           int preferred = cuda::atomic_ref<int, cuda::thread_scope_device>(
                               context.policy[blockIdx.x / Cluster])
                               .load(cuda::memory_order_acquire);
-          if (!claim<Cluster, Fused>(b, context, preferred, cursor, task))
-            claim<Cluster, Fused>(b, context, 1 - preferred, cursor, task);
+          bool contended = false;
+          if (!claim<Cluster, Fused>(b, context, preferred, cursor, task,
+                                    contended) && !contended)
+            claim<Cluster, Fused>(b, context, 1 - preferred, cursor, task,
+                                  contended);
           if (task.slot < 0) {
             // A final tile cannot wait for a successor that does not exist.
             // A control-only flush releases its pending store/ring ownership.
-            if (context.pipelined_stores && sequence && !previous_was_flush) {
+            if (!contended && context.pipelined_stores && sequence &&
+                !previous_was_flush) {
               task.slot = -3;
               task.stage = IDLE;
               break;
@@ -606,9 +625,22 @@ __global__ __launch_bounds__(Threads, 1) void executor(
           task.stage = IDLE;
         }
         if (sequence && task.slot >= 0 && task.phase != previous_phase) {
-          const uint32_t previous = sequence - 1;
-          s.cluster_empty[previous % OutputStages].wait(
-              (previous / OutputStages) & 1);
+          if (context.pipelined_stores) {
+            // Metadata may run ahead of store retirement. A ring barrier's
+            // parity alone cannot distinguish a completed epoch from one two
+            // generations behind, so an infrequent phase-switch wait can
+            // return early (ABA). Require every CTA's exact retirement prefix,
+            // including the preceding flush, without draining same-phase tiles.
+            for (int member = 0; member < Cluster; ++member)
+              while (cuda::atomic_ref<U64, cuda::thread_scope_device>(
+                         context.retired_sequence[blockIdx.x + member])
+                         .load(cuda::memory_order_acquire) < sequence)
+                __nanosleep(64);
+          } else {
+            const U64 previous = sequence - 1;
+            s.cluster_empty[previous % OutputStages].wait(
+                (previous / OutputStages) & 1);
+          }
         }
         for (int member = 1; member < Cluster; ++member)
           deep_gemm::ptx::st_async_cluster(&s.decision[index], task, member,
@@ -716,7 +748,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
     const uint32_t g_stage_lo = g.lo + lane * sizeof(s.g[0]) / 16;
     const uint32_t u_stage_lo =
         u.lo + lane * (Fused ? sizeof(s.u[0]) : sizeof(s.g[0])) / 16;
-    for (uint32_t sequence = 0;; ++sequence) {
+    for (U64 sequence = 0;; ++sequence) {
       const int index = sequence % OutputStages,
                 parity = (sequence / OutputStages) & 1;
       s.task_full[index].wait(parity);
@@ -778,12 +810,16 @@ __global__ __launch_bounds__(Threads, 1) void executor(
     uint32_t tma_store_stage = 0;
     Task pending{};
     pending.slot = -1;
-    uint32_t pending_sequence = 0;
+    U64 pending_sequence = 0;
     auto release_task = [&](const Task &completed,
-                            uint32_t completed_sequence) {
+                            U64 completed_sequence) {
       if (local_row == 0 && completed.slot >= 0)
         retire_task<Cluster, Fused>(b, context, completed, completed_sequence);
       cutlass::arch::NamedBarrier::sync(M, 0);
+      if (context.pipelined_stores && local_row == 0)
+        cuda::atomic_ref<U64, cuda::thread_scope_device>(
+            context.retired_sequence[blockIdx.x])
+            .store(completed_sequence + 1, cuda::memory_order_release);
       if (!context.pipelined_stores)
         s.task_empty[completed_sequence % OutputStages].arrive();
       s.cluster_empty[completed_sequence % OutputStages].arrive(0, true);
@@ -802,7 +838,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         pending.slot = -1;
       }
     };
-    for (uint32_t sequence = 0;; ++sequence) {
+    for (U64 sequence = 0;; ++sequence) {
       const int index = sequence % OutputStages,
                 parity = (sequence / OutputStages) & 1;
       s.task_full[index].wait(parity);

@@ -13,6 +13,44 @@ from _bootstrap import module
 from check_gpu import Exporter
 
 
+def validate_cluster_trace(records, cluster_size, truncated_ctas=0):
+    """Check cooperative decisions and retirement ordering, not a latency bound."""
+    if truncated_ctas or not records or cluster_size < 1:
+        raise ValueError("Need a complete nonempty cluster trace")
+    groups = {}
+    for record in records:
+        if record["finish_ns"] < record["begin_ns"]:
+            raise ValueError("Unretired tile in cluster trace")
+        key = (record["cta"] // cluster_size, record["sequence"])
+        members = groups.setdefault(key, {})
+        if record["cta"] in members:
+            raise ValueError("Duplicate CTA decision")
+        members[record["cta"]] = record
+    previous, switches = {}, 0
+    for (cluster, _), members in sorted(groups.items()):
+        expected = set(range(cluster * cluster_size, (cluster + 1) * cluster_size))
+        if set(members) != expected:
+            raise ValueError("Missing CTA in cluster decision")
+        decisions = {
+            tuple(row[field] for field in ("epoch", "slot", "phase", "stage"))
+            for row in members.values()
+        }
+        if len(decisions) != 1:
+            raise ValueError("Cluster members selected different work")
+        phase = next(iter(decisions))[2]
+        begin = min(row["begin_ns"] for row in members.values())
+        finish = max(row["finish_ns"] for row in members.values())
+        before = previous.get(cluster)
+        if before is not None and phase != before[0]:
+            if begin < before[1]:
+                raise ValueError("Phase switched before all old-phase CTAs retired")
+            switches += 1
+        elif before is not None:
+            finish = max(finish, before[1])
+        previous[cluster] = (phase, finish)
+    return {"cluster_decisions": len(groups), "phase_switches": switches}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -199,6 +237,14 @@ def main():
     report["trace_truncated_ctas"] = (
         int((trace[:, -1, 0] != 0).sum()) if args.trace_capacity else 0
     )
+    try:
+        report["cooperative_trace_checks"] = validate_cluster_trace(
+            records, report["executor"]["cluster_size"], report["trace_truncated_ctas"]
+        )
+    except ValueError as exc:
+        report.update(status="failed", error=str(exc))
+        args.output.write_text(json.dumps(report, indent=2) + "\n")
+        raise
 
     def distribution(values):
         if not values:
