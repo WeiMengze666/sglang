@@ -20,10 +20,12 @@ def main():
     ablation.add_argument("--reference", required=True, type=Path)
     overhead = sub.add_parser("overhead")
     overhead.add_argument("--input", required=True, type=Path)
+    attention = sub.add_parser("attention")
+    attention.add_argument("--input", required=True, type=Path)
     communication = sub.add_parser("communication")
     communication.add_argument("--inputs", required=True, type=Path, nargs="+")
     communication.add_argument("--labels", nargs="+", help="One label per input report")
-    for parser in (sharing, intervals, ablation, overhead, communication):
+    for parser in (sharing, intervals, ablation, overhead, attention, communication):
         parser.add_argument("--output-dir", required=True, type=Path)
     args = p.parse_args()
     import matplotlib
@@ -121,6 +123,59 @@ def main():
                     ],
                 }
                 for m, v, policy in points
+            ],
+        }
+    elif args.kind == "attention":
+        from summarize_experiments import read_json
+
+        report = read_json(args.input)
+        if report["status"] != "completed":
+            raise ValueError("Attention measurement and fit validation must complete")
+        fig, axes = plt.subplots(1, 2, figsize=(9, 4.5), layout="constrained")
+        for ax, phase in zip(axes, ("prefill", "decode")):
+            validation = report["validation"][phase]
+            rows = validation["holdout"]
+            if not rows or any(
+                min(row["measured_s"], row["predicted_s"]) <= 0 for row in rows
+            ):
+                raise ValueError("Need positive measured/predicted holdout latencies")
+            measured = [row["measured_s"] * 1e6 for row in rows]
+            predicted = [row["predicted_s"] * 1e6 for row in rows]
+            lo, hi = min(measured + predicted), max(measured + predicted)
+            ax.plot([lo, hi], [lo, hi], "--", color="black", linewidth=1, label="Exact")
+            ax.scatter(measured, predicted, s=25, label="Held-out shape")
+            scale = "log" if hi / lo >= 10 else "linear"
+            ax.set(
+                xscale=scale,
+                yscale=scale,
+                xlabel="Measured attention layer (µs)",
+                ylabel="Predicted attention layer (µs)",
+            )
+            ax.set_title(
+                f"{phase.capitalize()} | median error "
+                f"{100 * validation['median_relative_error']:.1f}%\n"
+                f"max {100 * validation['maximum_relative_error']:.1f}% | "
+                f"batch monotonicity: {validation['monotone_over_sampled_lengths']}",
+                fontsize=10,
+            )
+            ax.grid(alpha=0.2)
+            ax.legend(fontsize=8)
+        fig.suptitle(
+            "B300 BF16 Qwen3 attention-side Eq.2 fit validation\n"
+            "Synthetic activations; experts, embedding, LM head and sampling excluded",
+            fontsize=10,
+        )
+        data = {
+            "sources_sha256": provenance,
+            "scope": report["scope"],
+            "fits": report["fits"],
+            "validation": report["validation"],
+            "samples": [
+                {
+                    key: row[key]
+                    for key in ("phase", "split", "x", "sequence_length", "latency_s")
+                }
+                for row in report["samples"]
             ],
         }
     elif args.kind == "interval-ablation":
