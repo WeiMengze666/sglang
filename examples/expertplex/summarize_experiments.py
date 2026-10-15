@@ -141,6 +141,17 @@ def summarize(paths):
                 "completed": result["completed_requests"],
                 "joint_met": result["joint_slo_met_requests"],
                 "joint_attainment": result["joint_slo_attainment"],
+                "ttft_attainment": sum(
+                    ttft * 1000 <= settings["ttft_slo_ms"] for ttft, _, _ in completed
+                )
+                / result["attempted_requests"],
+                "tpot_attainment": sum(
+                    length > 1
+                    and (latency - ttft) * 1000 / (length - 1)
+                    <= settings["tpot_slo_ms"]
+                    for ttft, latency, length in completed
+                )
+                / result["attempted_requests"],
                 "joint_wilson95": wilson(
                     result["joint_slo_met_requests"], result["attempted_requests"]
                 ),
@@ -195,7 +206,7 @@ def main():
     import matplotlib.pyplot as plt
 
     conditions = report["common_conditions"]
-    fig, axes = plt.subplots(1, 3, figsize=(12, 3.8), layout="constrained")
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4.5), layout="constrained")
     for variant in dict.fromkeys(r["variant"] for r in report["rows"]):
         series = sorted(
             [r for r in report["rows"] if r["variant"] == variant],
@@ -227,18 +238,67 @@ def main():
         ax.set_ylabel(label)
         ax.grid(alpha=0.2)
     axes[-1].set_ylim(0, 1.04)
-    axes[-1].legend(fontsize=8)
+    fig.legend(
+        *axes[-1].get_legend_handles_labels(),
+        loc="outside lower center",
+        ncol=2,
+        fontsize=8,
+    )
     mode = (
         "CANONICAL SYNTHETIC BF16 — not pretrained-model acceptance"
         if conditions["weight_mode"] == "synthetic"
         else "BF16 checkpoint"
     )
-    fig.suptitle(
-        f"Qwen3-Coder-480B | 8×B300 | {Path(conditions['dataset_path']).stem}\n{mode}; n={conditions['requests']}, seed={conditions['seed']}",
-        fontsize=10,
+    title = (
+        f"Qwen3-Coder-480B | 8×B300 | {Path(conditions['dataset_path']).stem}\n"
+        f"{mode}; n={conditions['requests']}, seed={conditions['seed']}, "
+        f"warmup={conditions['warmup_requests']}"
     )
+    fig.suptitle(title, fontsize=10)
     for suffix in ("svg", "pdf", "png"):
         fig.savefig(args.output_dir / f"serving-curves.{suffix}", dpi=180)
+    plt.close(fig)
+
+    # Figures 7--10 use separate TTFT, TPOT and joint attainment curves.
+    # Failed requests remain in every denominator; one-token outputs have no
+    # TPOT observation and cannot count as a TPOT or joint success.
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4.5), layout="constrained")
+    for variant in dict.fromkeys(r["variant"] for r in report["rows"]):
+        series = sorted(
+            [r for r in report["rows"] if r["variant"] == variant],
+            key=lambda r: r["request_rate"],
+        )
+        for ax, key in zip(
+            axes, ["ttft_attainment", "tpot_attainment", "joint_attainment"]
+        ):
+            ax.plot(
+                [r["request_rate"] for r in series],
+                [100 * r[key] for r in series],
+                "o-",
+                label=variant.removeprefix("full480-canonical-"),
+                linewidth=1.5,
+                markersize=4,
+            )
+    for ax, label in zip(
+        axes,
+        [
+            "TTFT SLO attainment (%)",
+            "TPOT SLO attainment (%)",
+            "Joint SLO attainment (%)",
+        ],
+    ):
+        ax.axhline(90, color="black", linestyle="--", linewidth=1)
+        ax.set(xlabel="Offered requests/s", ylabel=label, ylim=(0, 104))
+        ax.grid(alpha=0.2)
+    fig.legend(
+        *axes[-1].get_legend_handles_labels(),
+        loc="outside lower center",
+        ncol=2,
+        fontsize=8,
+    )
+    fig.suptitle(title, fontsize=10)
+    for suffix in ("svg", "pdf", "png"):
+        fig.savefig(args.output_dir / f"slo-attainment.{suffix}", dpi=180)
     plt.close(fig)
 
 

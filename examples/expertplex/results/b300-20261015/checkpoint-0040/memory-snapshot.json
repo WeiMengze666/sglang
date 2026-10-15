@@ -1,0 +1,48 @@
+{
+  "scope": "Single snapshot during full 62-layer canonical BF16 synthetic 3P1D4E TBO serving; not peak allocator memory",
+  "timestamp_utc": "2026-10-15T00:32:59.014787+00:00",
+  "prefill_mailbox_tokens": 12288,
+  "max_prefill_tokens": 24576,
+  "memory_mib": [
+    {
+      "gpu_index": 0,
+      "used": 97210,
+      "total": 275040
+    },
+    {
+      "gpu_index": 1,
+      "used": 97280,
+      "total": 275040
+    },
+    {
+      "gpu_index": 2,
+      "used": 116546,
+      "total": 275040
+    },
+    {
+      "gpu_index": 3,
+      "used": 72332,
+      "total": 275040
+    },
+    {
+      "gpu_index": 4,
+      "used": 249991,
+      "total": 275040
+    },
+    {
+      "gpu_index": 5,
+      "used": 249991,
+      "total": 275040
+    },
+    {
+      "gpu_index": 6,
+      "used": 249991,
+      "total": 275040
+    },
+    {
+      "gpu_index": 7,
+      "used": 249991,
+      "total": 275040
+    }
+  ]
+}
