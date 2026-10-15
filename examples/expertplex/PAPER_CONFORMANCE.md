@@ -5,6 +5,42 @@
 PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`。
 本文件记录复现要求及当前差距，不表示全部要求已经实现。
 
+## 可追踪的实现路径
+
+以下路径相对仓库根目录，按请求生命周期对应原文；函数名比随提交变化的行号更稳定。
+
+1. **权重分离（§3）**：`python/sglang/srt/expertplex/integration.py::attention_weights_iterator`
+   过滤 routed expert 权重；`worker.py::load_expert_weights` 按全局 expert ID 对 E rank
+   取模分片，保留所有层。`worker.py::expert_main` 先校验 checkpoint 指纹与容量，创建
+   `OwnedBuffers`、`PersistentExecutor`，再发布 IPC handles。随机权重比较另外使用
+   `synthetic_weights.py` 的全局张量种子，不能把各分片独立初始化当成同一个模型。
+2. **attention 发起通信（§5.2）**：`models/qwen3_moe.py` 的 ExpertPlex 分支调用
+   `expertplex/client.py::begin/finish`。`begin` 在 COMM stream 等待 COMPUTE 的路由结果，
+   调用 `csrc/group_communication.cuh::RemoteGroup` 的 dispatch/combine 接口。
+   raw P 路径由 `group_dispatch_raw` 写入最终 raw buffers，`group_publish` 在 payload
+   fence 后发布 READY。D 使用 routed rows 路径。WaitDone 在 attention GPU 上等待，
+   `finish` 向 COMPUTE stream 加入完成 event；E 不启动配对的接收通信 kernel。
+3. **长驻执行与传播（§4.2–4.3）**：`csrc/sm100_pipeline.cuh::executor` 的 CTA0 调用
+   `update_policy`，经 system-scope READY、device-scope policy、cluster DSMEM Task、
+   CTA 内 `task_full` mbarrier 传播。`claim` 是 cluster leader 的唯一 tile 领取入口；
+   `initialize` 和 `commit` 推进 Scatter1 → Scatter2 → GateUp → ACT → Down → Gather。
+   Task ring 的 metadata-consumed barrier 与 output-retired barrier 分离。phase 切换
+   需要等待旧输出退休；这条实现路径和数值通过本身不能证明原文的“至多当前 tile”上界，
+   尤其需要检查预取深度、传播延迟和所有 warp/CTA 的收敛。
+4. **SM 自适应（Eq.4）**：`update_policy` 从实际 decode GateUp row tiles 计算 footprint，
+   按期望 footprint 缩放 q，向 cluster 倍数取整并限制 Qmax。`claim` 在首选 phase 无可领取
+   工作时尝试另一 phase，实现空闲资源借用。CPU 对照是
+   `optimizer.py::adaptive_sm_allocation`；CPU 公式对照不替代 GPU 调度轨迹验收。
+5. **离线选择（Eq.1–3、Algorithm 1）**：`optimizer.py::search` 枚举单节点布局，调用
+   `estimate_memory` 过滤容量，再为已有 profile 的互补 SM 预算二分可行 P/D batch。
+   `expected_rank_footprint` 保留各 client/mailbox 的独立 tile padding，
+   `_iteration_latency` 计算 sequential 或 TBO critical path。它当前要求 attention TP=1、
+   E-only EP，并没有原文的完整 parallelism、跨节点 placement、SBO 搜索空间。
+
+原论文的 SM90 FP8 tile 参数不能直接作为 SM103 BF16 的实现参数。当前 B300 后端使用
+所固定 DeepGEMM BF16 原生几何的双 CTA/2SM MMA、每 CTA M128/N128/K64、9 个 TMA stage。
+这是明确的硬件与精度适配；不能据此宣称复现了原论文 2.2–25.3 μs 数值区间。
+
 ## 固定实验条件
 
 - 用户指定适配：单机 8×B300、Qwen3-Coder-480B-A35B-Instruct、BF16、默认 1P+3D+4E。
