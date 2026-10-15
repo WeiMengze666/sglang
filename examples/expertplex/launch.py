@@ -270,8 +270,13 @@ def main():
         )
         return process
 
+    stopping = False
+
     def stop(signum, frame):
-        raise KeyboardInterrupt
+        # A supervising harness may signal us after a child failure already
+        # entered cleanup. Never interrupt that cleanup and orphan expert GPUs.
+        if not stopping:
+            raise KeyboardInterrupt
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
@@ -311,6 +316,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        stopping = True
         # Keep the expert allocations alive until all attention clients exit.
         for group in (
             [child for child in reversed(children) if child[0] != "experts"],

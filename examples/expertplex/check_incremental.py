@@ -12,7 +12,9 @@ import argparse
 import hashlib
 import json
 import math
+import secrets
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from check_teacher_forcing import compare_distributions, read
@@ -154,9 +156,37 @@ def post(base_url, endpoint, payload=None):
         return json.loads(data) if payload is not None else None
 
 
+def generate(base_url, payload, *, prefill_url=None, bootstrap_port=None):
+    if prefill_url is None:
+        post(base_url, "/flush_cache")
+        return post(base_url, "/generate", payload)
+    # Diagnostic-only direct P/D dispatch preserves arbitrary custom_params
+    # through gateway versions whose typed sampling schema discards them. Both
+    # workers still use the ordinary bootstrap rendezvous and real KV transfer.
+    from urllib.parse import urlparse
+
+    post(prefill_url, "/flush_cache")
+    post(base_url, "/flush_cache")
+    request = dict(
+        payload,
+        bootstrap_host=urlparse(prefill_url).hostname,
+        bootstrap_port=bootstrap_port,
+        bootstrap_room=secrets.randbits(63),
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        prefill = pool.submit(post, prefill_url, "/generate", request)
+        decode = pool.submit(post, base_url, "/generate", request)
+        prefill.result()
+        return decode.result()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True)
+    parser.add_argument(
+        "--prefill-url", help="Direct TP1 P/D diagnostic: base-url is the D worker"
+    )
+    parser.add_argument("--bootstrap-port", type=int)
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--histories", type=Path, required=True)
     parser.add_argument("--reference", type=Path)
@@ -167,6 +197,10 @@ def main():
         "--top-k", type=int, default=128, help="Zero captures full vocabulary"
     )
     args = parser.parse_args()
+    if (args.prefill_url is None) != (args.bootstrap_port is None):
+        parser.error("Direct P/D requires both prefill-url and bootstrap-port")
+    if args.bootstrap_port is not None and not 1 <= args.bootstrap_port <= 65535:
+        parser.error("Invalid bootstrap port")
     vocab = json.loads((args.model_path / "config.json").read_text())["vocab_size"]
     if args.steps < 2 or not 0 <= args.top_k <= vocab:
         parser.error("Use at least two steps and top-k within the vocabulary")
@@ -191,6 +225,7 @@ def main():
         "outputs": [],
         "cases": [],
         "status": "running",
+        "transport": "direct-pd" if args.prefill_url else "single-endpoint",
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -204,10 +239,8 @@ def main():
         for index, (prompt, forced) in enumerate(cases):
             directory = args.capture_dir / f"case-{index:04d}"
             directory.mkdir()
-            post(args.base_url, "/flush_cache")
-            result = post(
+            result = generate(
                 args.base_url,
-                "/generate",
                 {
                     "input_ids": prompt,
                     "custom_logit_processor": processor,
@@ -225,6 +258,8 @@ def main():
                         },
                     },
                 },
+                prefill_url=args.prefill_url,
+                bootstrap_port=args.bootstrap_port,
             )
             returned = [x[1] for x in result["meta_info"]["output_token_logprobs"]]
             if returned != forced:

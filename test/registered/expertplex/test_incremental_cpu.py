@@ -5,8 +5,10 @@ import json
 import math
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
@@ -14,6 +16,45 @@ incremental = importlib.import_module("check_incremental")
 
 
 class IncrementalCaptureTests(unittest.TestCase):
+    def test_direct_pd_preserves_parameters_and_dispatches_concurrently(self):
+        barrier = threading.Barrier(2, timeout=3)
+        calls = []
+        payload = {"sampling_params": {"custom_params": {"forced_ids": [1, 2]}}}
+
+        def post(url, endpoint, body=None):
+            calls.append((url, endpoint, body))
+            if endpoint == "/generate":
+                barrier.wait()
+                return {"worker": url}
+
+        with patch.object(incremental, "post", side_effect=post):
+            result = incremental.generate(
+                "http://localhost:2",
+                payload,
+                prefill_url="http://localhost:1",
+                bootstrap_port=19000,
+            )
+        self.assertEqual(result, {"worker": "http://localhost:2"})
+        requests = [body for _, endpoint, body in calls if endpoint == "/generate"]
+        self.assertEqual(len(requests), 2)
+        self.assertEqual(requests[0], requests[1])
+        self.assertEqual(requests[0]["sampling_params"], payload["sampling_params"])
+        self.assertEqual(requests[0]["bootstrap_host"], "localhost")
+        self.assertEqual(requests[0]["bootstrap_port"], 19000)
+        self.assertNotIn("bootstrap_room", payload)
+
+    def test_prefill_failure_is_not_hidden_by_successful_decode(self):
+        def post(url, endpoint, body=None):
+            if endpoint == "/generate" and url == "http://prefill":
+                raise ValueError("prefill failed")
+            return {"ok": True}
+
+        with patch.object(incremental, "post", side_effect=post):
+            with self.assertRaisesRegex(ValueError, "prefill failed"):
+                incremental.generate(
+                    "http://decode", {}, prefill_url="http://prefill", bootstrap_port=1
+                )
+
     def records(self, directory):
         for step in range(2):
             record = {

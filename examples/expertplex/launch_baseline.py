@@ -217,9 +217,11 @@ def main():
     env["SGLANG_MOONCAKE_CUSTOM_MEM_POOL"] = "INTRA_NODE_NVLINK"
     env["MC_INTRANODE_NVLINK"] = "true"
     children = []
+    stopping = False
 
     def stop(*_):
-        raise KeyboardInterrupt
+        if not stopping:
+            raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
@@ -255,6 +257,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        stopping = True
         for _, process, _ in reversed(children):
             if process.poll() is None:
                 try:

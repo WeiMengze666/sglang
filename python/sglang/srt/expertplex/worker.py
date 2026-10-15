@@ -249,9 +249,14 @@ def supervise(config_path: str):
     root = Path(config.rendezvous_dir)
     context = multiprocessing.get_context("spawn")
     stop_event = context.Event()
+    stop_requested = False
 
     def request_stop(signum, frame):
-        stop_event.set()
+        nonlocal stop_requested
+        # Event.set() acquires a multiprocessing lock. A Python signal can
+        # interrupt Event.wait() while that same lock is held and deadlock the
+        # supervisor. Publish to children from normal control flow in finally.
+        stop_requested = True
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
@@ -267,7 +272,7 @@ def supervise(config_path: str):
             process.start()
             children.append(process)
         deadline = time.monotonic() + config.startup_timeout_s
-        while not stop_event.wait(0.25):
+        while not stop_requested and not stop_event.wait(0.25):
             exited = [child for child in children if child.exitcode is not None]
             if exited:
                 failed = True

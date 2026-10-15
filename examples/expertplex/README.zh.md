@@ -329,6 +329,11 @@ python examples/expertplex/check_incremental.py \
 副本分布不一致、历史不一致或缺步均拒绝生成成功报告。返回的 HTTP logprob 已被
 强制采样改变，仅用于校验 token 轨迹，数值比较只使用独立保存的未强制分布。
 CPU 拷贝和逐步文件写入会改变执行时序，因此该运行不能用于 TTFT/TPOT/吞吐测量。
+对于未透传 `sampling_params.custom_params` 的路由器版本，可在单节点 TP1 P/D
+诊断中令 `--base-url` 指向一个 D HTTP 端口，并指定 `--prefill-url` 和
+`--bootstrap-port`。工具并发向两端提交相同 bootstrap room 的请求，仍使用服务的
+真实 KV 传输；报告标记 `transport=direct-pd`。这条诊断路径不覆盖路由器调度，
+不支持 DP-aware worker 的 rank 注入，也不用于服务性能对比。
 本工具的 GPU/P-D/图回放路径需在实际服务器上验证，CPU 合约测试不替代该验收。
 
 ### 存储流水线诊断
