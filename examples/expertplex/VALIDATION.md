@@ -532,3 +532,14 @@ The supplementary native/APK operation profiler now covers P rows per expert
 through 32768 and D active experts through the model's 40 local experts. It
 reserves the required packed rows and validates all output elements in bounded
 chunks, preserving the prior error thresholds. This larger GPU sweep is pending.
+
+## Completed four-method LooGLE diagnostic, 00:15 UTC
+
+PDMux budget 8192 completes all three rates with 31/31/31 joint successes out
+of 32. Default 1P3D4E ExpertPlex completes with 32/13/2. Thus its maximum feasible
+tested rate is 0.1 req/s, while PDMux passes through the sweep ceiling of 0.5;
+the latter is a lower bound, not a measured saturation boundary. The earlier
+colocated/chunked outcomes and these two runs have identical ordered input
+length hashes, KV capacity, canonical weight seed and SLOs. Checkpoint-0015
+contains the filtered comparison and plotted TTFT/TPOT/joint curves. PDD's
+failed first sweep is excluded and its capacity-corrected retry remains separate.
