@@ -168,6 +168,7 @@ class DispatchOutputChecker:
 
 
 class DispatchOutputFormat(Enum):
+    EXPERTPLEX = "expertplex"
     STANDARD = "standard"
     DEEPEP_NORMAL = "deepep_normal"
     DEEPEP_LL = "deepep_ll"
@@ -271,6 +272,7 @@ class CombineInputChecker:
 
 
 class CombineInputFormat(Enum):
+    EXPERTPLEX = "expertplex"
     STANDARD = "standard"
     DEEPEP_NORMAL = "deepep_normal"
     DEEPEP_LL = "deepep_ll"

@@ -69,6 +69,8 @@ class ExpertPlexClient:
         atexit.register(self.close)
 
     def close(self):
+        if getattr(self, "closed", False):
+            return
         # The exporter must outlive all remote reads. Launcher shutdown orders
         # clients before experts; synchronize our own streams before IPC close.
         for stream in getattr(self, "streams", []):
@@ -77,6 +79,9 @@ class ExpertPlexClient:
         for peer in self.peers:
             peer.close()
         self.peers.clear()
+        self.streams = []
+        self.closed = True
+        atexit.unregister(self.close)
 
     def run(self, layer_id, hidden_states, topk_ids, topk_weights):
         return self.finish(self.begin(layer_id, hidden_states, topk_ids, topk_weights))
@@ -217,17 +222,30 @@ class ExpertPlexClient:
         return pending.output
 
 
-_client = None
 _client_lock = threading.Lock()
 
 
 def get_client() -> ExpertPlexClient:
-    global _client
+    from sglang.srt.runtime_context import get_resources
+
+    from .integration import attention_config
+
     with _client_lock:
-        if _client is None:
-            path = os.environ.get("SGLANG_EXPERTPLEX_CONFIG")
-            client_id = os.environ.get("SGLANG_EXPERTPLEX_CLIENT_ID")
-            if path is None or client_id is None:
-                raise RuntimeError("Missing ExpertPlex config or client ID environment")
-            _client = ExpertPlexClient(path, int(client_id))
-        return _client
+        resources = get_resources().buffers
+        client = resources.get("expertplex_client")
+        if client is None:
+            from .integration import runtime_config
+
+            _, attention = attention_config()
+            client = ExpertPlexClient(runtime_config().expertplex_config, attention.id)
+            resources["expertplex_client"] = client
+        return client
+
+
+def close_client() -> None:
+    from sglang.srt.runtime_context import get_resources
+
+    with _client_lock:
+        client = get_resources().buffers.pop("expertplex_client", None)
+        if client is not None:
+            client.close()

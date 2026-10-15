@@ -352,6 +352,12 @@ class DeepEPMoE(FusedMoE):
 
 
 def get_moe_impl_class(quant_config: Optional[QuantizationConfig]):
+    from sglang.srt.expertplex.integration import expertplex_enabled
+
+    if expertplex_enabled():
+        from sglang.srt.layers.moe.ep_moe.expertplex import ExpertPlexMoE
+
+        return ExpertPlexMoE
     if get_moe_a2a_backend().is_mori_epv2():
         return FusedMoE
     # [TODO] kk, temporary solution

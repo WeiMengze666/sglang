@@ -272,21 +272,16 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             output_format=TopKOutputFormat.STANDARD if self._expertplex else None,
         )
 
-        # Attention ranks keep the router, but never allocate routed expert
-        # parameter storage. Those weights belong to persistent expert ranks.
-        self.experts = None
-        if not self._expertplex:
-            self.experts = get_moe_impl_class(quant_config)(
-                num_experts=config.num_experts
-                + get_exec().moe.ep_num_redundant_experts,
-                top_k=config.num_experts_per_tok,
-                layer_id=layer_id,
-                hidden_size=config.hidden_size,
-                intermediate_size=config.moe_intermediate_size,
-                quant_config=quant_config,
-                prefix=add_prefix("experts", prefix),
-                routing_method_type=RoutingMethodType.Renormalize,
-            )
+        self.experts = get_moe_impl_class(quant_config)(
+            num_experts=config.num_experts + get_exec().moe.ep_num_redundant_experts,
+            top_k=config.num_experts_per_tok,
+            layer_id=layer_id,
+            hidden_size=config.hidden_size,
+            intermediate_size=config.moe_intermediate_size,
+            quant_config=quant_config,
+            prefix=add_prefix("experts", prefix),
+            routing_method_type=RoutingMethodType.Renormalize,
+        )
 
         # Router gate: description-driven quant. Only the offline ModelSlim path
         # (which carries a per-layer quant_model_description) may quantise the
@@ -325,8 +320,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         forward_batch: Optional[ForwardBatch] = None,
     ) -> torch.Tensor:
 
-        if self._expertplex:
-            return self._forward_expertplex(hidden_states)
         if self._use_mega_moe:
             return self._forward_mega_moe(hidden_states, forward_batch)
         if (
@@ -338,8 +331,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             return self.forward_deepep(hidden_states, forward_batch)
 
     def get_moe_weights(self):
-        if self._expertplex:
-            return []
         return [
             x.data
             for name, x in self.experts.named_parameters()
@@ -348,30 +339,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 name, x, self.experts.num_local_experts
             )
         ]
-
-    def _forward_expertplex(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        from sglang.srt.expertplex.client import get_client
-
-        num_tokens, hidden_dim = hidden_states.shape
-        if num_tokens == 0:
-            return hidden_states
-        hidden_states = hidden_states.reshape(-1, hidden_dim)
-        router_logits, _ = self.gate(hidden_states)
-        topk_output = self.topk(hidden_states, router_logits)
-        if not TopKOutputChecker.format_is_standard(topk_output):
-            raise RuntimeError(
-                "ExpertPlex requires standard TopK expert IDs and weights"
-            )
-        # The configured client phase determines the remote queue, including
-        # decode-worker warmup/extend forwards. ForwardBatch's current mode
-        # must not send a decode client into the prefill queue.
-        output = get_client().run(
-            self.layer_id,
-            hidden_states,
-            topk_output.topk_ids,
-            topk_output.topk_weights,
-        )
-        return output.view(num_tokens, hidden_dim)
 
     def forward_normal(
         self,
@@ -491,19 +458,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             state.topk_output = self.topk.empty_topk_output(hidden_states.device)
 
     def op_dispatch_a(self, state):
-        if self._expertplex:
-            from sglang.srt.expertplex.client import get_client
-
-            topk = state.pop("topk_output")
-            state.expertplex_pending = get_client().begin(
-                self.layer_id,
-                state.pop("hidden_states_mlp_input"),
-                topk.topk_ids,
-                topk.topk_weights,
-                mailbox=state.get("tbo_subbatch_index") or 0,
-            )
-            return
-        if self.ep_size > 1:
+        if self.ep_size > 1 or self._expertplex:
             self.experts.dispatcher.dispatch_a(
                 hidden_states=state.pop("hidden_states_mlp_input"),
                 topk_output=state.pop("topk_output"),
@@ -511,9 +466,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             )
 
     def op_dispatch_b(self, state):
-        if self._expertplex:
-            return
-        if self.ep_size > 1:
+        if self.ep_size > 1 or self._expertplex:
             with get_global_expert_distribution_recorder().with_current_layer(
                 self.layer_id
             ):
@@ -522,16 +475,12 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 )
 
     def op_experts(self, state):
-        if self._expertplex:
-            return
         state.combine_input = self.experts.run_moe_core(
             dispatch_output=state.dispatch_output,
         )
 
     def op_combine_a(self, state):
-        if self._expertplex:
-            return
-        if self.ep_size > 1:
+        if self.ep_size > 1 or self._expertplex:
             self.experts.dispatcher.combine_a(
                 combine_input=state.pop("combine_input"),
                 tbo_subbatch_index=state.get("tbo_subbatch_index"),
@@ -539,14 +488,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             state.pop("dispatch_output")
 
     def op_combine_b(self, state):
-        if self._expertplex:
-            from sglang.srt.expertplex.client import get_client
-
-            state.hidden_states_after_combine = get_client().finish(
-                state.pop("expertplex_pending")
-            )
-            return
-        if self.ep_size > 1:
+        if self.ep_size > 1 or self._expertplex:
             state.hidden_states_after_combine = self.experts.dispatcher.combine_b(
                 tbo_subbatch_index=state.get("tbo_subbatch_index"),
             )

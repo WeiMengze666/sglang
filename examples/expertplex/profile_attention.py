@@ -11,7 +11,6 @@ No service process can enable this diagnostic: patches live only in this script.
 
 import argparse
 import json
-import os
 import statistics
 from pathlib import Path
 
@@ -55,8 +54,6 @@ def main():
     node_data = source_node.to_dict() | {"overlap": "none"}
     node_path = args.output_dir / "node.json"
     node_path.write_text(json.dumps(node_data, indent=2) + "\n")
-    os.environ["SGLANG_EXPERTPLEX_CONFIG"] = str(node_path.resolve())
-    os.environ["SGLANG_EXPERTPLEX_CLIENT_ID"] = str(client.id)
     import numpy as np
     import torch
 
@@ -166,6 +163,11 @@ def main():
     parser = argparse.ArgumentParser()
     ServerArgs.add_cli_args(parser)
     cli = [
+        "--enable-expertplex",
+        "--expertplex-config",
+        str(node_path.resolve()),
+        "--expertplex-client-id",
+        str(client.id),
         "--model-path",
         source_node.model_path,
         "--tokenizer-path",

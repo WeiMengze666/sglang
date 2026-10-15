@@ -29,7 +29,11 @@ def run_server(server_args):
     server_args.resolve_once()
     cfg = resolving_view(server_args)
 
-    if cfg.encoder_only:
+    if cfg.enable_expertplex and cfg.expertplex_role == "expert":
+        from sglang.srt.expertplex.worker import supervise
+
+        supervise(cfg.expertplex_config)
+    elif cfg.encoder_only:
         # For encoder disaggregation
         if cfg.smg_grpc_mode or cfg.grpc_mode:
             from sglang.srt.disaggregation.encoder.grpc_server import (

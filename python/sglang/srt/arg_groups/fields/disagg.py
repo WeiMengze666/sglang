@@ -23,6 +23,24 @@ class Disagg(msgspec.Struct):
 
     _NS_PATH = "disagg"
 
+    enable_expertplex: A[
+        bool, "Enable the experimental ExpertPlex shared-expert serving backend."
+    ] = False
+    expertplex_config: A[
+        Optional[str], "Path to the ExpertPlex node topology and capacity JSON."
+    ] = None
+    expertplex_role: A[
+        str,
+        Arg(
+            help="Run an attention server or the shared expert worker pool.",
+            choices=["attention", "expert"],
+        ),
+    ] = "attention"
+    expertplex_client_id: A[
+        Optional[int],
+        "Attention client ID in --expertplex-config (attention role only).",
+    ] = None
+
     # Decoupled speculative decoding: draft and verify run as
     # separate engines, currently connected by a ZMQ IPC mesh.
     decoupled_spec_bind_endpoint: A[

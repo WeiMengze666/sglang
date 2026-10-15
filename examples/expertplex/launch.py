@@ -26,8 +26,13 @@ def commands(node, args):
     worker = [
         sys.executable,
         "-m",
-        "sglang.srt.expertplex.worker",
-        "--config",
+        "sglang.launch_server",
+        "--model-path",
+        node.model_path,
+        "--enable-expertplex",
+        "--expertplex-role",
+        "expert",
+        "--expertplex-config",
         str(Path(args.config).resolve()),
     ]
     servers = []
@@ -42,6 +47,11 @@ def commands(node, args):
             sys.executable,
             "-m",
             "sglang.launch_server",
+            "--enable-expertplex",
+            "--expertplex-config",
+            str(Path(args.config).resolve()),
+            "--expertplex-client-id",
+            str(client.id),
             "--model-path",
             node.model_path,
             "--dtype",
@@ -235,10 +245,7 @@ def main():
     if args.dry_run:
         print(shlex.join(worker_command))
         for client, command in server_commands:
-            print(
-                f"SGLANG_EXPERTPLEX_CONFIG={shlex.quote(str(Path(args.config).resolve()))} "
-                f"SGLANG_EXPERTPLEX_CLIENT_ID={client.id} " + shlex.join(command)
-            )
+            print(shlex.join(command))
         print(shlex.join(router_command))
         return
     spec = config.ModelSpec.from_model_path(node.model_path)
@@ -296,10 +303,7 @@ def main():
         spawn("experts", worker_command, base_env)
         rendezvous.wait_for_workers(node)
         for client, command in server_commands:
-            env = dict(base_env)
-            env["SGLANG_EXPERTPLEX_CONFIG"] = str(Path(args.config).resolve())
-            env["SGLANG_EXPERTPLEX_CLIENT_ID"] = str(client.id)
-            spawn(f"{client.phase}-{client.id}", command, env)
+            spawn(f"{client.phase}-{client.id}", command, base_env)
         deadline = time.monotonic() + node.startup_timeout_s
         for client, _ in server_commands:
             wait_http(f"http://127.0.0.1:{client.port}", children, deadline)

@@ -14,8 +14,11 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
    取模分片，保留所有层。`worker.py::expert_main` 先校验 checkpoint 指纹与容量，创建
    `OwnedBuffers`、`PersistentExecutor`，再发布 IPC handles。随机权重比较另外使用
    `synthetic_weights.py` 的全局张量种子，不能把各分片独立初始化当成同一个模型。
-2. **attention 发起通信（§5.2）**：`models/qwen3_moe.py` 的 ExpertPlex 分支调用
-   `expertplex/client.py::begin/finish`。`begin` 在 COMM stream 等待 COMPUTE 的路由结果，
+2. **attention 发起通信（§5.2）**：原生 MoE 工厂选择 `layers/moe/ep_moe/expertplex.py`，
+   由 `layers/moe/token_dispatcher/expertplex.py` 实现 `BaseDispatcher`，调用
+   `expertplex/client.py::begin/finish`。Qwen3 forward 不直接调用通信 client；TBO
+   使用原生 Qwen3 P/D operation 顺序和完整的 dispatch A/B、experts、combine A/B
+   接口。`begin` 在 COMM stream 等待 COMPUTE 的路由结果，
    调用 `csrc/group_communication.cuh::RemoteGroup` 的 dispatch/combine 接口。
    raw P 路径由 `group_dispatch_raw` 写入最终 raw buffers，`group_publish` 在 payload
    fence 后发布 READY。D 使用 routed rows 路径。WaitDone 在 attention GPU 上等待，
@@ -113,8 +116,10 @@ TMA 全局 store 的完成通知使用不带 `.read` 的 bulk wait，避免仅�
 
 本适配应扩展现有 serving 路径。当前 Qwen3 模型仍使用原生 attention、RMSNorm、RoPE、
 router/TopK、LM head 和 sampling；scheduler、KV allocator、radix cache、Mooncake KV 移交
-以及 CUDA Graph runner 也继续使用 SGLang。TBO 使用已有 OperationsStrategy / YieldOperation，
-在 MoE 边界插入异步 dispatch / combine，而不重新实现调度器。
+以及 CUDA Graph runner 也继续使用 SGLang。TBO 使用原生 Qwen3 OperationsStrategy / YieldOperation，
+通过标准 MoE dispatcher 提交异步 dispatch / combine。启用开关与角色配置属于原生
+ServerArgs；通信 client 由 Runtime 资源容器持有，并接入 scheduler 退出流程。
+`examples/expertplex/launch.py` 只编排原生启动命令，不实现另一套 serving 调度器。
 
 | 路径 | 当前处理与边界 |
 |---|---|

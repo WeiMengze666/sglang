@@ -7,34 +7,37 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-CONFIG_ENV = "SGLANG_EXPERTPLEX_CONFIG"
-CLIENT_ENV = "SGLANG_EXPERTPLEX_CLIENT_ID"
+
+def runtime_config():
+    from sglang.srt.runtime_context import get_disagg
+
+    return get_disagg()
 
 
-def expertplex_enabled() -> bool:
-    # A half-configured opt-in must fail, instead of silently allocating a
-    # complete local model on a GPU assigned only to attention.
-    return CONFIG_ENV in os.environ or CLIENT_ENV in os.environ
+def expertplex_enabled(cfg=None) -> bool:
+    if cfg is None:
+        cfg = runtime_config()
+    return bool(getattr(cfg, "enable_expertplex", False))
 
 
 @lru_cache(maxsize=8)
-def _load_attention_config(path: str, raw_client_id: str):
+def _load_attention_config(path: str, client_id: int):
     from sglang.srt.expertplex.config import load_config
 
-    try:
-        client_id = int(raw_client_id)
-    except ValueError as exc:
-        raise ValueError(f"{CLIENT_ENV} must be a nonnegative integer") from exc
-    if client_id < 0 or str(client_id) != raw_client_id:
-        raise ValueError(f"{CLIENT_ENV} must be a nonnegative integer")
+    if isinstance(client_id, bool) or not isinstance(client_id, int) or client_id < 0:
+        raise ValueError("--expertplex-client-id must be a nonnegative integer")
     config = load_config(path)
     return config, config.client(client_id)
 
 
-def attention_config():
-    path, client_id = os.environ.get(CONFIG_ENV), os.environ.get(CLIENT_ENV)
+def attention_config(cfg=None):
+    cfg = runtime_config() if cfg is None else cfg
+    path = getattr(cfg, "expertplex_config", None)
+    client_id = getattr(cfg, "expertplex_client_id", None)
     if not path or client_id is None:
-        raise ValueError(f"ExpertPlex requires both {CONFIG_ENV} and {CLIENT_ENV}")
+        raise ValueError(
+            "ExpertPlex attention requires both --expertplex-config and --expertplex-client-id"
+        )
     return _load_attention_config(str(Path(path).expanduser().resolve()), client_id)
 
 
@@ -83,9 +86,41 @@ def attention_weights_iterator(
 
 def validate_server_args(cfg: Any) -> None:
     """Reject unsupported combinations before the engine spawns GPU processes."""
-    if not expertplex_enabled():
+    if any(
+        name in os.environ
+        for name in ("SGLANG_EXPERTPLEX_CONFIG", "SGLANG_EXPERTPLEX_CLIENT_ID")
+    ):
+        raise ValueError(
+            "Legacy ExpertPlex environment activation is no longer supported; "
+            "unset SGLANG_EXPERTPLEX_CONFIG/SGLANG_EXPERTPLEX_CLIENT_ID and use "
+            "--enable-expertplex --expertplex-config --expertplex-client-id"
+        )
+    if not expertplex_enabled(cfg):
+        if (
+            getattr(cfg, "expertplex_config", None) is not None
+            or getattr(cfg, "expertplex_client_id", None) is not None
+            or getattr(cfg, "expertplex_role", "attention") != "attention"
+        ):
+            raise ValueError("ExpertPlex options require --enable-expertplex")
         return
-    config, client = attention_config()
+    role = getattr(cfg, "expertplex_role", "attention")
+    if role not in ("attention", "expert"):
+        raise ValueError("--expertplex-role must be attention or expert")
+    if role == "expert":
+        from .config import ModelSpec, load_config
+
+        if not cfg.expertplex_config or cfg.expertplex_client_id is not None:
+            raise ValueError(
+                "Expert role requires --expertplex-config and no --expertplex-client-id"
+            )
+        config = load_config(cfg.expertplex_config)
+        config.validate(ModelSpec.from_model_path(config.model_path))
+        if Path(cfg.model_path).resolve() != Path(config.model_path).resolve():
+            raise ValueError(
+                "--model-path must match model_path in the ExpertPlex node config"
+            )
+        return
+    config, client = attention_config(cfg)
     errors = []
     for name in (
         "tp_size",

@@ -156,19 +156,22 @@ class IntegrationTests(unittest.TestCase):
         self.config = CONFIG.default_config(str(self.model_path))
         self.config_path = Path(self.temp.name) / "node.json"
         self.config.write_json(self.config_path)
-        self.env = patch.dict(
-            os.environ,
-            {
-                INTEGRATION.CONFIG_ENV: str(self.config_path),
-                INTEGRATION.CLIENT_ENV: "1",
-            },
+        self.runtime = types.SimpleNamespace(
+            enable_expertplex=True,
+            expertplex_config=str(self.config_path),
+            expertplex_client_id=1,
+            expertplex_role="attention",
         )
-        self.env.start()
-        self.addCleanup(self.env.stop)
+        runtime_patch = patch.object(
+            INTEGRATION, "runtime_config", lambda: self.runtime
+        )
+        runtime_patch.start()
+        self.addCleanup(runtime_patch.stop)
         self.addCleanup(INTEGRATION._load_attention_config.cache_clear)
 
     def server_args(self, **overrides):
         values = dict(
+            **vars(self.runtime),
             model_path=str(self.model_path),
             load_format="safetensors",
             dtype="bfloat16",
@@ -200,7 +203,7 @@ class IntegrationTests(unittest.TestCase):
             INTEGRATION.bound_request_input_length(100000), node.max_prefill_tokens + 1
         )
         self.assertEqual(INTEGRATION.bound_request_input_length(128), 128)
-        with patch.dict(os.environ, {INTEGRATION.CLIENT_ENV: "0"}):
+        with patch.object(self.runtime, "expertplex_client_id", 0):
             for disabled in (-1, None):
                 INTEGRATION.validate_server_args(
                     self.server_args(
@@ -265,12 +268,27 @@ class IntegrationTests(unittest.TestCase):
                 types.SimpleNamespace(to_dict=lambda: changed)
             )
 
-    def test_half_configured_environment_fails(self):
-        with patch.dict(os.environ):
-            del os.environ[INTEGRATION.CLIENT_ENV]
+    def test_half_configured_arguments_fail(self):
+        with patch.object(self.runtime, "expertplex_client_id", None):
             self.assertTrue(INTEGRATION.expertplex_enabled())
             with self.assertRaisesRegex(ValueError, "requires both"):
                 INTEGRATION.attention_config()
+        with self.assertRaisesRegex(ValueError, "require --enable-expertplex"):
+            INTEGRATION.validate_server_args(self.server_args(enable_expertplex=False))
+
+    def test_legacy_environment_cannot_silently_load_local_experts(self):
+        with patch.dict(
+            os.environ, {"SGLANG_EXPERTPLEX_CONFIG": str(self.config_path)}
+        ):
+            with self.assertRaisesRegex(ValueError, "Legacy ExpertPlex"):
+                INTEGRATION.validate_server_args(types.SimpleNamespace())
+
+    def test_expert_pool_role_has_no_attention_client(self):
+        args = self.server_args(expertplex_role="expert", expertplex_client_id=None)
+        INTEGRATION.validate_server_args(args)
+        args.expertplex_client_id = 1
+        with self.assertRaisesRegex(ValueError, "no --expertplex-client-id"):
+            INTEGRATION.validate_server_args(args)
 
     def test_scheduler_caps_and_full_visibility_are_required(self):
         with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "1"}):
@@ -291,9 +309,9 @@ class IntegrationTests(unittest.TestCase):
                         )
 
     def test_unconfigured_opt_in_does_not_modify_ordinary_servers(self):
-        with patch.dict(os.environ):
-            del os.environ[INTEGRATION.CONFIG_ENV]
-            del os.environ[INTEGRATION.CLIENT_ENV]
+        with patch.object(
+            INTEGRATION, "runtime_config", lambda: types.SimpleNamespace()
+        ):
             self.assertFalse(INTEGRATION.expertplex_enabled())
             INTEGRATION.validate_server_args(types.SimpleNamespace())
             INTEGRATION.validate_attention_model(None)
@@ -397,6 +415,7 @@ class IntegrationTests(unittest.TestCase):
         class Tensor:
             def __init__(self, rows=2):
                 self.shape = (rows, 4)
+                self.device = "cpu"
 
             def reshape(self, *shape):
                 return self
@@ -419,8 +438,23 @@ class IntegrationTests(unittest.TestCase):
             def __call__(self, hidden, logits):
                 return types.SimpleNamespace(topk_ids="ids", topk_weights="weights")
 
-        def no_local_experts(*args):
-            raise AssertionError("attention rank constructed local expert weights")
+            def empty_topk_output(self, device):
+                return types.SimpleNamespace(topk_ids="ids", topk_weights="weights")
+
+        class RemoteExperts:
+            def __init__(self, **kwargs):
+                self.layer_id = kwargs["layer_id"]
+                self.num_local_experts = 0
+
+            def named_parameters(self):
+                return []
+
+            def __call__(self, hidden, topk):
+                if hidden.shape[0] == 0:
+                    return hidden
+                return remote_run(
+                    self.layer_id, hidden, topk.topk_ids, topk.topk_weights
+                )
 
         output = Tensor()
 
@@ -438,11 +472,15 @@ class IntegrationTests(unittest.TestCase):
                 format_is_standard=lambda output: True
             ),
             "ReplicatedLinear": Linear,
-            "get_moe_impl_class": no_local_experts,
+            "get_moe_impl_class": lambda quant: RemoteExperts,
+            "get_exec": lambda: types.SimpleNamespace(
+                moe=types.SimpleNamespace(ep_num_redundant_experts=0)
+            ),
+            "RoutingMethodType": types.SimpleNamespace(Renormalize="renormalize"),
             "add_prefix": lambda name, prefix: f"{prefix}.{name}",
             "is_deepep_class_backend": lambda: False,
             "get_moe_a2a_backend": lambda: types.SimpleNamespace(
-                is_megamoe=lambda: False
+                is_megamoe=lambda: False, is_ascend_fuseep=lambda: False
             ),
         }
         block_cls = extracted_class(
@@ -466,7 +504,7 @@ class IntegrationTests(unittest.TestCase):
                 moe_intermediate_size=8,
             )
             block = block_cls(3, config)
-            self.assertIsNone(block.experts)
+            self.assertIsInstance(block.experts, RemoteExperts)
             self.assertIsInstance(block.gate, Linear)
             self.assertEqual(block.get_moe_weights(), [])
             self.assertEqual(block.topk.output_format, "standard")

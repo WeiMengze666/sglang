@@ -63,6 +63,9 @@ class LaunchPlanTests(unittest.TestCase):
             )
             _, servers, router = launch.commands(node, args)
             for _, command in servers:
+                self.assertIn("--enable-expertplex", command)
+                self.assertIn("--expertplex-config", command)
+                self.assertIn("--expertplex-client-id", command)
                 self.assertNotIn("--enable-custom-logit-processor", command)
                 self.assertNotIn("--disable-overlap-schedule", command)
                 self.assertNotIn("--disable-flashinfer-autotune", command)

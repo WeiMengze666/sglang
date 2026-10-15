@@ -619,7 +619,7 @@ def check_two_batch_overlap(server_args: Any):
 
     from sglang.srt.expertplex.integration import expertplex_enabled
 
-    if expertplex_enabled():
+    if expertplex_enabled(cfg):
         # ExpertPlex has its own one-sided M-to-N dispatcher and separate
         # subbatch mailboxes; validate_server_args checks the overlap config.
         return

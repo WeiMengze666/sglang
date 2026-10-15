@@ -1,6 +1,7 @@
 # ExpertPlex 单节点 B300 复现实验
 
-这是基于论文机制独立编写的 SGLang 实验后端。主模型为
+这是集成在 SGLang Runtime 内的实验性 ExpertPlex 后端，通过原生
+`--enable-expertplex` 启用，默认关闭。主模型为
 **Qwen/Qwen3-Coder-480B-A35B-Instruct，原始 BF16 safetensors**，调试模型为
 **Qwen/Qwen3-30B-A3B，原始 BF16 safetensors**。默认布局是 **1P + 3D + 4E**。
 
@@ -80,8 +81,11 @@ SGLang D attention GPU 3 ── dispatch / pull ─┘
            P ── existing SGLang Mooncake KV transfer ── D
 ```
 
-1. `Qwen3MoeSparseMoeBlock` 保留 router，选择标准 top-k ID/weight；不构造本地
-   `FusedMoE` 权重。loader 在 `safe_open.get_tensor()` 之前过滤 routed expert 名称。
+1. `Qwen3MoeSparseMoeBlock` 保留原生 forward、router 和 TopK。MoE 工厂在开启
+   ExpertPlex 时选择 `ExpertPlexMoE`，通过 `BaseDispatcher` 接口提交远端计算，
+   保留 dispatch/combine hooks。attention 进程不分配本地专家参数；loader 在
+   `safe_open.get_tensor()` 之前过滤 routed expert 名称。TBO 复用 Qwen3 原生 P/D
+   operation 顺序，包括 dispatch A/B、experts、combine A/B；双 mailbox 对应原生子批次。
 2. attention 侧 CUDA dispatch 使用 NVLink peer stores 将 token 直接写入 E 卡最终输入
    buffer，生成本地 row map，然后以 system-scope release 发布 ready epoch。
 3. E 卡长期运行的 kernel 通过 generation-tagged queue 认领 tile，融合 gate/up GEMM、
@@ -101,8 +105,11 @@ SGLang D attention GPU 3 ── dispatch / pull ─┘
 - `python/sglang/srt/expertplex/native.py`：惰性 JIT 编译和显式 buffer 生命周期
 - `python/sglang/srt/expertplex/{worker,client,rendezvous}.py`：加载、通信与启动控制面
 - `python/sglang/srt/expertplex/{config,optimizer,integration}.py`：配置、Eq.1–4 与接入校验
-- `python/sglang/srt/models/qwen3_moe.py`、`model_loader/loader.py`：attention-only 接入
-- `examples/expertplex/`：配置、启动、验证、基准工具
+- `python/sglang/srt/arg_groups/fields/disagg.py`：原生 ServerArgs / Runtime 配置
+- `python/sglang/srt/layers/moe/ep_moe/expertplex.py`：由原生 MoE 工厂选择的远端专家层
+- `python/sglang/srt/layers/moe/token_dispatcher/expertplex.py`：原生 dispatcher / TBO 接口
+- `python/sglang/srt/models/qwen3_moe.py`、`model_loader/loader.py`：原生模型及分离权重加载
+- `examples/expertplex/`：配置、进程编排、验证、基准工具，不包含另一套 serving engine
 
 每个 attention client 独占一个 mailbox，TBO 使用两个；每个 mailbox 只允许一个未完成调用。运行 ID、配置
 digest、checkpoint 配置及 shard size/mtime fingerprint、单 client 所有权检查防止误用
@@ -155,6 +162,61 @@ python examples/expertplex/launch.py \
 若模型目录已存在，configure 会校验真实 `config.json`、打印权重/mailbox 估算，并拒绝
 明显超出容量的配置。`decode_sm_budget=32` 和 `expected_decode_tiles=128` 是初始调度
 参数，**没有做过 B300 校准，不能解释为优化器已找到最优配置**。
+
+## 原生 SGLang 启动入口
+
+`python -m sglang.launch_server` 和 `sglang serve` 使用同一个 `run_server`。
+下列参数属于原生 `ServerArgs` 的 `disagg` 配置，通过 Runtime Context 传递给 worker：
+
+| 参数 | 含义 |
+| --- | --- |
+| `--enable-expertplex` | 开启共享专家后端，默认关闭 |
+| `--expertplex-config PATH` | 所有角色使用的节点布局、容量及 APK 配置 JSON |
+| `--expertplex-role attention` | 默认角色；仍运行原生 SGLang attention / scheduler / HTTP 服务 |
+| `--expertplex-role expert` | 启动 JSON 中配置的共享 E worker pool |
+| `--expertplex-client-id ID` | attention 进程在 JSON 中的 client ID |
+
+例如，使用上文生成的默认非 TBO 配置，先启动共享 E pool：
+
+```bash
+python -m sglang.launch_server \
+  --model-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
+  --dtype bfloat16 \
+  --enable-expertplex --expertplex-role expert \
+  --expertplex-config /tmp/expertplex-coder480b.json
+```
+
+在另一个终端启动其中的 P attention 进程：
+
+```bash
+SGLANG_MOONCAKE_CUSTOM_MEM_POOL=INTRA_NODE_NVLINK MC_INTRANODE_NVLINK=true \
+python -m sglang.launch_server \
+  --model-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
+  --dtype bfloat16 --load-format safetensors \
+  --enable-expertplex --expertplex-config /tmp/expertplex-coder480b.json \
+  --expertplex-client-id 0 --base-gpu-id 0 \
+  --disaggregation-mode prefill --disaggregation-transfer-backend mooncake \
+  --disaggregation-bootstrap-port 19000 --port 30000 --nccl-port 20000 \
+  --max-prefill-tokens 2048 --max-running-requests 256 \
+  --max-total-tokens 65536 --chunked-prefill-size -1 \
+  --cuda-graph-backend-prefill disabled --cuda-graph-backend-decode full \
+  --cuda-graph-max-bs-decode 32
+```
+
+完整服务还需要 D 进程及原生 PD router。用 `launch.py --dry-run` 生成与 JSON
+一致的全部原生启动命令；去掉 `--dry-run` 可代为启动和监管这些进程。它只负责
+编排进程，不替代 SGLang scheduler、KV cache、attention、sampling 或模型执行。
+TBO 配置必须同时使用原生 `--enable-two-batch-overlap`，辅助启动器会自动添加。
+
+旧的 `SGLANG_EXPERTPLEX_CONFIG` / `SGLANG_EXPERTPLEX_CLIENT_ID` 环境激活已移除；
+残留变量会在参数校验时报错，避免误启动完整本地专家模型。通信 client 由 Runtime
+资源容器持有，scheduler 正常退出时关闭；E pool 应在所有 attention 进程退出后再关闭。
+
+原生 CPU/GPU scheduler overlap、decode CUDA Graph、FlashInfer attention/sampling、
+autotune、radix cache 和 Mooncake KV 移交继续沿用。当前尚未适配的 prefill graph、
+`torch.compile`、SBO、attention TP>1 等组合会显式拒绝，不能将它们称为已保留的能力。
+APK 和 M-to-N 通信实现仍放在 `sglang/srt/expertplex` 模块内；详细边界见
+[优化保留审计](PAPER_CONFORMANCE.md#对现有-sglang--deepep-优化的保留审计)。
 
 ## GPU 验收顺序
 
