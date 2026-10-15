@@ -12,6 +12,18 @@ import json
 from pathlib import Path
 
 NUMERIC_KEYS = {
+    "request_rate",
+    "attempted_requests",
+    "completed_requests",
+    "joint_slo_met_requests",
+    "joint_slo_attainment",
+    "observed_slo_goodput_rps",
+    "unscorable_one_token_responses",
+    "meets_p90_joint_slo",
+    "p90_goodput_max_tested_arrival_rps",
+    "sequence_cap",
+    "ttft_slo_ms",
+    "tpot_slo_ms",
     "hidden",
     "intermediate",
     "experts",

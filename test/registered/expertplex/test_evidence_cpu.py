@@ -41,6 +41,26 @@ class EvidenceExportTests(unittest.TestCase):
         self.assertNotIn("private", json.dumps(exported))
         self.assertNotIn("logprobs", json.dumps(exported))
 
+    def test_joint_slo_metrics_survive_without_private_detail_paths(self):
+        raw = {
+            "p90_goodput_max_tested_arrival_rps": None,
+            "ttft_slo_ms": 10000,
+            "results": [
+                {
+                    "request_rate": 0.1,
+                    "attempted_requests": 32,
+                    "joint_slo_met_requests": 22,
+                    "meets_p90_joint_slo": False,
+                    "details_file": "/private/request-data.jsonl",
+                }
+            ],
+        }
+        expected = dict(raw)
+        expected["results"] = [
+            {k: v for k, v in raw["results"][0].items() if k != "details_file"}
+        ]
+        self.assertEqual(MODULE.redact(raw), expected)
+
 
 if __name__ == "__main__":
     unittest.main()
