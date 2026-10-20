@@ -1,0 +1,50 @@
+{
+  "model_path": "/home/alayadb/mengze/expertplex-b300/tiny-deepep-checkpoint",
+  "clients": [
+    {
+      "id": 0,
+      "phase": "prefill",
+      "device": 0,
+      "port": 30000
+    },
+    {
+      "id": 1,
+      "phase": "decode",
+      "device": 1,
+      "port": 30001
+    },
+    {
+      "id": 2,
+      "phase": "decode",
+      "device": 2,
+      "port": 30002
+    },
+    {
+      "id": 3,
+      "phase": "decode",
+      "device": 3,
+      "port": 30003
+    }
+  ],
+  "expert_devices": [
+    4,
+    5,
+    6,
+    7
+  ],
+  "max_prefill_tokens": 512,
+  "max_decode_tokens": 32,
+  "decode_sm_budget": 32,
+  "expected_decode_tiles": 128,
+  "max_decode_sm_fraction": 0.75,
+  "startup_timeout_s": 600.0,
+  "operation_timeout_s": 120.0,
+  "rendezvous_dir": "/home/alayadb/mengze/expertplex-b300/artifacts/teacher-expertplex-tiny-03/rendezvous",
+  "node_gpu_count": 8,
+  "cta_count": 0,
+  "gpu_memory_gib": 268.0,
+  "weight_mode": "checkpoint",
+  "synthetic_seed": 1234,
+  "overlap": "tbo",
+  "kernel": "sm100"
+}

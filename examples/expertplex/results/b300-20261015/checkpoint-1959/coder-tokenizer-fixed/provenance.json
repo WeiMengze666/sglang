@@ -1,0 +1,36 @@
+{
+  "repository": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+  "source": "modelscope.cn",
+  "files": {
+    "chat_template.jinja": {
+      "revision": "02ed23801090cd12be403b078f93f272d727b0ea",
+      "sha256": "5a38bfa05833266240066aedc497decc9b00cc0d3e3b8cceea98cf530196ab06",
+      "bytes": 6211
+    },
+    "config.json": {
+      "revision": "b34acbd0dd74c35357d3ac18bdd7acbd2f2d0733",
+      "sha256": "653230e2dd1c41bd1125d046f00259ed98d6294c75c63969f8890c6e139af7de",
+      "bytes": 994
+    },
+    "merges.txt": {
+      "revision": "d28f3f5718f81cef879f04d3f6f8ceeea51d513e",
+      "sha256": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
+      "bytes": 1671839
+    },
+    "tokenizer.json": {
+      "revision": "d28f3f5718f81cef879f04d3f6f8ceeea51d513e",
+      "sha256": "19564a48c4f71a2a1b937cce34c737a1e662b171c5f5d7edf641a15cd896f07d",
+      "bytes": 7032399
+    },
+    "tokenizer_config.json": {
+      "revision": "02ed23801090cd12be403b078f93f272d727b0ea",
+      "sha256": "60f6e8cb15c98dd07300a3cc465ea662de245d2095e4245616af21b2324db3fc",
+      "bytes": 13055
+    },
+    "vocab.json": {
+      "revision": "d28f3f5718f81cef879f04d3f6f8ceeea51d513e",
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+      "bytes": 2776833
+    }
+  }
+}

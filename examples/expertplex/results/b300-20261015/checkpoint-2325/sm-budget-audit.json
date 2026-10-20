@@ -1,0 +1,20 @@
+{
+  "scope": "The controller selection string q96-cap110 was mislabeled. Both saved configs have cap 128; only base q changed. Original report is preserved. Selection score and chosen q96 remain correct.",
+  "configs": [
+    {
+      "label": "full480-canonical-expertplex-finalpilot-01",
+      "config_sha256": "8a4984be9b68d47c80f36e336257656ec8dbd80d11d77a77f70e92ccb5c4409b",
+      "decode_sm_budget": 96,
+      "max_decode_sm_fraction": 0.875,
+      "actual_cluster_aligned_decode_cap": 128
+    },
+    {
+      "label": "full480-canonical-q128-cap128-tune-01",
+      "config_sha256": "c3e126821e557861796c53e2f0330a57c0fd734fdde87c8e2fdcb6fd940fdca2",
+      "decode_sm_budget": 128,
+      "max_decode_sm_fraction": 0.875,
+      "actual_cluster_aligned_decode_cap": 128
+    }
+  ],
+  "selection_report_sha256": "cc553ab7c6b6fb8495678b99debd8aaa512eaf83fbf7db0e5551231295bc3987"
+}

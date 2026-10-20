@@ -1,0 +1,50 @@
+[
+  {
+    "input_tokens": 512,
+    "status": 200,
+    "body": {
+      "output_ids": [
+        353,
+        353
+      ],
+      "meta_info": {
+        "id": "49a91b5e657f452ab51833687f0bfa4b",
+        "finish_reason": {
+          "type": "length",
+          "length": 2
+        },
+        "prompt_tokens": 512,
+        "weight_version": "default",
+        "num_retractions": 0,
+        "reasoning_tokens": 0,
+        "completion_tokens": 2,
+        "cached_tokens": 1,
+        "weight_versions": [
+          {
+            "version": "default",
+            "start": 0,
+            "end": 2
+          }
+        ],
+        "cached_tokens_details": {
+          "device": 1,
+          "host": 0
+        },
+        "dp_rank": null,
+        "e2e_latency": 0.022755878017051145,
+        "response_sent_to_client_ts": 1792001708.1948552
+      }
+    }
+  },
+  {
+    "input_tokens": 513,
+    "status": 400,
+    "body": {
+      "error": {
+        "type": "Bad Request",
+        "code": "decode_bad_request",
+        "message": "Input length (513 tokens) exceeds the maximum allowed length (513 tokens). Use a shorter input or enable --allow-auto-truncate."
+      }
+    }
+  }
+]

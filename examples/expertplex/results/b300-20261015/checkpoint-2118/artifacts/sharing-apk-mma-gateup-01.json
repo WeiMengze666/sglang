@@ -1,0 +1,371 @@
+{
+  "scope": "APK grouped-GEMM sharing using the exact bench_sharing.py input/weight data.\n\nSingle-operation mode is explicit and diagnostic only; serving always executes\nthe full GateUp/activation/Down sequence. Inputs are pre-staged before timing,\nand a separate attention GPU publishes P/D ready signals 10 us apart. Timings\nare publication-to-DONE acknowledgement upper bounds on that GPU's clock.\n",
+  "settings": {
+    "device": 1,
+    "control_device": 0,
+    "hidden": 6144,
+    "intermediate": 2560,
+    "experts": 40,
+    "world": 4,
+    "top_k": 8,
+    "prefill_rows": 8192,
+    "decode_rows": 128,
+    "operation": "gateup",
+    "budgets": [
+      64
+    ],
+    "delay_us": 10,
+    "iterations": 10,
+    "prefill_expert_rows": null,
+    "decode_active_experts": null,
+    "ctas": 0,
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/sharing-apk-mma-gateup-01.json"
+  },
+  "native_source_sha256": "fde77ad30b37264d499c3b130328e342ae92e8ed3ce25c25cbcc84fc445c5b3f",
+  "expert_rows": [
+    [
+      434,
+      412,
+      446,
+      390,
+      406,
+      406,
+      419,
+      377,
+      438,
+      422,
+      403,
+      407,
+      436,
+      394,
+      384,
+      410,
+      362,
+      438,
+      417,
+      419,
+      365,
+      408,
+      391,
+      402,
+      418,
+      442,
+      382,
+      430,
+      398,
+      408,
+      404,
+      399,
+      423,
+      388,
+      414,
+      397,
+      412,
+      420,
+      390,
+      406
+    ],
+    [
+      3,
+      7,
+      8,
+      3,
+      12,
+      8,
+      15,
+      8,
+      8,
+      6,
+      3,
+      5,
+      3,
+      3,
+      7,
+      7,
+      4,
+      6,
+      2,
+      5,
+      6,
+      7,
+      3,
+      8,
+      5,
+      5,
+      6,
+      7,
+      1,
+      8,
+      9,
+      5,
+      7,
+      5,
+      9,
+      6,
+      4,
+      11,
+      12,
+      6
+    ]
+  ],
+  "cases": [
+    {
+      "decode_budget": 64,
+      "expected_decode_tiles": 40,
+      "executor": {
+        "trace_capacity_per_cta": 0,
+        "backend": "sm100",
+        "benchmark_stage": 1,
+        "ctas": 148,
+        "cluster_size": 2,
+        "operation_templates": "gate_up,activation,down",
+        "loading_stages": 9,
+        "threads_per_cta": 256,
+        "registers_per_thread": 94,
+        "local_bytes_per_thread": 0,
+        "dynamic_shared_bytes_per_cta": 232448,
+        "static_shared_bytes_per_cta": 0,
+        "hidden": 6144,
+        "intermediate": 2560,
+        "prefill_tile_rows": 128,
+        "decode_tile_rows": 128
+      },
+      "samples": [
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2387.616,
+            1226.784
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2397.088,
+            1229.28
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2396.992,
+            1225.76
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2389.76,
+            1226.624
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2397.952,
+            1229.856
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2408.48,
+            1229.952
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2396.0,
+            1225.792
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2390.016,
+            1221.568
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2388.928,
+            1225.184
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2394.72,
+            1224.992
+          ]
+        }
+      ],
+      "isolated": [
+        [
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1899.36,
+              null
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1907.232,
+              null
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1907.072,
+              null
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1897.536,
+              null
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1912.096,
+              null
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1904.96,
+              null
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              1904.896,
+              null
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              1913.952,
+              null
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              1919.616,
+              null
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1906.272,
+              null
+            ]
+          }
+        ],
+        [
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              null,
+              550.4
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              null,
+              550.336
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              null,
+              555.392
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              null,
+              555.488
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              null,
+              555.136
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              null,
+              559.648
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              null,
+              556.736
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              null,
+              552.704
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              null,
+              554.112
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              null,
+              547.968
+            ]
+          }
+        ]
+      ],
+      "response_upper_bound_us": [
+        2395.3599999999997,
+        1226.208
+      ],
+      "native_reference": [
+        {
+          "passed": true,
+          "relative_l2": 0.0,
+          "max_abs_difference": 0.0,
+          "exact_fraction": 1.0
+        },
+        {
+          "passed": true,
+          "relative_l2": 0.0,
+          "max_abs_difference": 0.0,
+          "exact_fraction": 1.0
+        }
+      ]
+    }
+  ]
+}

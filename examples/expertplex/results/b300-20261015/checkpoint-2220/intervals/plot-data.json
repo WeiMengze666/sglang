@@ -1,0 +1,248 @@
+{
+  "sources_sha256": {
+    "examples/expertplex/results/b300-20261015/checkpoint-2220/artifacts/preprocessing-intervals-all-01.json": "0dfef4256fd639580a4060ab79e9635068d59a557d4700dbdcddab7cee2dd3e3"
+  },
+  "intervals": [
+    {
+      "expert_rows": 128,
+      "operation": "gate_up",
+      "tiles": 4800,
+      "median_us": 37.408,
+      "p99_us": 44.608320000000006,
+      "max_us": 47.936
+    },
+    {
+      "expert_rows": 128,
+      "operation": "down",
+      "tiles": 5760,
+      "median_us": 16.352,
+      "p99_us": 22.368,
+      "max_us": 24.192
+    },
+    {
+      "expert_rows": 128,
+      "operation": "activation",
+      "tiles": 9600,
+      "median_us": 11.232,
+      "p99_us": 12.992,
+      "max_us": 16.64
+    },
+    {
+      "expert_rows": 128,
+      "operation": "scatter1",
+      "tiles": 60,
+      "median_us": 3.968,
+      "p99_us": 19.397439999999996,
+      "max_us": 20.096
+    },
+    {
+      "expert_rows": 128,
+      "operation": "scatter2",
+      "tiles": 480,
+      "median_us": 60.352,
+      "p99_us": 125.24959999999999,
+      "max_us": 127.392
+    },
+    {
+      "expert_rows": 128,
+      "operation": "gather",
+      "tiles": 480,
+      "median_us": 112.032,
+      "p99_us": 226.77696,
+      "max_us": 234.08
+    },
+    {
+      "expert_rows": 256,
+      "operation": "gate_up",
+      "tiles": 9600,
+      "median_us": 27.968,
+      "p99_us": 37.66432000000001,
+      "max_us": 41.568
+    },
+    {
+      "expert_rows": 256,
+      "operation": "down",
+      "tiles": 11520,
+      "median_us": 13.92,
+      "p99_us": 15.776,
+      "max_us": 17.6
+    },
+    {
+      "expert_rows": 256,
+      "operation": "activation",
+      "tiles": 19200,
+      "median_us": 11.488,
+      "p99_us": 13.184,
+      "max_us": 16.928
+    },
+    {
+      "expert_rows": 256,
+      "operation": "scatter1",
+      "tiles": 120,
+      "median_us": 3.616,
+      "p99_us": 16.84128,
+      "max_us": 18.24
+    },
+    {
+      "expert_rows": 256,
+      "operation": "scatter2",
+      "tiles": 960,
+      "median_us": 100.096,
+      "p99_us": 111.73248000000001,
+      "max_us": 114.016
+    },
+    {
+      "expert_rows": 256,
+      "operation": "gather",
+      "tiles": 960,
+      "median_us": 218.144,
+      "p99_us": 227.9056,
+      "max_us": 232.608
+    },
+    {
+      "expert_rows": 512,
+      "operation": "gate_up",
+      "tiles": 19200,
+      "median_us": 27.136,
+      "p99_us": 31.904,
+      "max_us": 35.136
+    },
+    {
+      "expert_rows": 512,
+      "operation": "down",
+      "tiles": 23040,
+      "median_us": 13.568,
+      "p99_us": 14.624,
+      "max_us": 18.048
+    },
+    {
+      "expert_rows": 512,
+      "operation": "activation",
+      "tiles": 38400,
+      "median_us": 11.552,
+      "p99_us": 13.216,
+      "max_us": 16.864
+    },
+    {
+      "expert_rows": 512,
+      "operation": "scatter1",
+      "tiles": 240,
+      "median_us": 3.584,
+      "p99_us": 12.248959999999812,
+      "max_us": 18.592
+    },
+    {
+      "expert_rows": 512,
+      "operation": "scatter2",
+      "tiles": 1920,
+      "median_us": 101.152,
+      "p99_us": 114.44735999999997,
+      "max_us": 133.472
+    },
+    {
+      "expert_rows": 512,
+      "operation": "gather",
+      "tiles": 1920,
+      "median_us": 221.984,
+      "p99_us": 229.91392,
+      "max_us": 236.032
+    },
+    {
+      "expert_rows": 1024,
+      "operation": "gate_up",
+      "tiles": 38400,
+      "median_us": 26.624,
+      "p99_us": 28.064,
+      "max_us": 30.88
+    },
+    {
+      "expert_rows": 1024,
+      "operation": "down",
+      "tiles": 46080,
+      "median_us": 13.44,
+      "p99_us": 14.304,
+      "max_us": 17.664
+    },
+    {
+      "expert_rows": 1024,
+      "operation": "activation",
+      "tiles": 76800,
+      "median_us": 11.584,
+      "p99_us": 13.248,
+      "max_us": 15.104
+    },
+    {
+      "expert_rows": 1024,
+      "operation": "scatter1",
+      "tiles": 480,
+      "median_us": 3.552,
+      "p99_us": 5.480319999999996,
+      "max_us": 17.408
+    },
+    {
+      "expert_rows": 1024,
+      "operation": "scatter2",
+      "tiles": 3840,
+      "median_us": 100.256,
+      "p99_us": 113.248,
+      "max_us": 116.192
+    },
+    {
+      "expert_rows": 1024,
+      "operation": "gather",
+      "tiles": 3840,
+      "median_us": 222.816,
+      "p99_us": 230.00352,
+      "max_us": 236.544
+    },
+    {
+      "expert_rows": 2048,
+      "operation": "gate_up",
+      "tiles": 76800,
+      "median_us": 26.496,
+      "p99_us": 27.584,
+      "max_us": 31.264
+    },
+    {
+      "expert_rows": 2048,
+      "operation": "down",
+      "tiles": 92160,
+      "median_us": 13.44,
+      "p99_us": 14.144,
+      "max_us": 17.824
+    },
+    {
+      "expert_rows": 2048,
+      "operation": "activation",
+      "tiles": 153600,
+      "median_us": 11.584,
+      "p99_us": 13.248,
+      "max_us": 16.704
+    },
+    {
+      "expert_rows": 2048,
+      "operation": "scatter1",
+      "tiles": 960,
+      "median_us": 3.52,
+      "p99_us": 5.216,
+      "max_us": 22.112
+    },
+    {
+      "expert_rows": 2048,
+      "operation": "scatter2",
+      "tiles": 7680,
+      "median_us": 100.512,
+      "p99_us": 111.456,
+      "max_us": 115.776
+    },
+    {
+      "expert_rows": 2048,
+      "operation": "gather",
+      "tiles": 7680,
+      "median_us": 223.232,
+      "p99_us": 230.08,
+      "max_us": 233.952
+    }
+  ],
+  "scope": "All-operation tile interval diagnostic for paper section 7.6.\n\nP has a controlled per-expert row count. D128 becomes ready 10 us later on an\nattention GPU. Raw payloads are staged before release; E scatter/gather remain\ninside the measured persistent invocation. No clocks from distinct GPUs are\nsubtracted. Handoff-to-retirement intervals include pipeline waits and exclude\nA-to-CTA0 propagation; these alone do not prove the full reallocation bound.\n"
+}

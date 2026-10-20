@@ -33,6 +33,7 @@ from sglang.srt.layers.moe.moe_runner.base import (
 )
 from sglang.srt.layers.moe.utils import MoeRunnerBackend, get_moe_a2a_backend
 from sglang.srt.runtime_context import (
+    get_disagg,
     get_exec,
     get_flags,
     get_parallel,
@@ -373,7 +374,23 @@ class DeepGemmRunnerCore(MoeRunnerCore):
             if not runner_input.use_masked_gemm
             else None
         )
-        with deep_gemm_wrapper.contiguous_layout_alignment_scope(alignment):
+        pdmux_sms = None
+        if get_disagg().enable_pdmux:
+            from sglang.srt.distributed.parallel_state import is_pdmux_prefill
+            from sglang.srt.multiplex.pdmux_context import (
+                get_current_stream_idx,
+                get_sm_counts,
+            )
+
+            counts = get_sm_counts()
+            if counts:
+                pdmux_sms = counts[get_current_stream_idx()][
+                    0 if is_pdmux_prefill() else 1
+                ] or None
+        with (
+            deep_gemm_wrapper.configure_deep_gemm_num_sms(pdmux_sms),
+            deep_gemm_wrapper.contiguous_layout_alignment_scope(alignment),
+        ):
             if not runner_input.use_masked_gemm:
                 if weight_dtype == torch.bfloat16:
                     hidden_states = self._run_bf16_contiguous_gemm(

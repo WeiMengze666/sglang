@@ -1,0 +1,157 @@
+{
+  "scope": "Export numerical experiment evidence without request/output or log payloads.\n\nRaw reports remain in the local archive. This allowlist deliberately excludes\ntext, token histories, logprobs, IPC handles, host paths, environment and logs.\nIt includes source-file hashes so an authorized local reviewer can match them.\n",
+  "records": [
+    {
+      "name": "compact-tbo-small-01",
+      "source_file_sha256": "3ed97b808b25ebe987a13987cb84b6bf445de44618bb139241ed0b2fcc30fbf8",
+      "failure_recorded": true,
+      "metrics": {
+        "cases": [],
+        "status": "failed"
+      }
+    },
+    {
+      "name": "compact-tbo-small-02",
+      "source_file_sha256": "71dbf3c33076c97b37ddb9feffaa231c337a547617523546c592b6e2083aa0da",
+      "failure_recorded": true,
+      "metrics": {
+        "cases": [],
+        "status": "failed"
+      }
+    },
+    {
+      "name": "compact-tbo-small-03",
+      "source_file_sha256": "aacdc68429ddade45b032df1ecf8147227382a9a1b604e00072e34e6e95e76c6",
+      "failure_recorded": false,
+      "metrics": {
+        "cases": [
+          {
+            "capacity": 1024,
+            "rows": [
+              1,
+              511,
+              512,
+              513,
+              1023,
+              1024
+            ],
+            "passed": true,
+            "completed_requests": 14
+          },
+          {
+            "capacity": 512,
+            "rows": [
+              1,
+              511,
+              512,
+              513,
+              1023,
+              1024
+            ],
+            "passed": true,
+            "all_exact_token_match": true,
+            "comparisons": [
+              {
+                "common_prefix_tokens": 16,
+                "reference_tokens": 16,
+                "candidate_tokens": 16,
+                "exact_token_match": true,
+                "max_logprob_abs_difference_on_common_prefix": 0.0
+              },
+              {
+                "common_prefix_tokens": 16,
+                "reference_tokens": 16,
+                "candidate_tokens": 16,
+                "exact_token_match": true,
+                "max_logprob_abs_difference_on_common_prefix": 0.0
+              },
+              {
+                "common_prefix_tokens": 16,
+                "reference_tokens": 16,
+                "candidate_tokens": 16,
+                "exact_token_match": true,
+                "max_logprob_abs_difference_on_common_prefix": 0.0
+              },
+              {
+                "common_prefix_tokens": 16,
+                "reference_tokens": 16,
+                "candidate_tokens": 16,
+                "exact_token_match": true,
+                "max_logprob_abs_difference_on_common_prefix": 0.0
+              },
+              {
+                "common_prefix_tokens": 16,
+                "reference_tokens": 16,
+                "candidate_tokens": 16,
+                "exact_token_match": true,
+                "max_logprob_abs_difference_on_common_prefix": 0.0
+              },
+              {
+                "common_prefix_tokens": 16,
+                "reference_tokens": 16,
+                "candidate_tokens": 16,
+                "exact_token_match": true,
+                "max_logprob_abs_difference_on_common_prefix": 0.0
+              }
+            ],
+            "completed_requests": 14
+          }
+        ],
+        "status": "passed"
+      }
+    },
+    {
+      "name": "full480-canonical-loogle-pdd-pkv24576-02",
+      "source_file_sha256": "983b219b56d7000d6e9bb4ffdce58b936f0e4a4059c1fbe3e1b368bf099f0685",
+      "failure_recorded": false,
+      "metrics": {
+        "sequence_cap": 24576,
+        "seed": 42,
+        "ttft_slo_ms": 10000.0,
+        "tpot_slo_ms": 100.0,
+        "p90_goodput_max_tested_arrival_rps": 0.1,
+        "results": [
+          {
+            "request_rate": 0.1,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 30,
+            "joint_slo_attainment": 0.9375,
+            "observed_slo_goodput_rps": 0.11817338855340098,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": true
+          },
+          {
+            "request_rate": 0.25,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 22,
+            "joint_slo_attainment": 0.6875,
+            "observed_slo_goodput_rps": 0.21305156384020305,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": false
+          },
+          {
+            "request_rate": 0.5,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 3,
+            "joint_slo_attainment": 0.09375,
+            "observed_slo_goodput_rps": 0.03386777849195196,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "checkpoint-readiness-0030",
+      "source_file_sha256": "ab908fc46dedfb30931447c5140566c759f6afa10907f72c91895dfa3674bb1e",
+      "failure_recorded": false,
+      "metrics": {
+        "present_safetensors_files": 80,
+        "status": "incomplete"
+      }
+    }
+  ]
+}

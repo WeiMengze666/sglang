@@ -1,0 +1,481 @@
+{
+  "scope": "Paper sections 7.3/7.6 diagnostics: GPU-timed P/D release and tile traces.\n\nSingle E rank with BF16 synthetic weights. This is not end-to-end goodput or\nproof of the complete paper bound. Tracing perturbs timing; run performance\ncomparisons separately with tracing disabled. A and E clocks are not subtracted.\n",
+  "settings": {
+    "prefill_rows": [
+      512,
+      2048,
+      8192
+    ],
+    "decode_rows": 128,
+    "hidden": 6144,
+    "intermediate": 2560,
+    "experts": 40,
+    "world": 4,
+    "top_k": 8,
+    "decode_budget": 32,
+    "expected_tiles": 40,
+    "delay_us": 10,
+    "trace_capacity": 4096,
+    "repeats": 3,
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/preemption-02.json"
+  },
+  "native_source_sha256": "fe424768e2d52d61792cbf534fcc551af98fedf363cb75a35141f90e9251e283",
+  "executor": {
+    "trace_capacity_per_cta": 4096,
+    "backend": "sm100",
+    "ctas": 148,
+    "cluster_size": 2,
+    "threads_per_cta": 256,
+    "registers_per_thread": 76,
+    "local_bytes_per_thread": 0,
+    "dynamic_shared_bytes_per_cta": 230400,
+    "static_shared_bytes_per_cta": 0,
+    "hidden": 6144,
+    "intermediate": 2560,
+    "prefill_tile_rows": 128,
+    "decode_tile_rows": 32
+  },
+  "cases": [
+    {
+      "prefill_rows": 512,
+      "repeat": 0,
+      "prefill": {
+        "epoch": 2,
+        "start_ns": 1792001848708603904,
+        "finish_ns": 1792001848711242112,
+        "expert_ms": 2.638208
+      },
+      "decode": {
+        "epoch": 2,
+        "start_ns": 1792001848708620480,
+        "finish_ns": 1792001848711355392,
+        "expert_ms": 2.734912
+      },
+      "isolated": [
+        {
+          "epoch": 1,
+          "start_ns": 1792001848552106528,
+          "finish_ns": 1792001848554284800,
+          "expert_ms": 2.178272
+        },
+        {
+          "epoch": 1,
+          "start_ns": 1792001848705383296,
+          "finish_ns": 1792001848707649056,
+          "expert_ms": 2.26576
+        }
+      ],
+      "actual_attention_release_gap_us": 10.016,
+      "expert_admission_gap_us": 16.576,
+      "exact_isolated_output": [
+        true,
+        true
+      ],
+      "decode_slowdown": 1.207061648188687,
+      "decode_admission_to_first_tile_us": {
+        "count": 148,
+        "min_us": 17.76,
+        "p50_us": 129.6,
+        "p99_us": 977.824,
+        "max_us": 978.08
+      }
+    },
+    {
+      "prefill_rows": 512,
+      "repeat": 1,
+      "prefill": {
+        "epoch": 3,
+        "start_ns": 1792001848712486816,
+        "finish_ns": 1792001848715101248,
+        "expert_ms": 2.614432
+      },
+      "decode": {
+        "epoch": 3,
+        "start_ns": 1792001848712503552,
+        "finish_ns": 1792001848715206784,
+        "expert_ms": 2.703232
+      },
+      "isolated": [
+        {
+          "epoch": 1,
+          "start_ns": 1792001848552106528,
+          "finish_ns": 1792001848554284800,
+          "expert_ms": 2.178272
+        },
+        {
+          "epoch": 1,
+          "start_ns": 1792001848705383296,
+          "finish_ns": 1792001848707649056,
+          "expert_ms": 2.26576
+        }
+      ],
+      "actual_attention_release_gap_us": 10.016,
+      "expert_admission_gap_us": 16.736,
+      "exact_isolated_output": [
+        true,
+        true
+      ],
+      "decode_slowdown": 1.1930795847750864,
+      "decode_admission_to_first_tile_us": {
+        "count": 148,
+        "min_us": 17.152,
+        "p50_us": 135.52,
+        "p99_us": 759.744,
+        "max_us": 760.032
+      }
+    },
+    {
+      "prefill_rows": 512,
+      "repeat": 2,
+      "prefill": {
+        "epoch": 4,
+        "start_ns": 1792001848715975776,
+        "finish_ns": 1792001848718624960,
+        "expert_ms": 2.649184
+      },
+      "decode": {
+        "epoch": 4,
+        "start_ns": 1792001848715993760,
+        "finish_ns": 1792001848718740800,
+        "expert_ms": 2.74704
+      },
+      "isolated": [
+        {
+          "epoch": 1,
+          "start_ns": 1792001848552106528,
+          "finish_ns": 1792001848554284800,
+          "expert_ms": 2.178272
+        },
+        {
+          "epoch": 1,
+          "start_ns": 1792001848705383296,
+          "finish_ns": 1792001848707649056,
+          "expert_ms": 2.26576
+        }
+      ],
+      "actual_attention_release_gap_us": 10.016,
+      "expert_admission_gap_us": 17.984,
+      "exact_isolated_output": [
+        true,
+        true
+      ],
+      "decode_slowdown": 1.2124143775157121,
+      "decode_admission_to_first_tile_us": {
+        "count": 148,
+        "min_us": 17.536,
+        "p50_us": 128.384,
+        "p99_us": 522.944,
+        "max_us": 523.168
+      }
+    },
+    {
+      "prefill_rows": 2048,
+      "repeat": 0,
+      "prefill": {
+        "epoch": 6,
+        "start_ns": 1792001848726229664,
+        "finish_ns": 1792001848728849280,
+        "expert_ms": 2.619616
+      },
+      "decode": {
+        "epoch": 6,
+        "start_ns": 1792001848726246432,
+        "finish_ns": 1792001848728966400,
+        "expert_ms": 2.719968
+      },
+      "isolated": [
+        {
+          "epoch": 5,
+          "start_ns": 1792001848720341984,
+          "finish_ns": 1792001848722516704,
+          "expert_ms": 2.17472
+        },
+        {
+          "epoch": 5,
+          "start_ns": 1792001848723296000,
+          "finish_ns": 1792001848725555776,
+          "expert_ms": 2.259776
+        }
+      ],
+      "actual_attention_release_gap_us": 10.016,
+      "expert_admission_gap_us": 16.768,
+      "exact_isolated_output": [
+        true,
+        true
+      ],
+      "decode_slowdown": 1.2036449630405845,
+      "decode_admission_to_first_tile_us": {
+        "count": 148,
+        "min_us": 17.664,
+        "p50_us": 144.032,
+        "p99_us": 743.424,
+        "max_us": 743.68
+      }
+    },
+    {
+      "prefill_rows": 2048,
+      "repeat": 1,
+      "prefill": {
+        "epoch": 7,
+        "start_ns": 1792001848730389344,
+        "finish_ns": 1792001848733004480,
+        "expert_ms": 2.615136
+      },
+      "decode": {
+        "epoch": 7,
+        "start_ns": 1792001848730407328,
+        "finish_ns": 1792001848733134880,
+        "expert_ms": 2.727552
+      },
+      "isolated": [
+        {
+          "epoch": 5,
+          "start_ns": 1792001848720341984,
+          "finish_ns": 1792001848722516704,
+          "expert_ms": 2.17472
+        },
+        {
+          "epoch": 5,
+          "start_ns": 1792001848723296000,
+          "finish_ns": 1792001848725555776,
+          "expert_ms": 2.259776
+        }
+      ],
+      "actual_attention_release_gap_us": 10.016,
+      "expert_admission_gap_us": 17.984,
+      "exact_isolated_output": [
+        true,
+        true
+      ],
+      "decode_slowdown": 1.2070010478914726,
+      "decode_admission_to_first_tile_us": {
+        "count": 148,
+        "min_us": 23.104,
+        "p50_us": 140.032,
+        "p99_us": 672.192,
+        "max_us": 672.48
+      }
+    },
+    {
+      "prefill_rows": 2048,
+      "repeat": 2,
+      "prefill": {
+        "epoch": 8,
+        "start_ns": 1792001848734358496,
+        "finish_ns": 1792001848736980256,
+        "expert_ms": 2.62176
+      },
+      "decode": {
+        "epoch": 8,
+        "start_ns": 1792001848734376352,
+        "finish_ns": 1792001848737102080,
+        "expert_ms": 2.725728
+      },
+      "isolated": [
+        {
+          "epoch": 5,
+          "start_ns": 1792001848720341984,
+          "finish_ns": 1792001848722516704,
+          "expert_ms": 2.17472
+        },
+        {
+          "epoch": 5,
+          "start_ns": 1792001848723296000,
+          "finish_ns": 1792001848725555776,
+          "expert_ms": 2.259776
+        }
+      ],
+      "actual_attention_release_gap_us": 10.048,
+      "expert_admission_gap_us": 17.856,
+      "exact_isolated_output": [
+        true,
+        true
+      ],
+      "decode_slowdown": 1.2061938882437906,
+      "decode_admission_to_first_tile_us": {
+        "count": 148,
+        "min_us": 17.6,
+        "p50_us": 140.384,
+        "p99_us": 429.6,
+        "max_us": 429.888
+      }
+    },
+    {
+      "prefill_rows": 8192,
+      "repeat": 0,
+      "prefill": {
+        "epoch": 10,
+        "start_ns": 1792001848753138848,
+        "finish_ns": 1792001848761547936,
+        "expert_ms": 8.409088
+      },
+      "decode": {
+        "epoch": 10,
+        "start_ns": 1792001848753156032,
+        "finish_ns": 1792001848756053696,
+        "expert_ms": 2.897664
+      },
+      "isolated": [
+        {
+          "epoch": 9,
+          "start_ns": 1792001848739568128,
+          "finish_ns": 1792001848747484352,
+          "expert_ms": 7.916224
+        },
+        {
+          "epoch": 9,
+          "start_ns": 1792001848749503232,
+          "finish_ns": 1792001848751759904,
+          "expert_ms": 2.256672
+        }
+      ],
+      "actual_attention_release_gap_us": 10.016,
+      "expert_admission_gap_us": 17.184,
+      "exact_isolated_output": [
+        true,
+        true
+      ],
+      "decode_slowdown": 1.2840430510060832,
+      "decode_admission_to_first_tile_us": {
+        "count": 148,
+        "min_us": 17.984,
+        "p50_us": 113.408,
+        "p99_us": 692.032,
+        "max_us": 692.288
+      }
+    },
+    {
+      "prefill_rows": 8192,
+      "repeat": 1,
+      "prefill": {
+        "epoch": 11,
+        "start_ns": 1792001848764666368,
+        "finish_ns": 1792001848773090464,
+        "expert_ms": 8.424096
+      },
+      "decode": {
+        "epoch": 11,
+        "start_ns": 1792001848764684864,
+        "finish_ns": 1792001848767579904,
+        "expert_ms": 2.89504
+      },
+      "isolated": [
+        {
+          "epoch": 9,
+          "start_ns": 1792001848739568128,
+          "finish_ns": 1792001848747484352,
+          "expert_ms": 7.916224
+        },
+        {
+          "epoch": 9,
+          "start_ns": 1792001848749503232,
+          "finish_ns": 1792001848751759904,
+          "expert_ms": 2.256672
+        }
+      ],
+      "actual_attention_release_gap_us": 10.016,
+      "expert_admission_gap_us": 18.496,
+      "exact_isolated_output": [
+        true,
+        true
+      ],
+      "decode_slowdown": 1.2828802767969825,
+      "decode_admission_to_first_tile_us": {
+        "count": 148,
+        "min_us": 22.816,
+        "p50_us": 111.776,
+        "p99_us": 618.08,
+        "max_us": 618.304
+      }
+    },
+    {
+      "prefill_rows": 8192,
+      "repeat": 2,
+      "prefill": {
+        "epoch": 12,
+        "start_ns": 1792001848775892448,
+        "finish_ns": 1792001848784341152,
+        "expert_ms": 8.448704
+      },
+      "decode": {
+        "epoch": 12,
+        "start_ns": 1792001848775910432,
+        "finish_ns": 1792001848778774176,
+        "expert_ms": 2.863744
+      },
+      "isolated": [
+        {
+          "epoch": 9,
+          "start_ns": 1792001848739568128,
+          "finish_ns": 1792001848747484352,
+          "expert_ms": 7.916224
+        },
+        {
+          "epoch": 9,
+          "start_ns": 1792001848749503232,
+          "finish_ns": 1792001848751759904,
+          "expert_ms": 2.256672
+        }
+      ],
+      "actual_attention_release_gap_us": 10.016,
+      "expert_admission_gap_us": 17.984,
+      "exact_isolated_output": [
+        true,
+        true
+      ],
+      "decode_slowdown": 1.2690120673274627,
+      "decode_admission_to_first_tile_us": {
+        "count": 148,
+        "min_us": 17.952,
+        "p50_us": 108.992,
+        "p99_us": 758.016,
+        "max_us": 758.272
+      }
+    }
+  ],
+  "trace_file": "/home/alayadb/mengze/expertplex-b300/artifacts/preemption-02.trace.pt",
+  "trace_fields": [
+    "begin_ns",
+    "finish_ns",
+    "ready_seen_ns",
+    "epoch",
+    "sequence",
+    "slot",
+    "phase",
+    "stage"
+  ],
+  "trace_record_count": 96560,
+  "trace_truncated_ctas": 0,
+  "tile_lifetime_us": {
+    "phase0_stage1": {
+      "count": 18800,
+      "min_us": 70.912,
+      "p50_us": 98.304,
+      "p99_us": 113.024,
+      "max_us": 117.12
+    },
+    "phase0_stage2": {
+      "count": 45120,
+      "min_us": 26.272,
+      "p50_us": 27.072,
+      "p99_us": 28.128,
+      "max_us": 29.44
+    },
+    "phase1_stage1": {
+      "count": 9600,
+      "min_us": 97.408,
+      "p50_us": 104.64,
+      "p99_us": 112.544,
+      "max_us": 118.176
+    },
+    "phase1_stage2": {
+      "count": 23040,
+      "min_us": 25.92,
+      "p50_us": 26.656,
+      "p99_us": 27.552,
+      "max_us": 28.512
+    }
+  },
+  "trace_interpretation": "begin is the producer handoff after phase-switch drain; finish is epilogue retirement. Lifetime includes pipelining waits. Admission is CTA0's observation, not A publication. First-D-tile statistics cover only CTAs that received D work; they do not prove the full system-scope propagation bound. Raw trace preserves all records.",
+  "status": "passed"
+}

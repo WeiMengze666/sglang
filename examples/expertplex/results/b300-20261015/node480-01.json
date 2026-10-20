@@ -1,0 +1,103 @@
+{
+  "scope": "all-layer MoE deployment and capacity only; no attention, no pretrained model accuracy",
+  "config": {
+    "model_path": "/home/alayadb/mengze/expertplex-b300/synthetic-480b",
+    "clients": [
+      {
+        "id": 0,
+        "phase": "prefill",
+        "device": 0,
+        "port": 30000
+      },
+      {
+        "id": 1,
+        "phase": "decode",
+        "device": 1,
+        "port": 30001
+      },
+      {
+        "id": 2,
+        "phase": "decode",
+        "device": 2,
+        "port": 30002
+      },
+      {
+        "id": 3,
+        "phase": "decode",
+        "device": 3,
+        "port": 30003
+      }
+    ],
+    "expert_devices": [
+      4,
+      5,
+      6,
+      7
+    ],
+    "max_prefill_tokens": 2048,
+    "max_decode_tokens": 256,
+    "decode_sm_budget": 32,
+    "expected_decode_tiles": 128,
+    "max_decode_sm_fraction": 0.75,
+    "startup_timeout_s": 600.0,
+    "operation_timeout_s": 120.0,
+    "rendezvous_dir": "/home/alayadb/mengze/expertplex-b300/run-node480-01",
+    "node_gpu_count": 8,
+    "cta_count": 0,
+    "gpu_memory_gib": 268.0,
+    "weight_mode": "synthetic",
+    "synthetic_seed": 1234
+  },
+  "results": [
+    {
+      "slot": 1,
+      "phase": "decode",
+      "rows": 8,
+      "layers": 62,
+      "full_moe_pass_ms": [
+        258.4125569992466,
+        105.12886599462945,
+        131.46864200825803
+      ],
+      "status": "passed"
+    },
+    {
+      "slot": 2,
+      "phase": "decode",
+      "rows": 8,
+      "layers": 62,
+      "full_moe_pass_ms": [
+        257.86253401020076,
+        106.03270299907308,
+        141.8358359951526
+      ],
+      "status": "passed"
+    },
+    {
+      "slot": 3,
+      "phase": "decode",
+      "rows": 8,
+      "layers": 62,
+      "full_moe_pass_ms": [
+        261.2504540011287,
+        111.11697199521586,
+        146.41292099258862
+      ],
+      "status": "passed"
+    },
+    {
+      "slot": 0,
+      "phase": "prefill",
+      "rows": 128,
+      "layers": 62,
+      "full_moe_pass_ms": [
+        344.6354800107656,
+        235.46870099380612,
+        207.55186201131437
+      ],
+      "status": "passed"
+    }
+  ],
+  "resident_memory": "index, memory.used [MiB], memory.total [MiB]\n0, 4 MiB, 275040 MiB\n1, 4 MiB, 275040 MiB\n2, 4 MiB, 275040 MiB\n3, 4 MiB, 275040 MiB\n4, 233116 MiB, 275040 MiB\n5, 233116 MiB, 275040 MiB\n6, 233116 MiB, 275040 MiB\n7, 233116 MiB, 275040 MiB\n",
+  "status": "passed"
+}

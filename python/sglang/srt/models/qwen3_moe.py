@@ -29,6 +29,11 @@ from transformers import PretrainedConfig
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
 from sglang.srt.eplb.expert_location import ModelConfigForExpertLocation
 from sglang.srt.eplb.expert_location_dispatch import ExpertLocationDispatchInfo
+from sglang.srt.expertplex.integration import (
+    expertplex_enabled,
+    is_routed_expert_weight,
+    validate_attention_model,
+)
 from sglang.srt.layers.aux_hidden_states import AuxHiddenStateAccumulator
 from sglang.srt.layers.layer_boundary import (
     append_stages,
@@ -48,7 +53,7 @@ from sglang.srt.layers.moe import (
 )
 from sglang.srt.layers.moe.ep_moe.layer import get_moe_impl_class
 from sglang.srt.layers.moe.fused_moe_triton.layer import FusedMoE
-from sglang.srt.layers.moe.topk import TopK, TopKOutputChecker
+from sglang.srt.layers.moe.topk import TopK, TopKOutputChecker, TopKOutputFormat
 from sglang.srt.layers.moe.utils import (
     RoutingMethodType,
     filter_moe_weight_param_global_expert,
@@ -244,6 +249,9 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         self.tp_size = get_parallel().moe_tp_size
         self.ep_size = get_parallel().moe_ep_size
         self.layer_id = layer_id
+        self._expertplex = expertplex_enabled()
+        if self._expertplex and quant_config is not None:
+            raise ValueError("ExpertPlex attention supports unquantized BF16 only")
         if self.tp_size > config.num_experts:
             raise ValueError(
                 f"Tensor parallel size {self.tp_size} is greater than "
@@ -261,6 +269,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             renormalize=norm_topk_prob,
             use_grouped_topk=False,
             layer_id=layer_id,
+            output_format=TopKOutputFormat.STANDARD if self._expertplex else None,
         )
 
         self.experts = get_moe_impl_class(quant_config)(
@@ -459,7 +468,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             state.topk_output = self.topk.empty_topk_output(hidden_states.device)
 
     def op_dispatch_a(self, state):
-        if self.ep_size > 1:
+        if self.ep_size > 1 or self._expertplex:
             self.experts.dispatcher.dispatch_a(
                 hidden_states=state.pop("hidden_states_mlp_input"),
                 topk_output=state.pop("topk_output"),
@@ -467,7 +476,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             )
 
     def op_dispatch_b(self, state):
-        if self.ep_size > 1:
+        if self.ep_size > 1 or self._expertplex:
             with get_global_expert_distribution_recorder().with_current_layer(
                 self.layer_id
             ):
@@ -481,7 +490,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         )
 
     def op_combine_a(self, state):
-        if self.ep_size > 1:
+        if self.ep_size > 1 or self._expertplex:
             self.experts.dispatcher.combine_a(
                 combine_input=state.pop("combine_input"),
                 tbo_subbatch_index=state.get("tbo_subbatch_index"),
@@ -489,7 +498,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             state.pop("dispatch_output")
 
     def op_combine_b(self, state):
-        if self.ep_size > 1:
+        if self.ep_size > 1 or self._expertplex:
             state.hidden_states_after_combine = self.experts.dispatcher.combine_b(
                 tbo_subbatch_index=state.get("tbo_subbatch_index"),
             )
@@ -1031,6 +1040,7 @@ class Qwen3MoeForCausalLM(nn.Module):
         prefix: str = "",
     ) -> None:
         super().__init__()
+        validate_attention_model(config, quant_config)
         self.pp_group = get_parallel().pp_group
         self.config = config
         self.quant_config = quant_config
@@ -1200,6 +1210,10 @@ class Qwen3MoeForCausalLM(nn.Module):
         params_dict = dict(self.named_parameters())
 
         for name, loaded_weight in weights:
+            if expertplex_enabled() and is_routed_expert_weight(name):
+                # Defense for externally supplied iterators; the default
+                # loader filters these names before reading their tensors.
+                continue
             if is_mtp:
                 if "mtp" not in name:
                     continue

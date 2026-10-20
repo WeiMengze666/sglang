@@ -1,0 +1,1325 @@
+{
+  "scope": "Single-node adaptation of paper section 7.5: dispatch/combine separately.\n\nRanks 0..3 are attention clients and 4..7 hold 40 active experts each. DeepEP\nrequires equal expert ranges on all ranks, so its first 160 expert IDs are\nunused and the 160 actual expert IDs are mapped onto ranks 4..7. Prefill uses\nclient 0; decode uses clients 1..3. This is an 8-GPU NVLink adaptation, not the\npaper's 16-GPU hierarchical RDMA experiment. Echo work is outside timing.\n",
+  "settings": {
+    "backend": "deepep",
+    "mode": "normal",
+    "rows": [
+      128,
+      2048
+    ],
+    "hidden": 6144,
+    "experts": 40,
+    "top_k": 8,
+    "iterations": 10,
+    "seed": 20261015,
+    "port": 29650,
+    "deepep_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee",
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/comm-deepep-v1-normal-01.json"
+  },
+  "summary": [
+    {
+      "rows": 128,
+      "max_rank_samples": {
+        "dispatch_us": [
+          752.2879838943481,
+          913.6959910392761,
+          626.1439919471741,
+          742.2400116920471,
+          492.67199635505676,
+          696.9280242919922,
+          852.4159789085388,
+          705.6319713592529,
+          663.2639765739441,
+          800.7040023803711
+        ],
+        "combine_us": [
+          796.5760231018066,
+          904.5439958572388,
+          751.7120242118835,
+          934.0479969978333,
+          417.5359904766083,
+          1096.7680215835571,
+          776.095986366272,
+          655.0080180168152,
+          720.0639843940735,
+          571.9040036201477
+        ],
+        "dispatch_wall_us": [
+          841.3659816142172,
+          994.0910094883293,
+          695.9949969314039,
+          812.6340107992291,
+          572.1650086343288,
+          776.1110027786344,
+          920.8190022036433,
+          795.5339970067143,
+          733.8969735428691,
+          878.4410019870847
+        ],
+        "combine_wall_us": [
+          887.762987986207,
+          989.0010114759207,
+          834.8319970536977,
+          1031.6249972674996,
+          499.94399887509644,
+          1181.5979960374534,
+          872.7380190975964,
+          741.1840197164565,
+          806.6349837463349,
+          668.916996801272
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 723.93599152565,
+        "combine_us": 763.9040052890778,
+        "dispatch_wall_us": 804.0840039029717,
+        "combine_wall_us": 853.785008075647
+      }
+    },
+    {
+      "rows": 2048,
+      "max_rank_samples": {
+        "dispatch_us": [
+          1506.9760084152222,
+          1491.968035697937,
+          1599.1359949111938,
+          1234.1439723968506,
+          1119.4560527801514,
+          1316.1920309066772,
+          1395.9039449691772,
+          1451.1679410934448,
+          1483.5840463638306,
+          1346.8159437179565
+        ],
+        "combine_us": [
+          1202.6879787445068,
+          808.7360262870789,
+          925.0879883766174,
+          1071.4880228042603,
+          1203.2959461212158,
+          1029.312014579773,
+          1098.1760025024414,
+          1418.5919761657715,
+          1025.4080295562744,
+          1310.431957244873
+        ],
+        "dispatch_wall_us": [
+          1577.446993906051,
+          1558.0070030409843,
+          1673.3380034565926,
+          1309.9359930492938,
+          1194.4099969696254,
+          1387.2790150344372,
+          1468.5060014016926,
+          1529.6069905161858,
+          1557.4110148008913,
+          1429.7490124590695
+        ],
+        "combine_wall_us": [
+          1286.5700118709356,
+          894.2059939727187,
+          1016.4109990000725,
+          1172.036019852385,
+          1289.8230052087456,
+          1176.67400627397,
+          1178.4789967350662,
+          1526.4590037986636,
+          1113.8630216009915,
+          1414.1460123937577
+        ]
+      },
+      "median_max_rank_us": {
+        "dispatch_us": 1423.535943031311,
+        "combine_us": 1084.8320126533508,
+        "dispatch_wall_us": 1499.0564959589392,
+        "combine_wall_us": 1177.576501504518
+      }
+    }
+  ],
+  "ranks": [
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": true,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 504.09597158432007,
+            "combine_us": 283.87200832366943,
+            "dispatch_wall_us": 579.0549912489951,
+            "combine_wall_us": 372.37798096612096
+          },
+          {
+            "dispatch_us": 551.904022693634,
+            "combine_us": 520.5439925193787,
+            "dispatch_wall_us": 625.2460007090122,
+            "combine_wall_us": 608.8040245231241
+          },
+          {
+            "dispatch_us": 291.04000329971313,
+            "combine_us": 367.1039938926697,
+            "dispatch_wall_us": 364.60699629969895,
+            "combine_wall_us": 455.72701492346823
+          },
+          {
+            "dispatch_us": 559.328019618988,
+            "combine_us": 760.8000040054321,
+            "dispatch_wall_us": 633.3360215649009,
+            "combine_wall_us": 848.9149913657457
+          },
+          {
+            "dispatch_us": 248.7040013074875,
+            "combine_us": 158.27199816703796,
+            "dispatch_wall_us": 323.49498360417783,
+            "combine_wall_us": 244.91798831149936
+          },
+          {
+            "dispatch_us": 675.2319931983948,
+            "combine_us": 771.3599801063538,
+            "dispatch_wall_us": 745.4020087607205,
+            "combine_wall_us": 858.9290082454681
+          },
+          {
+            "dispatch_us": 489.4079864025116,
+            "combine_us": 538.0160212516785,
+            "dispatch_wall_us": 560.5600017588586,
+            "combine_wall_us": 626.5999982133508
+          },
+          {
+            "dispatch_us": 213.02400529384613,
+            "combine_us": 339.55198526382446,
+            "dispatch_wall_us": 287.2589975595474,
+            "combine_wall_us": 427.05200030468404
+          },
+          {
+            "dispatch_us": 424.83198642730713,
+            "combine_us": 144.57599818706512,
+            "dispatch_wall_us": 500.11801067739725,
+            "combine_wall_us": 233.3250013180077
+          },
+          {
+            "dispatch_us": 376.6399919986725,
+            "combine_us": 339.1039967536926,
+            "dispatch_wall_us": 449.26200644113123,
+            "combine_wall_us": 429.8670100979507
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": true,
+        "rank": 0,
+        "samples": [
+          {
+            "dispatch_us": 756.8640112876892,
+            "combine_us": 658.240020275116,
+            "dispatch_wall_us": 830.7910175062716,
+            "combine_wall_us": 746.5149974450469
+          },
+          {
+            "dispatch_us": 709.9840044975281,
+            "combine_us": 714.7520184516907,
+            "dispatch_wall_us": 784.1860060580075,
+            "combine_wall_us": 801.6179781407118
+          },
+          {
+            "dispatch_us": 720.7040190696716,
+            "combine_us": 600.0959873199463,
+            "dispatch_wall_us": 793.9880015328526,
+            "combine_wall_us": 696.9780079089105
+          },
+          {
+            "dispatch_us": 701.312005519867,
+            "combine_us": 819.0720081329346,
+            "dispatch_wall_us": 772.8800119366497,
+            "combine_wall_us": 901.8920245580375
+          },
+          {
+            "dispatch_us": 852.5440096855164,
+            "combine_us": 600.7360219955444,
+            "dispatch_wall_us": 927.4490003008395,
+            "combine_wall_us": 688.4699978400022
+          },
+          {
+            "dispatch_us": 1008.031964302063,
+            "combine_us": 598.8159775733948,
+            "dispatch_wall_us": 1083.5829889401793,
+            "combine_wall_us": 687.5109975226223
+          },
+          {
+            "dispatch_us": 736.3200187683105,
+            "combine_us": 833.3119750022888,
+            "dispatch_wall_us": 859.8010172136128,
+            "combine_wall_us": 928.866007598117
+          },
+          {
+            "dispatch_us": 1236.1600399017334,
+            "combine_us": 1103.0399799346924,
+            "dispatch_wall_us": 1309.0819993522018,
+            "combine_wall_us": 1191.4210044778883
+          },
+          {
+            "dispatch_us": 723.6800193786621,
+            "combine_us": 809.4080090522766,
+            "dispatch_wall_us": 799.2819882929325,
+            "combine_wall_us": 892.4400026444346
+          },
+          {
+            "dispatch_us": 952.2879719734192,
+            "combine_us": 1310.431957244873,
+            "dispatch_wall_us": 1025.8720139972866,
+            "combine_wall_us": 1414.1460123937577
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 631.488025188446,
+            "combine_us": 370.11200189590454,
+            "dispatch_wall_us": 744.319986552,
+            "combine_wall_us": 474.9629879370332
+          },
+          {
+            "dispatch_us": 538.0480289459229,
+            "combine_us": 542.8799986839294,
+            "dispatch_wall_us": 631.4569909591228,
+            "combine_wall_us": 664.0040082857013
+          },
+          {
+            "dispatch_us": 405.37598729133606,
+            "combine_us": 411.8080139160156,
+            "dispatch_wall_us": 490.09299254976213,
+            "combine_wall_us": 510.2940194774419
+          },
+          {
+            "dispatch_us": 281.69599175453186,
+            "combine_us": 783.2000255584717,
+            "dispatch_wall_us": 369.8900109156966,
+            "combine_wall_us": 888.8980082701892
+          },
+          {
+            "dispatch_us": 245.53599953651428,
+            "combine_us": 150.62400698661804,
+            "dispatch_wall_us": 334.9430044181645,
+            "combine_wall_us": 253.8739936426282
+          },
+          {
+            "dispatch_us": 658.4960222244263,
+            "combine_us": 370.11200189590454,
+            "dispatch_wall_us": 736.1960015259683,
+            "combine_wall_us": 452.3899988271296
+          },
+          {
+            "dispatch_us": 495.84001302719116,
+            "combine_us": 776.095986366272,
+            "dispatch_wall_us": 578.6940164398402,
+            "combine_wall_us": 872.7380190975964
+          },
+          {
+            "dispatch_us": 705.6319713592529,
+            "combine_us": 362.59201169013977,
+            "dispatch_wall_us": 795.5339970067143,
+            "combine_wall_us": 459.91200022399426
+          },
+          {
+            "dispatch_us": 357.12000727653503,
+            "combine_us": 275.29600262641907,
+            "dispatch_wall_us": 444.8179970495403,
+            "combine_wall_us": 349.87900289706886
+          },
+          {
+            "dispatch_us": 800.7040023803711,
+            "combine_us": 416.51201248168945,
+            "dispatch_wall_us": 878.4410019870847,
+            "combine_wall_us": 484.91699271835387
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 1,
+        "samples": [
+          {
+            "dispatch_us": 750.2400279045105,
+            "combine_us": 554.2719960212708,
+            "dispatch_wall_us": 851.1699852533638,
+            "combine_wall_us": 654.2170012835413
+          },
+          {
+            "dispatch_us": 657.1840047836304,
+            "combine_us": 120.60800194740295,
+            "dispatch_wall_us": 729.522987967357,
+            "combine_wall_us": 216.14599972963333
+          },
+          {
+            "dispatch_us": 1249.0240335464478,
+            "combine_us": 382.81598687171936,
+            "dispatch_wall_us": 1327.6410172693431,
+            "combine_wall_us": 486.73301353119314
+          },
+          {
+            "dispatch_us": 505.15198707580566,
+            "combine_us": 155.5519998073578,
+            "dispatch_wall_us": 595.1700150035322,
+            "combine_wall_us": 264.9910165928304
+          },
+          {
+            "dispatch_us": 775.7440209388733,
+            "combine_us": 971.1040258407593,
+            "dispatch_wall_us": 869.790994329378,
+            "combine_wall_us": 1065.8550017978996
+          },
+          {
+            "dispatch_us": 231.29600286483765,
+            "combine_us": 455.00800013542175,
+            "dispatch_wall_us": 320.4389940947294,
+            "combine_wall_us": 536.419014679268
+          },
+          {
+            "dispatch_us": 831.9360017776489,
+            "combine_us": 364.28800225257874,
+            "dispatch_wall_us": 918.7530085910112,
+            "combine_wall_us": 444.984994828701
+          },
+          {
+            "dispatch_us": 221.91999852657318,
+            "combine_us": 101.47199779748917,
+            "dispatch_wall_us": 296.66299815289676,
+            "combine_wall_us": 197.6759813260287
+          },
+          {
+            "dispatch_us": 703.6160230636597,
+            "combine_us": 839.0079736709595,
+            "dispatch_wall_us": 774.0700093563646,
+            "combine_wall_us": 934.5249854959548
+          },
+          {
+            "dispatch_us": 220.67199647426605,
+            "combine_us": 267.42398738861084,
+            "dispatch_wall_us": 287.1250035241246,
+            "combine_wall_us": 350.1570026855916
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 335.1359963417053,
+            "combine_us": 718.3679938316345,
+            "dispatch_wall_us": 449.77202196605504,
+            "combine_wall_us": 840.2710082009435
+          },
+          {
+            "dispatch_us": 289.18400406837463,
+            "combine_us": 533.4720015525818,
+            "dispatch_wall_us": 390.7080099452287,
+            "combine_wall_us": 663.1300202570856
+          },
+          {
+            "dispatch_us": 260.6079876422882,
+            "combine_us": 257.6639950275421,
+            "dispatch_wall_us": 349.80999771505594,
+            "combine_wall_us": 365.16800173558295
+          },
+          {
+            "dispatch_us": 702.8480172157288,
+            "combine_us": 145.56799829006195,
+            "dispatch_wall_us": 790.7590188551694,
+            "combine_wall_us": 265.6400029081851
+          },
+          {
+            "dispatch_us": 423.9040017127991,
+            "combine_us": 360.54399609565735,
+            "dispatch_wall_us": 511.6740067023784,
+            "combine_wall_us": 467.3069925047457
+          },
+          {
+            "dispatch_us": 189.40800428390503,
+            "combine_us": 1041.983962059021,
+            "dispatch_wall_us": 295.1259957626462,
+            "combine_wall_us": 1146.522001363337
+          },
+          {
+            "dispatch_us": 203.23200523853302,
+            "combine_us": 392.8000032901764,
+            "dispatch_wall_us": 289.6499936468899,
+            "combine_wall_us": 499.5880008209497
+          },
+          {
+            "dispatch_us": 558.8480234146118,
+            "combine_us": 354.2400002479553,
+            "dispatch_wall_us": 645.8690040744841,
+            "combine_wall_us": 460.4909918271005
+          },
+          {
+            "dispatch_us": 192.4159973859787,
+            "combine_us": 384.0959966182709,
+            "dispatch_wall_us": 281.1139856930822,
+            "combine_wall_us": 504.44999942556024
+          },
+          {
+            "dispatch_us": 722.6240038871765,
+            "combine_us": 557.7920079231262,
+            "dispatch_wall_us": 810.0669947452843,
+            "combine_wall_us": 663.4840101469308
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 2,
+        "samples": [
+          {
+            "dispatch_us": 420.3200042247772,
+            "combine_us": 545.7280278205872,
+            "dispatch_wall_us": 509.292003698647,
+            "combine_wall_us": 653.6029977723956
+          },
+          {
+            "dispatch_us": 781.1200022697449,
+            "combine_us": 134.5600038766861,
+            "dispatch_wall_us": 868.5880166012794,
+            "combine_wall_us": 285.4999911505729
+          },
+          {
+            "dispatch_us": 574.176013469696,
+            "combine_us": 260.99199056625366,
+            "dispatch_wall_us": 656.9130055140704,
+            "combine_wall_us": 362.48398828320205
+          },
+          {
+            "dispatch_us": 352.86399722099304,
+            "combine_us": 561.2480044364929,
+            "dispatch_wall_us": 435.0969975348562,
+            "combine_wall_us": 663.5299941990525
+          },
+          {
+            "dispatch_us": 453.44001054763794,
+            "combine_us": 348.83201122283936,
+            "dispatch_wall_us": 537.1480074245483,
+            "combine_wall_us": 449.4540044106543
+          },
+          {
+            "dispatch_us": 654.3359756469727,
+            "combine_us": 341.98400378227234,
+            "dispatch_wall_us": 735.9400042332709,
+            "combine_wall_us": 443.08099313639104
+          },
+          {
+            "dispatch_us": 705.7279944419861,
+            "combine_us": 415.45599699020386,
+            "dispatch_wall_us": 789.3559813965112,
+            "combine_wall_us": 535.1960135158151
+          },
+          {
+            "dispatch_us": 556.22398853302,
+            "combine_us": 416.3840115070343,
+            "dispatch_wall_us": 637.7100071404129,
+            "combine_wall_us": 517.6849954295903
+          },
+          {
+            "dispatch_us": 492.15999245643616,
+            "combine_us": 131.29599392414093,
+            "dispatch_wall_us": 575.3689911216497,
+            "combine_wall_us": 233.39601466432214
+          },
+          {
+            "dispatch_us": 205.4080069065094,
+            "combine_us": 233.63199830055237,
+            "dispatch_wall_us": 286.4949929062277,
+            "combine_wall_us": 334.6879966557026
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 632.8639984130859,
+            "combine_us": 367.0719861984253,
+            "dispatch_wall_us": 744.1960042342544,
+            "combine_wall_us": 475.0480002257973
+          },
+          {
+            "dispatch_us": 537.5679731369019,
+            "combine_us": 540.6079888343811,
+            "dispatch_wall_us": 631.695002084598,
+            "combine_wall_us": 663.5950121562928
+          },
+          {
+            "dispatch_us": 406.6559970378876,
+            "combine_us": 406.9119989871979,
+            "dispatch_wall_us": 489.9420018773526,
+            "combine_wall_us": 511.02900761179626
+          },
+          {
+            "dispatch_us": 282.1759879589081,
+            "combine_us": 780.2559733390808,
+            "dispatch_wall_us": 367.3120227176696,
+            "combine_wall_us": 886.7389988154173
+          },
+          {
+            "dispatch_us": 235.03999412059784,
+            "combine_us": 150.65599977970123,
+            "dispatch_wall_us": 327.94399885460734,
+            "combine_wall_us": 253.88598442077637
+          },
+          {
+            "dispatch_us": 394.27199959754944,
+            "combine_us": 486.1440062522888,
+            "dispatch_wall_us": 472.0499855466187,
+            "combine_wall_us": 591.7880043853074
+          },
+          {
+            "dispatch_us": 495.90399861335754,
+            "combine_us": 546.1120009422302,
+            "dispatch_wall_us": 579.1369767393917,
+            "combine_wall_us": 634.8669994622469
+          },
+          {
+            "dispatch_us": 666.271984577179,
+            "combine_us": 359.6479892730713,
+            "dispatch_wall_us": 745.5560262314975,
+            "combine_wall_us": 458.883005194366
+          },
+          {
+            "dispatch_us": 356.57599568367004,
+            "combine_us": 273.72801303863525,
+            "dispatch_wall_us": 444.6769889909774,
+            "combine_wall_us": 388.0200092680752
+          },
+          {
+            "dispatch_us": 411.45598888397217,
+            "combine_us": 571.9040036201477,
+            "dispatch_wall_us": 499.7420182917267,
+            "combine_wall_us": 668.916996801272
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 3,
+        "samples": [
+          {
+            "dispatch_us": 750.7839798927307,
+            "combine_us": 551.03999376297,
+            "dispatch_wall_us": 851.9740076735616,
+            "combine_wall_us": 653.8060260936618
+          },
+          {
+            "dispatch_us": 1172.767996788025,
+            "combine_us": 175.9359985589981,
+            "dispatch_wall_us": 1264.1710054595023,
+            "combine_wall_us": 294.4309962913394
+          },
+          {
+            "dispatch_us": 1072.8000402450562,
+            "combine_us": 378.7840008735657,
+            "dispatch_wall_us": 1152.8600007295609,
+            "combine_wall_us": 486.54398415237665
+          },
+          {
+            "dispatch_us": 507.7120065689087,
+            "combine_us": 135.26399433612823,
+            "dispatch_wall_us": 594.9050246272236,
+            "combine_wall_us": 229.41100178286433
+          },
+          {
+            "dispatch_us": 590.8480286598206,
+            "combine_us": 773.6960053443909,
+            "dispatch_wall_us": 668.9580040983856,
+            "combine_wall_us": 862.8340146970004
+          },
+          {
+            "dispatch_us": 233.60000550746918,
+            "combine_us": 543.39200258255,
+            "dispatch_wall_us": 320.41798112913966,
+            "combine_wall_us": 653.3539853990078
+          },
+          {
+            "dispatch_us": 831.0719728469849,
+            "combine_us": 405.1840007305145,
+            "dispatch_wall_us": 918.8620024360716,
+            "combine_wall_us": 533.468002686277
+          },
+          {
+            "dispatch_us": 224.60800409317017,
+            "combine_us": 176.09600722789764,
+            "dispatch_wall_us": 334.9269973114133,
+            "combine_wall_us": 280.84299992769957
+          },
+          {
+            "dispatch_us": 928.991973400116,
+            "combine_us": 594.0160155296326,
+            "dispatch_wall_us": 1010.0250074174255,
+            "combine_wall_us": 683.0060156062245
+          },
+          {
+            "dispatch_us": 289.08801078796387,
+            "combine_us": 273.21600914001465,
+            "dispatch_wall_us": 374.773982912302,
+            "combine_wall_us": 392.44399522431195
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 752.2879838943481,
+            "combine_us": 315.8720135688782,
+            "dispatch_wall_us": 841.3659816142172,
+            "combine_wall_us": 413.43699558638036
+          },
+          {
+            "dispatch_us": 913.6959910392761,
+            "combine_us": 152.0639955997467,
+            "dispatch_wall_us": 994.0910094883293,
+            "combine_wall_us": 249.11400396376848
+          },
+          {
+            "dispatch_us": 275.39199590682983,
+            "combine_us": 137.85600662231445,
+            "dispatch_wall_us": 353.4770221449435,
+            "combine_wall_us": 233.90102433040738
+          },
+          {
+            "dispatch_us": 678.3999800682068,
+            "combine_us": 934.0479969978333,
+            "dispatch_wall_us": 757.2410104330629,
+            "combine_wall_us": 1031.6249972674996
+          },
+          {
+            "dispatch_us": 492.67199635505676,
+            "combine_us": 314.7520124912262,
+            "dispatch_wall_us": 572.1650086343288,
+            "combine_wall_us": 431.7479906603694
+          },
+          {
+            "dispatch_us": 696.9280242919922,
+            "combine_us": 260.70401072502136,
+            "dispatch_wall_us": 776.1110027786344,
+            "combine_wall_us": 353.1280090101063
+          },
+          {
+            "dispatch_us": 477.85601019859314,
+            "combine_us": 732.8320145606995,
+            "dispatch_wall_us": 557.9529970418662,
+            "combine_wall_us": 850.6670128554106
+          },
+          {
+            "dispatch_us": 391.4240002632141,
+            "combine_us": 140.32000303268433,
+            "dispatch_wall_us": 471.2450027000159,
+            "combine_wall_us": 237.04901104792953
+          },
+          {
+            "dispatch_us": 561.5360140800476,
+            "combine_us": 333.6319923400879,
+            "dispatch_wall_us": 641.2090151570737,
+            "combine_wall_us": 429.79599675163627
+          },
+          {
+            "dispatch_us": 203.13599705696106,
+            "combine_us": 471.77600860595703,
+            "dispatch_wall_us": 283.55600079521537,
+            "combine_wall_us": 569.0050020348281
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 4,
+        "samples": [
+          {
+            "dispatch_us": 917.087972164154,
+            "combine_us": 802.2400140762329,
+            "dispatch_wall_us": 998.0940085370094,
+            "combine_wall_us": 900.1860162243247
+          },
+          {
+            "dispatch_us": 1012.287974357605,
+            "combine_us": 681.5680265426636,
+            "dispatch_wall_us": 1087.0090045500547,
+            "combine_wall_us": 773.5600229352713
+          },
+          {
+            "dispatch_us": 967.136025428772,
+            "combine_us": 924.9280095100403,
+            "dispatch_wall_us": 1026.6710014548153,
+            "combine_wall_us": 1016.4109990000725
+          },
+          {
+            "dispatch_us": 955.4880261421204,
+            "combine_us": 1071.4880228042603,
+            "dispatch_wall_us": 1033.1149969715625,
+            "combine_wall_us": 1172.036019852385
+          },
+          {
+            "dispatch_us": 705.024003982544,
+            "combine_us": 894.9440121650696,
+            "dispatch_wall_us": 772.3169983364642,
+            "combine_wall_us": 973.0450110509992
+          },
+          {
+            "dispatch_us": 1151.8399715423584,
+            "combine_us": 931.3600063323975,
+            "dispatch_wall_us": 1229.020010214299,
+            "combine_wall_us": 1012.6679844688624
+          },
+          {
+            "dispatch_us": 935.8400106430054,
+            "combine_us": 779.4880270957947,
+            "dispatch_wall_us": 1013.9009973499924,
+            "combine_wall_us": 862.7710049040616
+          },
+          {
+            "dispatch_us": 1451.1679410934448,
+            "combine_us": 1418.5919761657715,
+            "dispatch_wall_us": 1529.6069905161858,
+            "combine_wall_us": 1526.4590037986636
+          },
+          {
+            "dispatch_us": 1006.0800313949585,
+            "combine_us": 909.3120098114014,
+            "dispatch_wall_us": 1067.300996510312,
+            "combine_wall_us": 999.5529835578054
+          },
+          {
+            "dispatch_us": 1346.8159437179565,
+            "combine_us": 984.063982963562,
+            "dispatch_wall_us": 1429.7490124590695,
+            "combine_wall_us": 1083.0259998328984
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 275.9360074996948,
+            "combine_us": 152.3520052433014,
+            "dispatch_wall_us": 375.64701051451266,
+            "combine_wall_us": 278.91399804502726
+          },
+          {
+            "dispatch_us": 530.9439897537231,
+            "combine_us": 339.52000737190247,
+            "dispatch_wall_us": 620.6209945958108,
+            "combine_wall_us": 432.9550138209015
+          },
+          {
+            "dispatch_us": 579.7759890556335,
+            "combine_us": 469.11999583244324,
+            "dispatch_wall_us": 655.7719898410141,
+            "combine_wall_us": 560.0300210062414
+          },
+          {
+            "dispatch_us": 348.9919900894165,
+            "combine_us": 562.1439814567566,
+            "dispatch_wall_us": 424.0309935994446,
+            "combine_wall_us": 653.7039880640805
+          },
+          {
+            "dispatch_us": 452.92800664901733,
+            "combine_us": 135.5839967727661,
+            "dispatch_wall_us": 526.9759858492762,
+            "combine_wall_us": 227.5239967275411
+          },
+          {
+            "dispatch_us": 549.7599840164185,
+            "combine_us": 139.1039937734604,
+            "dispatch_wall_us": 624.6250122785568,
+            "combine_wall_us": 226.32000036537647
+          },
+          {
+            "dispatch_us": 440.38400053977966,
+            "combine_us": 622.8799819946289,
+            "dispatch_wall_us": 514.8350028321147,
+            "combine_wall_us": 713.9539811760187
+          },
+          {
+            "dispatch_us": 633.247971534729,
+            "combine_us": 181.5679967403412,
+            "dispatch_wall_us": 708.8890124578029,
+            "combine_wall_us": 271.4279980864376
+          },
+          {
+            "dispatch_us": 640.7359838485718,
+            "combine_us": 218.27200055122375,
+            "dispatch_wall_us": 715.6369974836707,
+            "combine_wall_us": 309.70500665716827
+          },
+          {
+            "dispatch_us": 610.0159883499146,
+            "combine_us": 149.85600113868713,
+            "dispatch_wall_us": 686.9079952593893,
+            "combine_wall_us": 241.00602604448795
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 5,
+        "samples": [
+          {
+            "dispatch_us": 850.2079844474792,
+            "combine_us": 591.1999940872192,
+            "dispatch_wall_us": 927.1960007026792,
+            "combine_wall_us": 683.6190004833043
+          },
+          {
+            "dispatch_us": 1358.944058418274,
+            "combine_us": 655.1039814949036,
+            "dispatch_wall_us": 1438.6569964699447,
+            "combine_wall_us": 746.3810034096241
+          },
+          {
+            "dispatch_us": 1599.1359949111938,
+            "combine_us": 537.7920269966125,
+            "dispatch_wall_us": 1673.3380034565926,
+            "combine_wall_us": 636.5669833030552
+          },
+          {
+            "dispatch_us": 1234.1439723968506,
+            "combine_us": 639.2639875411987,
+            "dispatch_wall_us": 1309.9359930492938,
+            "combine_wall_us": 743.7479798682034
+          },
+          {
+            "dispatch_us": 1119.4560527801514,
+            "combine_us": 1079.360008239746,
+            "dispatch_wall_us": 1194.4099969696254,
+            "combine_wall_us": 1162.912987638265
+          },
+          {
+            "dispatch_us": 875.7759928703308,
+            "combine_us": 898.8479971885681,
+            "dispatch_wall_us": 947.1519733779132,
+            "combine_wall_us": 990.1029989123344
+          },
+          {
+            "dispatch_us": 902.5279879570007,
+            "combine_us": 575.1039981842041,
+            "dispatch_wall_us": 986.4630119409412,
+            "combine_wall_us": 665.4940079897642
+          },
+          {
+            "dispatch_us": 917.0240163803101,
+            "combine_us": 724.4160175323486,
+            "dispatch_wall_us": 990.7030034810305,
+            "combine_wall_us": 815.5609830282629
+          },
+          {
+            "dispatch_us": 1252.0960569381714,
+            "combine_us": 1025.4080295562744,
+            "dispatch_wall_us": 1328.2920117489994,
+            "combine_wall_us": 1113.8630216009915
+          },
+          {
+            "dispatch_us": 846.9120264053345,
+            "combine_us": 809.2160224914551,
+            "dispatch_wall_us": 922.1030049957335,
+            "combine_wall_us": 901.3400122057647
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 633.1200003623962,
+            "combine_us": 796.5760231018066,
+            "dispatch_wall_us": 728.1129946932197,
+            "combine_wall_us": 887.762987986207
+          },
+          {
+            "dispatch_us": 545.0239777565002,
+            "combine_us": 680.0320148468018,
+            "dispatch_wall_us": 620.188016910106,
+            "combine_wall_us": 766.0670089535415
+          },
+          {
+            "dispatch_us": 528.4159779548645,
+            "combine_us": 485.9839975833893,
+            "dispatch_wall_us": 599.5940009597689,
+            "combine_wall_us": 572.2799978684634
+          },
+          {
+            "dispatch_us": 742.2400116920471,
+            "combine_us": 131.16799294948578,
+            "dispatch_wall_us": 812.6340107992291,
+            "combine_wall_us": 233.67800167761743
+          },
+          {
+            "dispatch_us": 402.8800129890442,
+            "combine_us": 267.87200570106506,
+            "dispatch_wall_us": 474.0990116260946,
+            "combine_wall_us": 352.0839964039624
+          },
+          {
+            "dispatch_us": 558.6240291595459,
+            "combine_us": 1096.7680215835571,
+            "dispatch_wall_us": 629.3159967754036,
+            "combine_wall_us": 1181.5979960374534
+          },
+          {
+            "dispatch_us": 456.7039906978607,
+            "combine_us": 308.28800797462463,
+            "dispatch_wall_us": 524.9959940556437,
+            "combine_wall_us": 393.4699925594032
+          },
+          {
+            "dispatch_us": 335.4879915714264,
+            "combine_us": 655.0080180168152,
+            "dispatch_wall_us": 405.75501043349504,
+            "combine_wall_us": 741.1840197164565
+          },
+          {
+            "dispatch_us": 512.6720070838928,
+            "combine_us": 720.0639843940735,
+            "dispatch_wall_us": 585.5199997313321,
+            "combine_wall_us": 806.6349837463349
+          },
+          {
+            "dispatch_us": 354.68798875808716,
+            "combine_us": 348.06400537490845,
+            "dispatch_wall_us": 471.5939867310226,
+            "combine_wall_us": 432.78399971313775
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 6,
+        "samples": [
+          {
+            "dispatch_us": 708.7680101394653,
+            "combine_us": 849.888026714325,
+            "dispatch_wall_us": 779.8250007908791,
+            "combine_wall_us": 930.0749807152897
+          },
+          {
+            "dispatch_us": 1328.1279802322388,
+            "combine_us": 808.7360262870789,
+            "dispatch_wall_us": 1399.0779989399016,
+            "combine_wall_us": 894.2059939727187
+          },
+          {
+            "dispatch_us": 888.0640268325806,
+            "combine_us": 656.4159989356995,
+            "dispatch_wall_us": 972.5620038807392,
+            "combine_wall_us": 740.1850016321987
+          },
+          {
+            "dispatch_us": 1100.4159450531006,
+            "combine_us": 901.2799859046936,
+            "dispatch_wall_us": 1171.6450098901987,
+            "combine_wall_us": 986.7959888651967
+          },
+          {
+            "dispatch_us": 966.9119715690613,
+            "combine_us": 993.7599897384644,
+            "dispatch_wall_us": 1036.5629859734327,
+            "combine_wall_us": 1078.8209910970181
+          },
+          {
+            "dispatch_us": 1316.1920309066772,
+            "combine_us": 718.1439995765686,
+            "dispatch_wall_us": 1387.2790150344372,
+            "combine_wall_us": 797.3100000526756
+          },
+          {
+            "dispatch_us": 868.9919710159302,
+            "combine_us": 1098.1760025024414,
+            "dispatch_wall_us": 939.138000831008,
+            "combine_wall_us": 1178.4789967350662
+          },
+          {
+            "dispatch_us": 1114.016056060791,
+            "combine_us": 963.5840058326721,
+            "dispatch_wall_us": 1189.8329830728471,
+            "combine_wall_us": 1048.8360130693763
+          },
+          {
+            "dispatch_us": 1040.2560234069824,
+            "combine_us": 712.8000259399414,
+            "dispatch_wall_us": 1109.2819913756102,
+            "combine_wall_us": 798.6950222402811
+          },
+          {
+            "dispatch_us": 1047.1999645233154,
+            "combine_us": 579.6160101890564,
+            "dispatch_wall_us": 1116.3800081703812,
+            "combine_wall_us": 666.0440121777356
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      }
+    ],
+    [
+      {
+        "rows_per_active_client": 128,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 698.5920071601868,
+            "combine_us": 452.5119960308075,
+            "dispatch_wall_us": 801.9939996302128,
+            "combine_wall_us": 546.6690054163337
+          },
+          {
+            "dispatch_us": 393.7920033931732,
+            "combine_us": 904.5439958572388,
+            "dispatch_wall_us": 475.507986266166,
+            "combine_wall_us": 989.0010114759207
+          },
+          {
+            "dispatch_us": 626.1439919471741,
+            "combine_us": 751.7120242118835,
+            "dispatch_wall_us": 695.9949969314039,
+            "combine_wall_us": 834.8319970536977
+          },
+          {
+            "dispatch_us": 191.42399728298187,
+            "combine_us": 742.1119809150696,
+            "dispatch_wall_us": 261.20999245904386,
+            "combine_wall_us": 821.4800036512315
+          },
+          {
+            "dispatch_us": 395.4559862613678,
+            "combine_us": 417.5359904766083,
+            "dispatch_wall_us": 465.12100379914045,
+            "combine_wall_us": 499.94399887509644
+          },
+          {
+            "dispatch_us": 455.9679925441742,
+            "combine_us": 770.0799703598022,
+            "dispatch_wall_us": 526.360992807895,
+            "combine_wall_us": 853.4840017091483
+          },
+          {
+            "dispatch_us": 852.4159789085388,
+            "combine_us": 131.6480040550232,
+            "dispatch_wall_us": 920.8190022036433,
+            "combine_wall_us": 213.90101755969226
+          },
+          {
+            "dispatch_us": 474.7839868068695,
+            "combine_us": 436.0319972038269,
+            "dispatch_wall_us": 545.0099997688085,
+            "combine_wall_us": 517.6039994694293
+          },
+          {
+            "dispatch_us": 663.2639765739441,
+            "combine_us": 594.048023223877,
+            "dispatch_wall_us": 733.8969735428691,
+            "combine_wall_us": 679.5230146963149
+          },
+          {
+            "dispatch_us": 492.2240078449249,
+            "combine_us": 453.247994184494,
+            "dispatch_wall_us": 562.607980100438,
+            "combine_wall_us": 537.0090075302869
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      },
+      {
+        "rows_per_active_client": 2048,
+        "active": false,
+        "rank": 7,
+        "samples": [
+          {
+            "dispatch_us": 1506.9760084152222,
+            "combine_us": 1202.6879787445068,
+            "dispatch_wall_us": 1577.446993906051,
+            "combine_wall_us": 1286.5700118709356
+          },
+          {
+            "dispatch_us": 1491.968035697937,
+            "combine_us": 680.0000071525574,
+            "dispatch_wall_us": 1558.0070030409843,
+            "combine_wall_us": 773.7370033282787
+          },
+          {
+            "dispatch_us": 1360.6079816818237,
+            "combine_us": 925.0879883766174,
+            "dispatch_wall_us": 1433.4750012494624,
+            "combine_wall_us": 1016.0460078623146
+          },
+          {
+            "dispatch_us": 949.6319890022278,
+            "combine_us": 862.7200126647949,
+            "dispatch_wall_us": 1028.7199984304607,
+            "combine_wall_us": 937.3190114274621
+          },
+          {
+            "dispatch_us": 1000.4160404205322,
+            "combine_us": 1203.2959461212158,
+            "dispatch_wall_us": 1072.5950123742223,
+            "combine_wall_us": 1289.8230052087456
+          },
+          {
+            "dispatch_us": 1151.0080099105835,
+            "combine_us": 1029.312014579773,
+            "dispatch_wall_us": 1229.1249877307564,
+            "combine_wall_us": 1176.67400627397
+          },
+          {
+            "dispatch_us": 1395.9039449691772,
+            "combine_us": 990.6880259513855,
+            "dispatch_wall_us": 1468.5060014016926,
+            "combine_wall_us": 1087.2309794649482
+          },
+          {
+            "dispatch_us": 1179.9999475479126,
+            "combine_us": 680.895984172821,
+            "dispatch_wall_us": 1232.5889838393778,
+            "combine_wall_us": 750.6440160796046
+          },
+          {
+            "dispatch_us": 1483.5840463638306,
+            "combine_us": 897.3119854927063,
+            "dispatch_wall_us": 1557.4110148008913,
+            "combine_wall_us": 988.8770000543445
+          },
+          {
+            "dispatch_us": 866.5919899940491,
+            "combine_us": 758.1120133399963,
+            "dispatch_wall_us": 929.0199959650636,
+            "combine_wall_us": 830.2739879582077
+          }
+        ],
+        "identity_passed": true,
+        "deepep_module": "/home/alayadb/mengze/expertplex-b300/deps/deepep-v1-package/deep_ep/__init__.py",
+        "deepep_version": null,
+        "nvlink_buffer_bytes": 293766784,
+        "rdma_buffer_bytes": 0,
+        "deepep_source_revision": "9af0e0d0e74f3577af1979c9b9e1ac2cad0104ee"
+      }
+    ]
+  ]
+}

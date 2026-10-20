@@ -1,0 +1,927 @@
+{
+  "scope": "Native BF16 expert sharing ablations for paper section 7.3.\n\nExclusive, priority streams and Green Context use the same weights and routed\ninputs. A separate GPU publishes ready flags 10 us apart; CUDA stream memory\noperations wait without reserving an E-side polling SM. Response times are\npublication-to-completion-ack upper bounds on that single control GPU's clock.\nThis is a single-E compute microbenchmark, not serving goodput. MPS requires a\nseparate multi-process experiment and is not represented by priority streams.\n",
+  "settings": {
+    "device": 1,
+    "control_device": 0,
+    "hidden": 6144,
+    "intermediate": 2560,
+    "experts": 40,
+    "world": 4,
+    "top_k": 8,
+    "prefill_rows": 8192,
+    "decode_rows": 128,
+    "delay_us": 10,
+    "iterations": 10,
+    "modes": [
+      "exclusive",
+      "priority",
+      "green"
+    ],
+    "green_divisions": [
+      "112:32",
+      "96:48",
+      "80:64",
+      "64:80",
+      "32:112"
+    ],
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/sharing-native-01.json"
+  },
+  "gpu": "NVIDIA B300 SXM6 AC",
+  "expert_rows": [
+    [
+      434,
+      412,
+      446,
+      390,
+      406,
+      406,
+      419,
+      377,
+      438,
+      422,
+      403,
+      407,
+      436,
+      394,
+      384,
+      410,
+      362,
+      438,
+      417,
+      419,
+      365,
+      408,
+      391,
+      402,
+      418,
+      442,
+      382,
+      430,
+      398,
+      408,
+      404,
+      399,
+      423,
+      388,
+      414,
+      397,
+      412,
+      420,
+      390,
+      406
+    ],
+    [
+      3,
+      7,
+      8,
+      3,
+      12,
+      8,
+      15,
+      8,
+      8,
+      6,
+      3,
+      5,
+      3,
+      3,
+      7,
+      7,
+      4,
+      6,
+      2,
+      5,
+      6,
+      7,
+      3,
+      8,
+      5,
+      5,
+      6,
+      7,
+      1,
+      8,
+      9,
+      5,
+      7,
+      5,
+      9,
+      6,
+      4,
+      11,
+      12,
+      6
+    ]
+  ],
+  "cases": [
+    {
+      "mode": "exclusive",
+      "requested_sms": null,
+      "actual_sms": [
+        148,
+        148
+      ],
+      "response_upper_bound_us": [
+        1653.248,
+        2310.3360000000002
+      ],
+      "slowdown_vs_full_gpu_isolated": [
+        0.9963358660855479,
+        3.4520547945205484
+      ],
+      "samples": [
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1674.016,
+            2335.648
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1671.36,
+            2325.792
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1630.432,
+            2290.592
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1646.176,
+            2301.792
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1649.408,
+            2307.296
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1648.192,
+            2304.992
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1677.248,
+            2334.048
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1657.088,
+            2313.376
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            1657.248,
+            2314.272
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1646.848,
+            2305.28
+          ]
+        }
+      ],
+      "finite_outputs": [
+        true,
+        true
+      ]
+    },
+    {
+      "mode": "priority",
+      "requested_sms": null,
+      "actual_sms": [
+        148,
+        148
+      ],
+      "response_upper_bound_us": [
+        1986.592,
+        2174.5919999999996
+      ],
+      "slowdown_vs_full_gpu_isolated": [
+        1.19722682917422,
+        3.24922900380119
+      ],
+      "samples": [
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1986.272,
+            2173.632
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1994.976,
+            2186.016
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            1986.912,
+            2174.176
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1974.912,
+            2165.888
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2039.616,
+            2208.832
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1977.6,
+            2168.512
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1989.888,
+            2182.336
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            1985.184,
+            2170.976
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1989.856,
+            2180.608
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1983.968,
+            2175.008
+          ]
+        }
+      ],
+      "finite_outputs": [
+        true,
+        true
+      ]
+    },
+    {
+      "mode": "green",
+      "requested_sms": [
+        112,
+        32
+      ],
+      "actual_sms": [
+        112,
+        32
+      ],
+      "response_upper_bound_us": [
+        2332.432,
+        2215.152
+      ],
+      "slowdown_vs_full_gpu_isolated": [
+        1.4056485517028579,
+        3.3098328910564443
+      ],
+      "samples": [
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2351.776,
+            2234.656
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2310.208,
+            2199.84
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2277.152,
+            2173.504
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2357.6,
+            2247.296
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2309.152,
+            2193.664
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2356.512,
+            2229.44
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2291.936,
+            2186.464
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2313.088,
+            2200.864
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2419.04,
+            2298.656
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2365.344,
+            2254.912
+          ]
+        }
+      ],
+      "finite_outputs": [
+        true,
+        true
+      ]
+    },
+    {
+      "mode": "green",
+      "requested_sms": [
+        96,
+        48
+      ],
+      "actual_sms": [
+        96,
+        48
+      ],
+      "response_upper_bound_us": [
+        2725.792,
+        1607.2640000000001
+      ],
+      "slowdown_vs_full_gpu_isolated": [
+        1.6427083735102403,
+        2.401539601711731
+      ],
+      "samples": [
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2723.424,
+            1602.784
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2724.256,
+            1603.616
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2730.976,
+            1608.96
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2724.832,
+            1610.592
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2728.96,
+            1613.504
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2712.128,
+            1596.96
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2727.392,
+            1616.608
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2726.752,
+            1607.04
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2720.608,
+            1605.824
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2738.56,
+            1607.488
+          ]
+        }
+      ],
+      "finite_outputs": [
+        true,
+        true
+      ]
+    },
+    {
+      "mode": "green",
+      "requested_sms": [
+        80,
+        64
+      ],
+      "actual_sms": [
+        80,
+        64
+      ],
+      "response_upper_bound_us": [
+        3121.8239999999996,
+        1212.9279999999999
+      ],
+      "slowdown_vs_full_gpu_isolated": [
+        1.8813784857484475,
+        1.8123311578091752
+      ],
+      "samples": [
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3140.928,
+            1223.488
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3145.632,
+            1226.368
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            3080.672,
+            1200.096
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3114.048,
+            1213.92
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3143.36,
+            1223.424
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3071.328,
+            1206.848
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3074.048,
+            1202.72
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3139.328,
+            1213.152
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3110.656,
+            1210.24
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3129.6,
+            1212.704
+          ]
+        }
+      ],
+      "finite_outputs": [
+        true,
+        true
+      ]
+    },
+    {
+      "mode": "green",
+      "requested_sms": [
+        64,
+        80
+      ],
+      "actual_sms": [
+        64,
+        80
+      ],
+      "response_upper_bound_us": [
+        3788.352,
+        979.136
+      ],
+      "slowdown_vs_full_gpu_isolated": [
+        2.2830639873490957,
+        1.4630041358865857
+      ],
+      "samples": [
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3790.112,
+            971.68
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            3810.112,
+            995.168
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3792.096,
+            981.408
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3788.16,
+            984.672
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3778.784,
+            967.936
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3789.696,
+            981.824
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3783.072,
+            980.256
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3771.2,
+            961.696
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3781.312,
+            974.72
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            3788.544,
+            978.016
+          ]
+        }
+      ],
+      "finite_outputs": [
+        true,
+        true
+      ]
+    },
+    {
+      "mode": "green",
+      "requested_sms": [
+        32,
+        112
+      ],
+      "actual_sms": [
+        32,
+        112
+      ],
+      "response_upper_bound_us": [
+        7418.624,
+        808.24
+      ],
+      "slowdown_vs_full_gpu_isolated": [
+        4.470860492922436,
+        1.2076549762126754
+      ],
+      "samples": [
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            7413.728,
+            805.536
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            7465.088,
+            808.672
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            7441.472,
+            808.8
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            7429.12,
+            808.96
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            7419.808,
+            805.248
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            7399.04,
+            805.12
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            7417.056,
+            812.512
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            7417.44,
+            808.256
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            7459.648,
+            805.92
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            7412.672,
+            808.224
+          ]
+        }
+      ],
+      "finite_outputs": [
+        true,
+        true
+      ]
+    }
+  ],
+  "isolated_samples": [
+    [
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          1649.504,
+          12.0
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          1671.008,
+          11.904
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          1661.504,
+          8.736
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          1645.504,
+          11.904
+        ]
+      },
+      {
+        "release_gap_us": 10.048,
+        "response_upper_bound_us": [
+          1655.872,
+          11.936
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          1659.808,
+          12.064
+        ]
+      },
+      {
+        "release_gap_us": 10.048,
+        "response_upper_bound_us": [
+          1659.808,
+          11.936
+        ]
+      },
+      {
+        "release_gap_us": 10.048,
+        "response_upper_bound_us": [
+          1660.576,
+          11.904
+        ]
+      },
+      {
+        "release_gap_us": 10.048,
+        "response_upper_bound_us": [
+          1647.744,
+          12.032
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          1658.848,
+          11.872
+        ]
+      }
+    ],
+    [
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          13.6,
+          668.256
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          13.6,
+          669.952
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          13.6,
+          668.576
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          13.6,
+          670.208
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          13.664,
+          669.952
+        ]
+      },
+      {
+        "release_gap_us": 10.048,
+        "response_upper_bound_us": [
+          13.568,
+          666.88
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          13.632,
+          668.448
+        ]
+      },
+      {
+        "release_gap_us": 10.048,
+        "response_upper_bound_us": [
+          13.664,
+          668.512
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          13.632,
+          670.016
+        ]
+      },
+      {
+        "release_gap_us": 10.016,
+        "response_upper_bound_us": [
+          13.6,
+          670.368
+        ]
+      }
+    ]
+  ],
+  "isolated_response_upper_bound_us": [
+    1659.328,
+    669.264
+  ]
+}

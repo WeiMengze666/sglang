@@ -1,0 +1,425 @@
+{
+  "schema_version": 1,
+  "native_source_sha256": "f49d82212574a6042859d1bbe18b8d3f8b0a443b94563ffa2b42a5fa4a90d718",
+  "kernel": "sm100",
+  "scope": "native CUDA IPC primitive correctness/progress smoke; not full-model accuracy or goodput",
+  "started_at_utc": "2026-10-14T18:54:03.913549+00:00",
+  "geometry": {
+    "hidden": 2048,
+    "intermediate": 768,
+    "layers": 2,
+    "experts": 4,
+    "top_k": 2,
+    "capacity": 129,
+    "seed": 20261013,
+    "weight_std": 0.02,
+    "packed": true
+  },
+  "reference": "CPU Torch FP32 gate/up and down; BF16 activation, expert output and final output",
+  "latency_scope": "host dispatch/combine, final BF16 cast and stream completion; validation D2H copy excluded; smoke only",
+  "tolerances": {
+    "absolute": 0.01,
+    "relative": 0.03,
+    "relative_l2": 0.03
+  },
+  "cases": [
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 128,
+      "layer": 0,
+      "epoch": 1,
+      "padding_routes": 0,
+      "wall_latency_ms": 45.42078499798663,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 0.0006185494712553918,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 7.62939453125e-06,
+        "relative_l2_error": 4.4551444489115966e-07,
+        "passed": true,
+        "exact_elements_fraction": 0.9999809265136719
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 1,
+      "layer": 0,
+      "epoch": 1,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.34968499676324427,
+      "max_absolute_error": 0.0001220703125,
+      "relative_l2_error": 6.746769940946251e-05,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 128,
+      "layer": 1,
+      "epoch": 2,
+      "padding_routes": 2,
+      "wall_latency_ms": 0.4999210068490356,
+      "max_absolute_error": 0.001953125,
+      "relative_l2_error": 0.0005516098462976515,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 9.5367431640625e-07,
+        "relative_l2_error": 4.086601634867293e-08,
+        "passed": true,
+        "exact_elements_fraction": 0.9999923706054688
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 2,
+      "layer": 1,
+      "epoch": 2,
+      "padding_routes": 2,
+      "wall_latency_ms": 0.25446401559747756,
+      "max_absolute_error": 0.000244140625,
+      "relative_l2_error": 0.000125559265143238,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 128,
+      "layer": 0,
+      "epoch": 3,
+      "padding_routes": 256,
+      "wall_latency_ms": 0.16629599849693477,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 3,
+      "layer": 0,
+      "epoch": 3,
+      "padding_routes": 6,
+      "wall_latency_ms": 0.14963498688302934,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 128,
+      "layer": 1,
+      "epoch": 4,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.33210599212907255,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 0.0005749780684709549,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 1.52587890625e-05,
+        "relative_l2_error": 7.031719064798381e-07,
+        "passed": true,
+        "exact_elements_fraction": 0.999969482421875
+      }
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 4,
+      "layer": 1,
+      "epoch": 4,
+      "padding_routes": 0,
+      "wall_latency_ms": 0.23912498727440834,
+      "max_absolute_error": 0.00048828125,
+      "relative_l2_error": 0.00017316086450591683,
+      "passed": true,
+      "native_deepgemm_reference": {
+        "max_absolute_error": 0.0,
+        "relative_l2_error": 0.0,
+        "passed": true,
+        "exact_elements_fraction": 1.0
+      }
+    }
+  ],
+  "software": {
+    "pytorch": "2.14.1+cu130",
+    "cuda": "13.0"
+  },
+  "hardware": [
+    {
+      "device": 0,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 1,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 2,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 3,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 4,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 5,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 6,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 7,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    }
+  ],
+  "executor": {
+    "trace_capacity_per_cta": 0,
+    "backend": "sm100",
+    "ctas": 148,
+    "cluster_size": 2,
+    "operation_templates": "gate_up,activation,down",
+    "loading_stages": 8,
+    "threads_per_cta": 256,
+    "registers_per_thread": 80,
+    "local_bytes_per_thread": 0,
+    "dynamic_shared_bytes_per_cta": 231424,
+    "static_shared_bytes_per_cta": 0,
+    "hidden": 2048,
+    "intermediate": 768,
+    "prefill_tile_rows": 128,
+    "decode_tile_rows": 32
+  },
+  "zero_token_fast_path": {
+    "passed": true,
+    "ipc_dispatches": 0
+  },
+  "concurrent_phases": [
+    {
+      "phase": "prefill",
+      "wall_latency_ms": 1.804041996365413,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 0.0006040754378773272,
+      "passed": true
+    },
+    {
+      "phase": "decode",
+      "wall_latency_ms": 2.419527998426929,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 0.00031288835452869534,
+      "passed": true
+    }
+  ],
+  "cuda_graph_replays": [
+    {
+      "replay": 0,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 0.0005255937576293945,
+      "passed": true
+    },
+    {
+      "replay": 1,
+      "max_absolute_error": 0.00048828125,
+      "relative_l2_error": 0.0005614271503873169,
+      "passed": true
+    },
+    {
+      "replay": 2,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 3,
+      "max_absolute_error": 0.00048828125,
+      "relative_l2_error": 0.00039078842382878065,
+      "passed": true
+    },
+    {
+      "replay": 4,
+      "max_absolute_error": 0.00048828125,
+      "relative_l2_error": 0.000971723347902298,
+      "passed": true
+    },
+    {
+      "replay": 5,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 6,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 0.0007173879421316087,
+      "passed": true
+    },
+    {
+      "replay": 7,
+      "max_absolute_error": 0.00048828125,
+      "relative_l2_error": 0.0004199314280413091,
+      "passed": true
+    },
+    {
+      "replay": 8,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 9,
+      "max_absolute_error": 0.000732421875,
+      "relative_l2_error": 0.0005398067296482623,
+      "passed": true
+    },
+    {
+      "replay": 10,
+      "max_absolute_error": 0.00048828125,
+      "relative_l2_error": 0.0005634687840938568,
+      "passed": true
+    },
+    {
+      "replay": 11,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 12,
+      "max_absolute_error": 0.00048828125,
+      "relative_l2_error": 0.0004582902474794537,
+      "passed": true
+    },
+    {
+      "replay": 13,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 0.00048670911928638816,
+      "passed": true
+    },
+    {
+      "replay": 14,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 15,
+      "max_absolute_error": 0.00048828125,
+      "relative_l2_error": 0.00041756656719371676,
+      "passed": true
+    },
+    {
+      "replay": 16,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 0.00042586319614201784,
+      "passed": true
+    },
+    {
+      "replay": 17,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 18,
+      "max_absolute_error": 0.0009765625,
+      "relative_l2_error": 0.0005807490088045597,
+      "passed": true
+    },
+    {
+      "replay": 19,
+      "max_absolute_error": 0.00048828125,
+      "relative_l2_error": 0.0004365717468317598,
+      "passed": true
+    }
+  ],
+  "timeout": {
+    "passed": true,
+    "configured_timeout_ms": 100,
+    "wall_latency_ms": 100.58603598736227,
+    "slot_reused": false,
+    "fresh_owner_allocation": true
+  },
+  "status": "passed",
+  "finished_at_utc": "2026-10-14T18:55:19.650048+00:00"
+}

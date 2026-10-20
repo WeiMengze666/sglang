@@ -1,0 +1,231 @@
+{
+  "scope": "Compare explicitly selected serving experiments with provenance checks.\n\nOutputs raw-derived JSON/CSV and publication-friendly PDF/SVG figures. Synthetic\nweights remain labeled on every figure. Maximum feasible tested rate is reported\nwithout interpolating the boundary or treating it as trained-model acceptance.\n",
+  "common_conditions": {
+    "model_path": "synthetic-480b",
+    "tokenizer_path": "coder-tokenizer-fixed",
+    "weight_mode": "synthetic",
+    "dataset_path": "sharegpt-24576.jsonl",
+    "requests": 64,
+    "seed": 42,
+    "sequence_cap": 24576,
+    "decode_kv_tokens": 196608,
+    "attention_backend": "triton",
+    "ttft_slo_ms": 1000.0,
+    "tpot_slo_ms": 50.0,
+    "canonical_seed": "1234"
+  },
+  "ordered_input_lengths_sha256": "74dbfa7f7f4b88394c0b104f3daa5355dc6521045d65400678cc3ada65ab6f89",
+  "runs": [
+    {
+      "path": "full480-canonical-expertplex-finalpilot-01",
+      "variant": "full480-canonical-expertplex-finalpilot-01",
+      "maximum_feasible_tested_rps": 0.75,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "8eaf320d205863c8d3a5d80d8ae289ad37256831fe3f4d42319654c982ed0079",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "9e9409ef0da46300c552885bc57fdad578833a83949ebc4bc3d41c774d462446",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "3b44048d0d26a500450f26a99b23fb952023254b42a3f9d63391a3712e24b6d5",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "6e0d44676c61cfcbc813c2e7f574f4f92d2d976100e41d291bdbec332965909b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "e7be6909bfb0bbb1f5002bddbaccf06a6604a30168e0fcd064719b747067101e",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "b0e97c671590ccb75b6758fdf442dc106140bc56d00991f872495d8a2a6cca98",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "3bf10a42c1f52fd5e09af0234d7206ade510d77f1a68a4829b0efc902cdbdbc5",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "8257406126fb6ec5139043e53d1098573ad3d18408eda8b0a45305b87ec75be7",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "25b44c49364f26b77eacf3d01943e45b35c1909afc9747a56c8be26d4448b824",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "7b4f9e543942e224ebdea56773e8786884635d3594ede6ff9077cfff626b1467"
+      },
+      "input_artifact_sha256": {
+        "sharegpt-24576.jsonl": "3f5f1e142f38891f6bff53523c53646add65b15d3f4342796e412bbd1484b33d",
+        "config.json": "5a6692a672438b49c5b8b36bcd3de4015261d984bf55e2c352f9ef89d7170091",
+        "tokenizer.json": "19564a48c4f71a2a1b937cce34c737a1e662b171c5f5d7edf641a15cd896f07d",
+        "node.json": "8a4984be9b68d47c80f36e336257656ec8dbd80d11d77a77f70e92ccb5c4409b"
+      },
+      "runtime_controls": {
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": 1234,
+        "SGLANG_EXPERTPLEX_PIPELINED_STORES": 1
+      }
+    },
+    {
+      "path": "full480-canonical-pdmux-budget8192-tune-01",
+      "variant": "full480-canonical-pdmux-budget8192-tune-01",
+      "maximum_feasible_tested_rps": 1.25,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "8eaf320d205863c8d3a5d80d8ae289ad37256831fe3f4d42319654c982ed0079",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "9e9409ef0da46300c552885bc57fdad578833a83949ebc4bc3d41c774d462446",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "3b44048d0d26a500450f26a99b23fb952023254b42a3f9d63391a3712e24b6d5",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "6e0d44676c61cfcbc813c2e7f574f4f92d2d976100e41d291bdbec332965909b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "e7be6909bfb0bbb1f5002bddbaccf06a6604a30168e0fcd064719b747067101e",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "b0e97c671590ccb75b6758fdf442dc106140bc56d00991f872495d8a2a6cca98",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "3bf10a42c1f52fd5e09af0234d7206ade510d77f1a68a4829b0efc902cdbdbc5",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "8257406126fb6ec5139043e53d1098573ad3d18408eda8b0a45305b87ec75be7",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "25b44c49364f26b77eacf3d01943e45b35c1909afc9747a56c8be26d4448b824",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "7b4f9e543942e224ebdea56773e8786884635d3594ede6ff9077cfff626b1467"
+      },
+      "input_artifact_sha256": {
+        "sharegpt-24576.jsonl": "3f5f1e142f38891f6bff53523c53646add65b15d3f4342796e412bbd1484b33d",
+        "config.json": "5a6692a672438b49c5b8b36bcd3de4015261d984bf55e2c352f9ef89d7170091",
+        "tokenizer.json": "19564a48c4f71a2a1b937cce34c737a1e662b171c5f5d7edf641a15cd896f07d",
+        "pdmux.yaml": "cbb118ef65494f1df5bb39576648d8f237a8145df2505dcbea05ad8d5a2c3dcd"
+      },
+      "runtime_controls": {
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": 1234
+      }
+    }
+  ],
+  "rows": [
+    {
+      "variant": "full480-canonical-expertplex-finalpilot-01",
+      "experiment": "full480-canonical-expertplex-finalpilot-01",
+      "request_rate": 0.75,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 64,
+      "joint_attainment": 1.0,
+      "joint_wilson95": [
+        0.9433759402071974,
+        0.9999999999999999
+      ],
+      "p90_ttft_ms_completed": 317.0692405139562,
+      "p90_tpot_ms_completed": 44.14768345575699,
+      "output_tokens_per_second": 149.3388033754863,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "full480-canonical-expertplex-finalpilot-01",
+      "experiment": "full480-canonical-expertplex-finalpilot-01",
+      "request_rate": 1.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 56,
+      "joint_attainment": 0.875,
+      "joint_wilson95": [
+        0.772254381788704,
+        0.9352775733666943
+      ],
+      "p90_ttft_ms_completed": 320.84140180959366,
+      "p90_tpot_ms_completed": 50.35684914482078,
+      "output_tokens_per_second": 177.01747880168156,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-expertplex-finalpilot-01",
+      "experiment": "full480-canonical-expertplex-finalpilot-01",
+      "request_rate": 1.25,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 39,
+      "joint_attainment": 0.609375,
+      "joint_wilson95": [
+        0.486919178802728,
+        0.7194443081175965
+      ],
+      "p90_ttft_ms_completed": 341.17723870440386,
+      "p90_tpot_ms_completed": 56.39169242108437,
+      "output_tokens_per_second": 185.03377171027958,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-expertplex-finalpilot-01",
+      "experiment": "full480-canonical-expertplex-finalpilot-01",
+      "request_rate": 1.5,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 25,
+      "joint_attainment": 0.390625,
+      "joint_wilson95": [
+        0.2805556918824035,
+        0.513080821197272
+      ],
+      "p90_ttft_ms_completed": 388.38033269566955,
+      "p90_tpot_ms_completed": 60.39933066070799,
+      "output_tokens_per_second": 199.96474746808147,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "full480-canonical-pdmux-budget8192-tune-01",
+      "experiment": "full480-canonical-pdmux-budget8192-tune-01",
+      "request_rate": 0.75,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 64,
+      "joint_attainment": 1.0,
+      "joint_wilson95": [
+        0.9433759402071974,
+        0.9999999999999999
+      ],
+      "p90_ttft_ms_completed": 441.4665821997915,
+      "p90_tpot_ms_completed": 35.10962347231922,
+      "output_tokens_per_second": 163.47012933994566,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "full480-canonical-pdmux-budget8192-tune-01",
+      "experiment": "full480-canonical-pdmux-budget8192-tune-01",
+      "request_rate": 1.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 63,
+      "joint_attainment": 0.984375,
+      "joint_wilson95": [
+        0.9166589839990601,
+        0.9972364580766623
+      ],
+      "p90_ttft_ms_completed": 479.97093789163046,
+      "p90_tpot_ms_completed": 38.70878914069842,
+      "output_tokens_per_second": 196.74337208735355,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "full480-canonical-pdmux-budget8192-tune-01",
+      "experiment": "full480-canonical-pdmux-budget8192-tune-01",
+      "request_rate": 1.25,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 60,
+      "joint_attainment": 0.9375,
+      "joint_wilson95": [
+        0.8500251490779165,
+        0.9754287986033814
+      ],
+      "p90_ttft_ms_completed": 590.2569306985242,
+      "p90_tpot_ms_completed": 44.69273806200097,
+      "output_tokens_per_second": 223.40777509913767,
+      "meets_p90_joint_slo": true
+    }
+  ],
+  "uncertainty_note": "Wilson intervals describe finite-request attainment, not uncertainty in the arrival-rate boundary; repeated Poisson seeds remain necessary."
+}

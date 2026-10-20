@@ -1,0 +1,348 @@
+{
+  "schema_version": 1,
+  "scope": "native CUDA IPC primitive correctness/progress smoke; not full-model accuracy or goodput",
+  "started_at_utc": "2026-10-14T16:06:23.829393+00:00",
+  "geometry": {
+    "hidden": 64,
+    "intermediate": 64,
+    "layers": 2,
+    "experts": 4,
+    "top_k": 2,
+    "capacity": 64,
+    "seed": 20261013
+  },
+  "reference": "CPU Torch FP32 gate/up and down; BF16 activation, expert output and final output",
+  "latency_scope": "host dispatch/combine, final BF16 cast and stream completion; validation D2H copy excluded; smoke only",
+  "tolerances": {
+    "absolute": 0.01,
+    "relative": 0.03,
+    "relative_l2": 0.03
+  },
+  "cases": [
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 63,
+      "layer": 0,
+      "epoch": 1,
+      "wall_latency_ms": 33.55551000277046,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 1,
+      "layer": 0,
+      "epoch": 1,
+      "wall_latency_ms": 0.15012900985311717,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 63,
+      "layer": 1,
+      "epoch": 2,
+      "wall_latency_ms": 0.19059299665968865,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 2,
+      "layer": 1,
+      "epoch": 2,
+      "wall_latency_ms": 0.11315000301692635,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 63,
+      "layer": 0,
+      "epoch": 3,
+      "wall_latency_ms": 0.13527600094676018,
+      "max_absolute_error": 6.103515625e-05,
+      "relative_l2_error": 0.00015431710926350206,
+      "passed": true
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 3,
+      "layer": 0,
+      "epoch": 3,
+      "wall_latency_ms": 0.12200498895253986,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "name": "uneven_prefill_inactive_experts",
+      "phase": "prefill",
+      "rows": 63,
+      "layer": 1,
+      "epoch": 4,
+      "wall_latency_ms": 0.12989199603907764,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "name": "small_decode",
+      "phase": "decode",
+      "rows": 4,
+      "layer": 1,
+      "epoch": 4,
+      "wall_latency_ms": 0.12172499555163085,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    }
+  ],
+  "software": {
+    "pytorch": "2.13.0+cu130",
+    "cuda": "13.0"
+  },
+  "hardware": [
+    {
+      "device": 0,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 1,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 2,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 3,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 4,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 5,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 6,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    },
+    {
+      "device": 7,
+      "name": "NVIDIA B300 SXM6 AC",
+      "compute_capability": [
+        10,
+        3
+      ],
+      "sm_count": 148,
+      "total_memory_bytes": 287428509696
+    }
+  ],
+  "zero_token_fast_path": {
+    "passed": true,
+    "ipc_dispatches": 0
+  },
+  "concurrent_phases": [
+    {
+      "phase": "prefill",
+      "wall_latency_ms": 1.8277700000908226,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "phase": "decode",
+      "wall_latency_ms": 2.313138000317849,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    }
+  ],
+  "cuda_graph_replays": [
+    {
+      "replay": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 1,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 2,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 3,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 4,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 5,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 6,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 7,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 8,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 9,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 10,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 11,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 12,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 13,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 14,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 15,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 16,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 17,
+      "max_absolute_error": 3.0517578125e-05,
+      "relative_l2_error": 0.0005544292507693172,
+      "passed": true
+    },
+    {
+      "replay": 18,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    },
+    {
+      "replay": 19,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true
+    }
+  ],
+  "timeout": {
+    "passed": true,
+    "configured_timeout_ms": 100,
+    "wall_latency_ms": 100.38127000734676,
+    "slot_reused": false,
+    "fresh_owner_allocation": true
+  },
+  "status": "passed",
+  "finished_at_utc": "2026-10-14T16:07:22.320913+00:00"
+}

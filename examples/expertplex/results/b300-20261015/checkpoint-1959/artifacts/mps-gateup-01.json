@@ -1,0 +1,1345 @@
+{
+  "scope": "Separate-process MPS grouped-GEMM sharing ablation for paper section 7.3.\n\nStarts a task-private MPS daemon for one expert GPU using a fresh pipe/log\ndirectory, and stops that daemon in finally. It does not change compute mode\nor signal an existing daemon. A separate control GPU releases P/D 10 us apart\nand measures same-clock completion-ack upper bounds, as in bench_sharing.py.\nNo serving goodput or paper performance claim follows from these measurements.\n",
+  "settings": {
+    "device": 1,
+    "control_device": 0,
+    "hidden": 6144,
+    "intermediate": 2560,
+    "experts": 40,
+    "world": 4,
+    "top_k": 8,
+    "prefill_rows": 8192,
+    "decode_rows": 128,
+    "operation": "gateup",
+    "delay_us": 10,
+    "iterations": 10,
+    "percentages": [
+      "100:100",
+      "75:25",
+      "50:50",
+      "25:75"
+    ],
+    "work_dir": "/home/alayadb/mengze/expertplex-b300/artifacts/mps-gateup-01",
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/mps-gateup-01.json"
+  },
+  "gpu_uuid": "GPU-5b41e701-16a0-f8fa-cf82-4f3bd3930d06",
+  "cases": [
+    {
+      "requested_percentages": [
+        100,
+        100
+      ],
+      "clients": [
+        {
+          "state": "ready",
+          "pid": 254222,
+          "reported_sms": 148,
+          "kernel_sms": 148,
+          "expert_rows": [
+            434,
+            412,
+            446,
+            390,
+            406,
+            406,
+            419,
+            377,
+            438,
+            422,
+            403,
+            407,
+            436,
+            394,
+            384,
+            410,
+            362,
+            438,
+            417,
+            419,
+            365,
+            408,
+            391,
+            402,
+            418,
+            442,
+            382,
+            430,
+            398,
+            408,
+            404,
+            399,
+            423,
+            388,
+            414,
+            397,
+            412,
+            420,
+            390,
+            406
+          ]
+        },
+        {
+          "state": "ready",
+          "pid": 254223,
+          "reported_sms": 148,
+          "kernel_sms": 148,
+          "expert_rows": [
+            3,
+            7,
+            8,
+            3,
+            12,
+            8,
+            15,
+            8,
+            8,
+            6,
+            3,
+            5,
+            3,
+            3,
+            7,
+            7,
+            4,
+            6,
+            2,
+            5,
+            6,
+            7,
+            3,
+            8,
+            5,
+            5,
+            6,
+            7,
+            1,
+            8,
+            9,
+            5,
+            7,
+            5,
+            9,
+            6,
+            4,
+            11,
+            12,
+            6
+          ]
+        }
+      ],
+      "mps_server_clients": {
+        "254244": "254223\n254222"
+      },
+      "samples": [
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1217.44,
+            1595.68
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1203.04,
+            1603.136
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1227.68,
+            1605.44
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1291.584,
+            1672.448
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1227.456,
+            1604.032
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            1270.432,
+            1645.152
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1199.904,
+            1615.392
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1216.544,
+            1616.48
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1220.768,
+            1614.432
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1196.736,
+            1613.728
+          ]
+        }
+      ],
+      "isolated_at_same_partition": [
+        [
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              1250.112,
+              12.064
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1240.0,
+              12.128
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1234.4,
+              12.064
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1270.624,
+              12.0
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1222.624,
+              12.128
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1223.456,
+              8.672
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              1230.56,
+              12.032
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1234.72,
+              8.64
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1222.944,
+              12.096
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1224.256,
+              8.672
+            ]
+          }
+        ],
+        [
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.632,
+              623.456
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.632,
+              629.088
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              627.392
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              626.752
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.568,
+              628.896
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.76,
+              629.12
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.632,
+              624.8
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              629.28
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              630.304
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              631.872
+            ]
+          }
+        ]
+      ],
+      "response_upper_bound_us": [
+        1219.104,
+        1614.08
+      ]
+    },
+    {
+      "requested_percentages": [
+        75,
+        25
+      ],
+      "clients": [
+        {
+          "state": "ready",
+          "pid": 254336,
+          "reported_sms": 110,
+          "kernel_sms": 110,
+          "expert_rows": [
+            405,
+            419,
+            408,
+            423,
+            411,
+            371,
+            400,
+            409,
+            410,
+            386,
+            428,
+            442,
+            410,
+            399,
+            420,
+            395,
+            387,
+            409,
+            390,
+            396,
+            407,
+            397,
+            394,
+            413,
+            446,
+            406,
+            429,
+            390,
+            441,
+            432,
+            412,
+            400,
+            412,
+            407,
+            415,
+            390,
+            412,
+            405,
+            392,
+            445
+          ]
+        },
+        {
+          "state": "ready",
+          "pid": 254337,
+          "reported_sms": 36,
+          "kernel_sms": 36,
+          "expert_rows": [
+            6,
+            5,
+            5,
+            9,
+            8,
+            7,
+            9,
+            8,
+            6,
+            2,
+            8,
+            2,
+            10,
+            7,
+            6,
+            6,
+            3,
+            4,
+            13,
+            7,
+            9,
+            5,
+            4,
+            5,
+            3,
+            9,
+            7,
+            9,
+            6,
+            3,
+            8,
+            6,
+            11,
+            9,
+            6,
+            11,
+            8,
+            4,
+            5,
+            7
+          ]
+        }
+      ],
+      "mps_server_clients": {
+        "254244": "254336\n254337"
+      },
+      "samples": [
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1584.32,
+            2623.648
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1569.44,
+            2620.224
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1599.84,
+            2619.392
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1652.672,
+            2682.112
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1599.36,
+            2619.296
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1552.8,
+            2611.008
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1623.36,
+            2644.352
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1556.512,
+            2615.776
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            1589.44,
+            2618.752
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            1694.304,
+            2697.76
+          ]
+        }
+      ],
+      "isolated_at_same_partition": [
+        [
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1583.84,
+              12.0
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              1573.248,
+              11.968
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1580.128,
+              12.032
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1593.44,
+              12.064
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1585.824,
+              12.032
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              1576.928,
+              11.936
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1599.616,
+              12.192
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1601.472,
+              12.128
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              1604.736,
+              8.608
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              1592.992,
+              12.064
+            ]
+          }
+        ],
+        [
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              17.152,
+              1293.12
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.6,
+              1288.448
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              13.632,
+              1289.44
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              16.992,
+              1335.264
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.6,
+              1309.536
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              1308.704
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              1311.584
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              1314.016
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              1309.76
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              16.896,
+              1310.336
+            ]
+          }
+        ]
+      ],
+      "response_upper_bound_us": [
+        1594.4,
+        2619.808
+      ]
+    },
+    {
+      "requested_percentages": [
+        50,
+        50
+      ],
+      "clients": [
+        {
+          "state": "ready",
+          "pid": 254522,
+          "reported_sms": 74,
+          "kernel_sms": 74,
+          "expert_rows": [
+            382,
+            419,
+            432,
+            363,
+            384,
+            414,
+            437,
+            387,
+            395,
+            382,
+            436,
+            440,
+            415,
+            376,
+            418,
+            395,
+            400,
+            447,
+            405,
+            401,
+            415,
+            416,
+            438,
+            388,
+            431,
+            432,
+            404,
+            391,
+            377,
+            391,
+            403,
+            416,
+            400,
+            443,
+            402,
+            406,
+            380,
+            448,
+            408,
+            377
+          ]
+        },
+        {
+          "state": "ready",
+          "pid": 254523,
+          "reported_sms": 74,
+          "kernel_sms": 74,
+          "expert_rows": [
+            3,
+            5,
+            3,
+            6,
+            9,
+            12,
+            5,
+            7,
+            10,
+            11,
+            5,
+            1,
+            7,
+            4,
+            4,
+            6,
+            3,
+            5,
+            4,
+            6,
+            8,
+            9,
+            9,
+            3,
+            6,
+            6,
+            9,
+            9,
+            5,
+            6,
+            4,
+            5,
+            9,
+            7,
+            2,
+            10,
+            4,
+            6,
+            5,
+            11
+          ]
+        }
+      ],
+      "mps_server_clients": {
+        "254244": "254522\n254523"
+      },
+      "samples": [
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2202.08,
+            1715.392
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2202.464,
+            1715.84
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2217.76,
+            1712.256
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2192.32,
+            1715.84
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2176.384,
+            1709.888
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2180.48,
+            1714.784
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2125.92,
+            1707.712
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2131.264,
+            1687.648
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            2156.608,
+            1697.632
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            2115.424,
+            1690.784
+          ]
+        }
+      ],
+      "isolated_at_same_partition": [
+        [
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              2158.24,
+              11.936
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              2202.464,
+              12.032
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              2168.256,
+              12.096
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              2177.824,
+              12.0
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              2176.64,
+              12.128
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              2167.648,
+              8.64
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              2180.48,
+              12.096
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              2160.992,
+              12.0
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              2117.664,
+              12.096
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              2181.6,
+              12.032
+            ]
+          }
+        ],
+        [
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              13.664,
+              844.896
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              17.12,
+              844.096
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              16.992,
+              833.376
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              833.92
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              834.464
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              838.752
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              16.992,
+              836.704
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              17.28,
+              835.712
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              836.384
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              837.824
+            ]
+          }
+        ]
+      ],
+      "response_upper_bound_us": [
+        2178.432,
+        1711.0720000000001
+      ]
+    },
+    {
+      "requested_percentages": [
+        25,
+        75
+      ],
+      "clients": [
+        {
+          "state": "ready",
+          "pid": 254646,
+          "reported_sms": 36,
+          "kernel_sms": 36,
+          "expert_rows": [
+            432,
+            378,
+            384,
+            404,
+            379,
+            457,
+            397,
+            419,
+            386,
+            443,
+            412,
+            403,
+            389,
+            430,
+            385,
+            401,
+            406,
+            420,
+            399,
+            399,
+            358,
+            391,
+            399,
+            433,
+            427,
+            405,
+            388,
+            444,
+            362,
+            445,
+            445,
+            426,
+            392,
+            411,
+            417,
+            420,
+            409,
+            411,
+            422,
+            419
+          ]
+        },
+        {
+          "state": "ready",
+          "pid": 254647,
+          "reported_sms": 110,
+          "kernel_sms": 110,
+          "expert_rows": [
+            3,
+            7,
+            8,
+            3,
+            12,
+            8,
+            15,
+            8,
+            8,
+            6,
+            3,
+            5,
+            3,
+            3,
+            7,
+            7,
+            4,
+            6,
+            2,
+            5,
+            6,
+            7,
+            3,
+            8,
+            5,
+            5,
+            6,
+            7,
+            1,
+            8,
+            9,
+            5,
+            7,
+            5,
+            9,
+            6,
+            4,
+            11,
+            12,
+            6
+          ]
+        }
+      ],
+      "mps_server_clients": {
+        "254244": "254647\n254646"
+      },
+      "samples": [
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            4378.944,
+            674.464
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            4390.304,
+            663.648
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            4605.504,
+            633.44
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            4362.336,
+            670.08
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            4390.688,
+            664.448
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            4351.136,
+            670.56
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            4340.576,
+            664.0
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            4316.864,
+            663.52
+          ]
+        },
+        {
+          "release_gap_us": 10.048,
+          "response_upper_bound_us": [
+            4337.152,
+            668.32
+          ]
+        },
+        {
+          "release_gap_us": 10.016,
+          "response_upper_bound_us": [
+            4369.6,
+            673.76
+          ]
+        }
+      ],
+      "isolated_at_same_partition": [
+        [
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              4255.264,
+              12.032
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              4232.16,
+              12.0
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              4221.12,
+              12.032
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              4202.464,
+              12.064
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              4246.592,
+              12.064
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              4220.128,
+              12.128
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              4214.144,
+              12.064
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              4219.808,
+              12.0
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              4212.512,
+              12.0
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              4231.616,
+              12.0
+            ]
+          }
+        ],
+        [
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              17.056,
+              676.704
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.632,
+              686.656
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              13.632,
+              680.192
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.6,
+              681.408
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.664,
+              680.0
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.6,
+              681.536
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.6,
+              679.872
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              17.024,
+              683.456
+            ]
+          },
+          {
+            "release_gap_us": 10.016,
+            "response_upper_bound_us": [
+              13.632,
+              681.728
+            ]
+          },
+          {
+            "release_gap_us": 10.048,
+            "response_upper_bound_us": [
+              13.664,
+              681.536
+            ]
+          }
+        ]
+      ],
+      "response_upper_bound_us": [
+        4365.968000000001,
+        666.384
+      ]
+    }
+  ],
+  "daemon_shutdown": ""
+}
