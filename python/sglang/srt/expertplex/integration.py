@@ -168,6 +168,48 @@ def validate_server_args(cfg: Any) -> None:
             )
         config = expert_node_config(cfg)
         config.validate(ModelSpec.from_model_path(config.model_path))
+        errors = []
+        if getattr(cfg, "disaggregation_mode", "null") != "null":
+            errors.append("--disaggregation-mode belongs to attention servers")
+        for name in (
+            "tp_size",
+            "pp_size",
+            "ep_size",
+            "dp_size",
+            "attn_dp_size",
+            "nnodes",
+        ):
+            if getattr(cfg, name, 1) != 1:
+                errors.append(
+                    f"--{name.replace('_', '-')} does not size the MoE pool; "
+                    "use --expertplex-expert-count or --expertplex-config"
+                )
+        if str(getattr(cfg, "dtype", "auto")) not in (
+            "auto",
+            "bfloat16",
+            "bf16",
+            "torch.bfloat16",
+        ):
+            errors.append("the MoE pool supports BF16 weights only")
+        if getattr(cfg, "device", "cuda") != "cuda":
+            errors.append("--device must be cuda")
+        if getattr(cfg, "quantization", None) not in (None, "unquant"):
+            errors.append("quantized expert weights are not supported")
+        for name in ("enable_lora", "enable_eplb", "enable_pdmux"):
+            if getattr(cfg, name, False):
+                errors.append(
+                    f"--{name.replace('_', '-')} is not supported by the MoE pool"
+                )
+        if getattr(cfg, "lora_paths", None) or getattr(
+            cfg, "speculative_algorithm", None
+        ):
+            errors.append(
+                "LoRA and speculative decoding are not supported by the MoE pool"
+            )
+        if errors:
+            raise ValueError(
+                "Invalid ExpertPlex expert arguments: " + "; ".join(errors)
+            )
         if Path(cfg.model_path).resolve() != Path(config.model_path).resolve():
             raise ValueError(
                 "--model-path must match model_path in the ExpertPlex node config"

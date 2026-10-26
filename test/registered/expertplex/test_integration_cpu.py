@@ -304,11 +304,41 @@ class IntegrationTests(unittest.TestCase):
                 INTEGRATION.validate_server_args(types.SimpleNamespace())
 
     def test_expert_pool_role_has_no_attention_client(self):
-        args = self.server_args(expertplex_role="expert", expertplex_client_id=None)
+        args = self.server_args(
+            expertplex_role="expert",
+            expertplex_client_id=None,
+            disaggregation_mode="null",
+        )
         INTEGRATION.validate_server_args(args)
         args.expertplex_client_id = 1
         with self.assertRaisesRegex(ValueError, "cannot connect"):
             INTEGRATION.validate_server_args(args)
+
+    def test_expert_role_does_not_silently_ignore_attention_or_precision_options(self):
+        for invalid in (
+            {"disaggregation_mode": "decode"},
+            {"tp_size": 2},
+            {"ep_size": 4},
+            {"dtype": "float16"},
+            {"device": "cpu"},
+            {"quantization": "fp8"},
+            {"enable_lora": True},
+            {"enable_eplb": True},
+            {"enable_pdmux": True},
+        ):
+            values = dict(
+                expertplex_role="expert",
+                expertplex_client_id=None,
+                disaggregation_mode="null",
+            )
+            values.update(invalid)
+            with (
+                self.subTest(invalid=invalid),
+                self.assertRaisesRegex(
+                    ValueError, "Invalid ExpertPlex expert arguments"
+                ),
+            ):
+                INTEGRATION.validate_server_args(self.server_args(**values))
 
     def test_scheduler_caps_and_full_visibility_are_required(self):
         with patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "1"}):
