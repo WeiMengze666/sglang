@@ -9,7 +9,6 @@ from typing import (
 )
 
 import msgspec
-
 from sglang.srt.arg_groups.arg_utils import (
     A,
     Arg,
@@ -40,6 +39,22 @@ class Disagg(msgspec.Struct):
         Optional[int],
         "Attention client ID in --expertplex-config (attention role only).",
     ] = None
+    expertplex_bootstrap_addr: A[
+        Optional[str],
+        "HTTP address of the independently started ExpertPlex MoE server.",
+    ] = None
+    expertplex_prefill_count: A[
+        int, "Number of reserved prefill attention GPUs (expert role)."
+    ] = 1
+    expertplex_decode_count: A[
+        int, "Number of reserved decode attention GPUs (expert role)."
+    ] = 3
+    expertplex_expert_count: A[
+        int, "Number of GPUs in the shared expert pool (expert role)."
+    ] = 4
+    expertplex_startup_timeout: A[
+        float, "Seconds to wait for the MoE bootstrap service."
+    ] = 600.0
 
     # Decoupled speculative decoding: draft and verify run as
     # separate engines, currently connected by a ZMQ IPC mesh.

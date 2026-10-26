@@ -243,9 +243,11 @@ class NodeConfig:
         devices = [client.device for client in self.clients] + list(self.expert_devices)
         for device in devices:
             _positive_integer("device", device, allow_zero=True)
-        if sorted(devices) != list(range(self.node_gpu_count)):
+        if len(set(devices)) != len(devices) or any(
+            d >= self.node_gpu_count for d in devices
+        ):
             raise ValueError(
-                "attention and expert devices must form a disjoint full partition of ranks 0..7"
+                "attention and expert devices must be distinct ranks within 0..7"
             )
         if len({client.port for client in self.clients}) != len(self.clients):
             raise ValueError("attention client ports must be unique")
@@ -360,15 +362,17 @@ def default_config(
     ):
         _positive_integer(name, count)
     attention_count = prefill_count + decode_count
-    if attention_count + expert_count != 8:
-        raise ValueError("prefill_count + decode_count + expert_count must equal 8")
+    if attention_count + expert_count > 8:
+        raise ValueError(
+            "prefill_count + decode_count + expert_count must not exceed 8"
+        )
     values: dict[str, Any] = {
         "model_path": model_path,
         "clients": tuple(
             ClientConfig(i, "prefill" if i < prefill_count else "decode", i, 30000 + i)
             for i in range(attention_count)
         ),
-        "expert_devices": tuple(range(attention_count, 8)),
+        "expert_devices": tuple(range(attention_count, attention_count + expert_count)),
     }
     values.update(overrides)
     return NodeConfig(**values)

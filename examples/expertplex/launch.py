@@ -56,6 +56,10 @@ def commands(node, args):
         "expert",
         "--expertplex-config",
         str(Path(args.config).resolve()),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(args.port + 200),
     ]
     servers = []
     for client in node.clients:
@@ -70,10 +74,8 @@ def commands(node, args):
             "-m",
             "sglang.launch_server",
             "--enable-expertplex",
-            "--expertplex-config",
-            str(Path(args.config).resolve()),
-            "--expertplex-client-id",
-            str(client.id),
+            "--expertplex-bootstrap-addr",
+            f"http://127.0.0.1:{args.port + 200}",
             "--model-path",
             node.model_path,
             "--dtype",
@@ -261,7 +263,7 @@ def main():
     node = config.load_config(args.config)
     worker_command, server_commands, router_command = commands(node, args)
     all_ports = (
-        [args.port]
+        [args.port, args.port + 200]
         + [c.port for c in node.clients]
         + [args.bootstrap_port + c.id for c in node.clients]
         + [args.nccl_port + c.id for c in node.clients]
@@ -331,7 +333,11 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     try:
         spawn("experts", worker_command, base_env)
-        rendezvous.wait_for_workers(node)
+        wait_http(
+            f"http://127.0.0.1:{args.port + 200}",
+            children,
+            time.monotonic() + node.startup_timeout_s,
+        )
         for client, command in server_commands:
             spawn(f"{client.phase}-{client.id}", command, base_env)
         deadline = time.monotonic() + node.startup_timeout_s

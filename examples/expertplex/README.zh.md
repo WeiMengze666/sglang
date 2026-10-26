@@ -103,7 +103,8 @@ SGLang D attention GPU 3 ── dispatch / pull ─┘
 
 - `python/sglang/srt/expertplex/csrc/expertplex.cu`：IPC、GPU queue、tile 调度与 BF16 GEMM
 - `python/sglang/srt/expertplex/native.py`：惰性 JIT 编译和显式 buffer 生命周期
-- `python/sglang/srt/expertplex/{worker,client,rendezvous}.py`：加载、通信与启动控制面
+- `python/sglang/srt/disaggregation/expertplex.py`：原生独立 MoE 服务入口
+- `python/sglang/srt/expertplex/{bootstrap,worker,client,rendezvous}.py`：服务发现、登记、加载与通信
 - `python/sglang/srt/expertplex/{config,optimizer,integration}.py`：配置、Eq.1–4 与接入校验
 - `python/sglang/srt/arg_groups/fields/disagg.py`：原生 ServerArgs / Runtime 配置
 - `python/sglang/srt/layers/moe/ep_moe/expertplex.py`：由原生 MoE 工厂选择的远端专家层
@@ -163,62 +164,117 @@ python examples/expertplex/launch.py \
 明显超出容量的配置。`decode_sm_budget=32` 和 `expected_decode_tiles=128` 是初始调度
 参数，**没有做过 B300 校准，不能解释为优化器已找到最优配置**。
 
-## 原生 SGLang 启动入口
+## 原生 SGLang 独立服务入口
 
-`python -m sglang.launch_server` 和 `sglang serve` 使用同一个 `run_server`。
-下列参数属于原生 `ServerArgs` 的 `disagg` 配置，通过 Runtime Context 传递给 worker：
+Prefill attention、Decode attention 和 MoE pool 分别通过原生 `sglang.launch_server`
+启动。MoE 仅启动自己的 expert ranks，不启动 P、D 或 router。P/D 使用
+`--expertplex-bootstrap-addr` 连接 MoE，按原生 `--base-gpu-id` 和
+`--disaggregation-mode` 选择对应槽位，不再需要传 client ID 或共享 JSON 文件。
 
-| 参数 | 含义 |
-| --- | --- |
-| `--enable-expertplex` | 开启共享专家后端，默认关闭 |
-| `--expertplex-config PATH` | 所有角色使用的节点布局、容量及 APK 配置 JSON |
-| `--expertplex-role attention` | 默认角色；仍运行原生 SGLang attention / scheduler / HTTP 服务 |
-| `--expertplex-role expert` | 启动 JSON 中配置的共享 E worker pool |
-| `--expertplex-client-id ID` | attention 进程在 JSON 中的 client ID |
+以下是同一台 8×B300 上的 1P+3D+4E 示例。所有进程需使用相同的完整
+`CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7`。在共享 gpuq 环境，须在**一个队列作业**中
+启动这些独立进程、完成请求测试并清理所有子进程，不能把长期运行的三个角色分别排队，
+否则第一项占住队列后其余角色无法启动。`gpuq` 约束不改变服务自身独立启动的接口。
 
-例如，使用上文生成的默认非 TBO 配置，先启动共享 E pool：
+共同环境（各服务均须继承）：
 
 ```bash
-python -m sglang.launch_server \
-  --model-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
-  --dtype bfloat16 \
+export MODEL=/data/models/Qwen3-Coder-480B-A35B-Instruct
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export SGLANG_MOONCAKE_CUSTOM_MEM_POOL=INTRA_NODE_NVLINK
+export MC_INTRANODE_NVLINK=true
+```
+
+MoE 服务：三个 count 分别是 P GPU 数、D GPU 数、E GPU 数；默认是 1/3/4。
+默认按 P→D→E 连续放置，合计可以小于八卡。这里 E ranks 使用 GPU 4–7。
+
+```bash
+python -m sglang.launch_server --model-path "$MODEL" --dtype bfloat16 \
   --enable-expertplex --expertplex-role expert \
-  --expertplex-config /tmp/expertplex-coder480b.json
+  --expertplex-prefill-count 1 --expertplex-decode-count 3 --expertplex-expert-count 4 \
+  --host 127.0.0.1 --port 31010 \
+  --max-prefill-tokens 24576 --max-running-requests 256 --enable-two-batch-overlap
 ```
 
-在另一个终端启动其中的 P attention 进程：
+Prefill attention（GPU 0）：
 
 ```bash
-SGLANG_MOONCAKE_CUSTOM_MEM_POOL=INTRA_NODE_NVLINK MC_INTRANODE_NVLINK=true \
-python -m sglang.launch_server \
-  --model-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
-  --dtype bfloat16 --load-format safetensors \
-  --enable-expertplex --expertplex-config /tmp/expertplex-coder480b.json \
-  --expertplex-client-id 0 --base-gpu-id 0 \
-  --disaggregation-mode prefill --disaggregation-transfer-backend mooncake \
-  --disaggregation-bootstrap-port 19000 --port 30000 --nccl-port 20000 \
-  --max-prefill-tokens 2048 --max-running-requests 256 \
-  --max-total-tokens 65536 --chunked-prefill-size -1 \
-  --cuda-graph-backend-prefill disabled --cuda-graph-backend-decode full \
-  --cuda-graph-max-bs-decode 32
+python -m sglang.launch_server --model-path "$MODEL" --dtype bfloat16 \
+  --enable-expertplex --expertplex-bootstrap-addr http://127.0.0.1:31010 \
+  --disaggregation-mode prefill --base-gpu-id 0 --port 30000 --nccl-port 20000 \
+  --disaggregation-bootstrap-port 19000 --context-length 24576 \
+  --max-prefill-tokens 24576 --max-running-requests 256 --chunked-prefill-size -1 \
+  --mem-fraction-static 0.9 --enable-two-batch-overlap \
+  --cuda-graph-backend-prefill disabled --cuda-graph-backend-decode disabled \
+  --attention-backend flashinfer --sampling-backend flashinfer
 ```
 
-完整服务还需要 D 进程及原生 PD router。用 `launch.py --dry-run` 生成与 JSON
-一致的全部原生启动命令；去掉 `--dry-run` 可代为启动和监管这些进程。它只负责
-编排进程，不替代 SGLang scheduler、KV cache、attention、sampling 或模型执行。
-TBO 配置必须同时使用原生 `--enable-two-batch-overlap`，辅助启动器会自动添加。
+Decode attention：以下是 GPU 1 实例；另外两个实例分别使用
+`base-gpu-id/port/nccl-port/bootstrap-port` = `2/30002/20002/19002`、
+`3/30003/20003/19003`，各自执行一条启动命令。
 
-旧的 `SGLANG_EXPERTPLEX_CONFIG` / `SGLANG_EXPERTPLEX_CLIENT_ID` 环境激活已移除；
-残留变量会在参数校验时报错，避免误启动完整本地专家模型。通信 client 由 Runtime
-资源容器持有，scheduler 正常退出时关闭；E pool 应在所有 attention 进程退出后再关闭。
+```bash
+python -m sglang.launch_server --model-path "$MODEL" --dtype bfloat16 \
+  --enable-expertplex --expertplex-bootstrap-addr http://127.0.0.1:31010 \
+  --disaggregation-mode decode --base-gpu-id 1 --port 30001 --nccl-port 20001 \
+  --disaggregation-bootstrap-port 19001 --context-length 24576 \
+  --max-prefill-tokens 256 --max-running-requests 256 --chunked-prefill-size 256 \
+  --mem-fraction-static 0.9 --enable-two-batch-overlap \
+  --cuda-graph-backend-prefill disabled --cuda-graph-backend-decode full \
+  --cuda-graph-max-bs-decode 32 --attention-backend flashinfer --sampling-backend flashinfer
+```
 
-原生 CPU/GPU scheduler overlap、decode CUDA Graph、FlashInfer attention/sampling、
-autotune、radix cache 和 Mooncake KV 移交继续沿用。当前尚未适配的 prefill graph、
-`torch.compile`、SBO、attention TP>1 等组合会显式拒绝，不能将它们称为已保留的能力。
-APK 和 M-to-N 通信实现仍放在 `sglang/srt/expertplex` 模块内；详细边界见
+最后按原生 PD 方式启动 router，连接上述 P/D HTTP 地址：
+
+```bash
+python -m sglang_router.launch_router --pd-disaggregation \
+  --host 127.0.0.1 --port 31000 \
+  --prefill http://127.0.0.1:30000 19000 \
+  --decode http://127.0.0.1:30001 \
+  --decode http://127.0.0.1:30002 \
+  --decode http://127.0.0.1:30003 \
+  --prefill-policy round_robin --decode-policy power_of_two
+```
+
+MoE bootstrap 地址不能作为生成请求的 worker 地址。`GET /health` 和 `/get_server_info` 可检查 MoE readiness、
+服务代次和已登记的客户端。P/D 可以独立先后接入，不要求所有客户端同时启动。
+
+正常关闭 attention 时，scheduler 的资源清理路径会同步 GPU、关闭 IPC 映射并释放
+登记槽位；其余 attention 和 E 服务继续运行。异常退出的槽位保持隔离，避免复用仍有
+在途写入的 mailbox。E 重启后的旧客户端必须重启，不能继续使用旧代次的 IPC handles。
+停止部署时先排空/退出 P/D，再停止 MoE。预留槽位的 phase/容量与 E 数量在 E 启动时
+确定；修改该布局需要重启 E，当前不宣称支持在线扩缩 expert ranks。
+
+需要非连续 GPU 放置或更多 APK 参数时，可给 MoE 使用 `--expertplex-config`。
+P/D 仍可通过地址发现其配置。兼容的旧文件式配置需每次使用新的 rendezvous 目录。
+`examples/expertplex/launch.py` 保留为实验编排辅助工具，内部也使用独立 bootstrap；
+它不是运行 ExpertPlex 的必要入口。
+
+KV pool 默认沿用 SGLang 显存 profiling；以上命令不限制总 KV token 数。固定容量
+仅用于显式的控制实验。原生 scheduler overlap、decode CUDA Graph、FlashInfer
+attention/sampling/autotune 和 Mooncake KV 移交继续使用。缓存行为遵循原生 PD 默认值
+（例如 decode radix cache 默认关闭），可以在已支持的原生选项范围内调整。
+尚未适配的 prefill graph、`torch.compile`、SBO、attention TP>1 等组合仍会明确拒绝。
+
+控制面位于 `sglang/srt/disaggregation/expertplex.py` 和
+`sglang/srt/expertplex/bootstrap.py`；APK、MoE client/worker 等计算后端保留在
+`sglang/srt/expertplex`。详细边界见
 [优化保留审计](PAPER_CONFORMANCE.md#对现有-sglang--deepep-优化的保留审计)。
 
 ## GPU 验收顺序
+
+共享机器上的以下 GPU 命令均须放进 `gpuq` 作业，作业退出前清理本作业的所有服务。
+独立服务生命周期检查可使用小型 BF16 checkpoint：
+
+```bash
+python examples/expertplex/check_independent_services.py \
+  --model-path /path/to/tiny-bf16-checkpoint \
+  --output-dir /path/to/new-lifecycle-run
+```
+
+它检查 D 先于 P 启动、三个 D 同时请求、单独退出/重新接入 D、重启前后 token/logprob
+一致性及自有进程清理。`--kv-tokens auto --mem-fraction-static 0.9` 可验证原生 KV sizing；
+较大的 checkpoint 可设置 `--startup-timeout 3600`。这项检查不替代同权重原生基线数值与性能对比。
 
 先执行纯 CPU 检查：
 

@@ -76,8 +76,8 @@ class ShutdownTests(unittest.TestCase):
             patch.object(launch.signal, "signal", side_effect=handlers.__setitem__),
             patch.object(launch.os, "killpg") as kill,
             patch.object(
-                launch.rendezvous,
-                "wait_for_workers",
+                launch,
+                "wait_http",
                 side_effect=RuntimeError("startup failed"),
             ),
         ):

@@ -123,7 +123,13 @@ router/TopK、LM head 和 sampling；scheduler、KV allocator、radix cache、Mo
 以及 CUDA Graph runner 也继续使用 SGLang。TBO 使用原生 Qwen3 OperationsStrategy / YieldOperation，
 通过标准 MoE dispatcher 提交异步 dispatch / combine。启用开关与角色配置属于原生
 ServerArgs；通信 client 由 Runtime 资源容器持有，并接入 scheduler 退出流程。
-`examples/expertplex/launch.py` 只编排原生启动命令，不实现另一套 serving 调度器。
+`sglang/srt/disaggregation/expertplex.py` 提供原生独立 MoE 入口，仅管理 E ranks；
+P 和 D 各自运行原生 PD server，通过 `--expertplex-bootstrap-addr` 发现 MoE pool。
+HTTP 仅用于启动、独占槽位登记与退出释放，每层 activation 仍走 CUDA IPC/NVLink。
+布局数量由 E 的三个 count 参数或显式 topology 配置指定；当前不是在线 E 扩缩容。
+`examples/expertplex/launch.py` 只作为可选实验编排，不是部署的必要入口。
+`check_independent_services.py` 检查独立启动、并发 P/D、单个 D 的正常退出/重连与进程清理；
+该生命周期检查不证明相对原生 SGLang 的数值对齐或性能提升。
 
 | 路径 | 当前处理与边界 |
 |---|---|

@@ -32,6 +32,26 @@ def _load_attention_config(path: str, client_id: int):
 
 def attention_config(cfg=None):
     cfg = runtime_config() if cfg is None else cfg
+    address = getattr(cfg, "expertplex_bootstrap_addr", None)
+    if address:
+        node, _ = remote_config(
+            address, getattr(cfg, "expertplex_startup_timeout", 600.0)
+        )
+        device = getattr(cfg, "base_gpu_id", None)
+        if device is None:
+            from sglang.srt.runtime_context import get_device
+
+            device = get_device().base_gpu_id
+        matches = [
+            c
+            for c in node.clients
+            if c.device == device and c.phase == cfg.disaggregation_mode
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                "No MoE attention slot matches --base-gpu-id and --disaggregation-mode"
+            )
+        return node, matches[0]
     path = getattr(cfg, "expertplex_config", None)
     client_id = getattr(cfg, "expertplex_client_id", None)
     if not path or client_id is None:
@@ -39,6 +59,36 @@ def attention_config(cfg=None):
             "ExpertPlex attention requires both --expertplex-config and --expertplex-client-id"
         )
     return _load_attention_config(str(Path(path).expanduser().resolve()), client_id)
+
+
+@lru_cache(maxsize=8)
+def remote_config(address, timeout):
+    from .bootstrap import fetch_config
+
+    return fetch_config(address, timeout)
+
+
+def expert_node_config(cfg):
+    from .config import default_config, load_config
+
+    if cfg.expertplex_config:
+        return load_config(cfg.expertplex_config)
+    return default_config(
+        str(Path(cfg.model_path).expanduser().resolve()),
+        prefill_count=getattr(cfg, "expertplex_prefill_count", 1),
+        decode_count=getattr(cfg, "expertplex_decode_count", 3),
+        expert_count=getattr(cfg, "expertplex_expert_count", 4),
+        max_prefill_tokens=cfg.max_prefill_tokens or 24576,
+        max_decode_tokens=cfg.max_running_requests or 256,
+        startup_timeout_s=getattr(cfg, "expertplex_startup_timeout", 600.0),
+        weight_mode="synthetic" if cfg.load_format == "dummy" else "checkpoint",
+        synthetic_seed=int(os.environ.get("SGLANG_EXPERTPLEX_SYNTHETIC_SEED", "1234")),
+        overlap="tbo" if cfg.enable_two_batch_overlap else "none",
+        prefill_preprocess=True,
+        decode_sm_budget=96,
+        expected_decode_tiles=8,
+        max_decode_sm_fraction=0.875,
+    )
 
 
 def is_routed_expert_weight(name: str) -> bool:
@@ -98,6 +148,7 @@ def validate_server_args(cfg: Any) -> None:
     if not expertplex_enabled(cfg):
         if (
             getattr(cfg, "expertplex_config", None) is not None
+            or getattr(cfg, "expertplex_bootstrap_addr", None) is not None
             or getattr(cfg, "expertplex_client_id", None) is not None
             or getattr(cfg, "expertplex_role", "attention") != "attention"
         ):
@@ -107,19 +158,28 @@ def validate_server_args(cfg: Any) -> None:
     if role not in ("attention", "expert"):
         raise ValueError("--expertplex-role must be attention or expert")
     if role == "expert":
-        from .config import ModelSpec, load_config
+        from .config import ModelSpec
 
-        if not cfg.expertplex_config or cfg.expertplex_client_id is not None:
+        if cfg.expertplex_client_id is not None or getattr(
+            cfg, "expertplex_bootstrap_addr", None
+        ):
             raise ValueError(
-                "Expert role requires --expertplex-config and no --expertplex-client-id"
+                "Expert role cannot connect to another bootstrap or use --expertplex-client-id"
             )
-        config = load_config(cfg.expertplex_config)
+        config = expert_node_config(cfg)
         config.validate(ModelSpec.from_model_path(config.model_path))
         if Path(cfg.model_path).resolve() != Path(config.model_path).resolve():
             raise ValueError(
                 "--model-path must match model_path in the ExpertPlex node config"
             )
         return
+    if getattr(cfg, "expertplex_bootstrap_addr", None) and (
+        getattr(cfg, "expertplex_config", None)
+        or getattr(cfg, "expertplex_client_id", None) is not None
+    ):
+        raise ValueError(
+            "Use either bootstrap discovery or explicit config/client ID, not both"
+        )
     config, client = attention_config(cfg)
     errors = []
     for name in (

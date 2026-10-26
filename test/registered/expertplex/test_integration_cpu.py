@@ -197,6 +197,26 @@ class IntegrationTests(unittest.TestCase):
         INTEGRATION.validate_attention_model(hf)
         self.assertEqual(INTEGRATION.attention_config()[1].phase, "decode")
 
+    def test_bootstrap_runtime_uses_device_namespace(self):
+        # ServerArgs has base_gpu_id, but Runtime's Disagg namespace does not.
+        cfg = types.SimpleNamespace(
+            expertplex_bootstrap_addr="http://127.0.0.1:31010",
+            expertplex_startup_timeout=5,
+            disaggregation_mode="decode",
+        )
+        context = types.ModuleType("sglang.srt.runtime_context")
+        context.get_device = lambda: types.SimpleNamespace(base_gpu_id=2)
+        with (
+            patch.object(INTEGRATION, "remote_config", return_value=(self.config, {})),
+            patch.dict(sys.modules, {"sglang.srt.runtime_context": context}),
+        ):
+            self.assertEqual(INTEGRATION.attention_config(cfg)[1].id, 2)
+            cfg.base_gpu_id = 1
+            self.assertEqual(INTEGRATION.attention_config(cfg)[1].id, 1)
+            cfg.base_gpu_id = 7
+            with self.assertRaisesRegex(ValueError, "No MoE attention slot"):
+                INTEGRATION.attention_config(cfg)
+
     def test_unchunked_prefill_has_a_hard_input_bound(self):
         node, _ = INTEGRATION.attention_config()
         self.assertEqual(
@@ -287,7 +307,7 @@ class IntegrationTests(unittest.TestCase):
         args = self.server_args(expertplex_role="expert", expertplex_client_id=None)
         INTEGRATION.validate_server_args(args)
         args.expertplex_client_id = 1
-        with self.assertRaisesRegex(ValueError, "no --expertplex-client-id"):
+        with self.assertRaisesRegex(ValueError, "cannot connect"):
             INTEGRATION.validate_server_args(args)
 
     def test_scheduler_caps_and_full_visibility_are_required(self):

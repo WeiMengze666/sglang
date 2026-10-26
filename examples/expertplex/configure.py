@@ -47,8 +47,8 @@ def main():
     args = parser.parse_args()
     if min(args.prefill, args.decode, args.experts) < 1:
         parser.error("Each role needs at least one GPU")
-    if args.prefill + args.decode + args.experts != 8:
-        parser.error("prefill + decode + experts must equal 8")
+    if args.prefill + args.decode + args.experts > 8:
+        parser.error("prefill + decode + experts must not exceed 8")
     attention = args.prefill + args.decode
     node = config.NodeConfig(
         model_path=str(Path(args.model_path).expanduser().resolve()),
@@ -61,7 +61,7 @@ def main():
             )
             for i in range(attention)
         ),
-        expert_devices=tuple(range(attention, 8)),
+        expert_devices=tuple(range(attention, attention + args.experts)),
         max_prefill_tokens=args.max_prefill_tokens,
         prefill_mailbox_tokens=args.prefill_mailbox_tokens,
         max_decode_tokens=args.max_decode_tokens,

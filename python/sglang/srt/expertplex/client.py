@@ -22,12 +22,18 @@ class PendingMoE:
 
 
 class ExpertPlexClient:
-    def __init__(self, config_path: str, client_id: int):
+    def __init__(
+        self, config_path, client_id: int, *, bootstrap_addr=None, manifest=None
+    ):
         import torch
 
         from . import native
 
-        self.config = load_config(config_path)
+        self.config = (
+            load_config(config_path) if isinstance(config_path, str) else config_path
+        )
+        self.bootstrap_addr = bootstrap_addr
+        self.lease = None
         self.spec = ModelSpec.from_model_path(self.config.model_path)
         self.config.validate(self.spec)
         self.client = self.config.client(client_id)
@@ -38,8 +44,15 @@ class ExpertPlexClient:
                 f"{self.client.device}, current device is {self.device}. "
                 "All processes must use the same CUDA_VISIBLE_DEVICES ordering."
             )
-        self.manifest, descriptors = wait_for_workers(self.config)
-        claim_client(self.config, self.manifest, client_id)
+        if bootstrap_addr:
+            from .bootstrap import register
+
+            registered = register(bootstrap_addr, self.config, manifest, client_id)
+            self.manifest, descriptors = registered["manifest"], registered["peers"]
+            self.lease = registered["lease"]
+        else:
+            self.manifest, descriptors = wait_for_workers(self.config)
+            claim_client(self.config, self.manifest, client_id)
         self.peers = []
         self.mailboxes = []
         try:
@@ -72,6 +85,10 @@ class ExpertPlexClient:
     def close(self):
         if getattr(self, "closed", False):
             return
+        if self.lease is not None:
+            import torch
+
+            torch.cuda.synchronize(self.device)
         # The exporter must outlive all remote reads. Launcher shutdown orders
         # clients before experts; synchronize our own streams before IPC close.
         for stream in getattr(self, "streams", []):
@@ -81,6 +98,30 @@ class ExpertPlexClient:
             peer.close()
         self.peers.clear()
         self.streams = []
+        if self.lease is not None:
+            from .bootstrap import request
+
+            # Reuse is safe only after ALL stream work has retired, including
+            # captured graph replays that may outlive a COMM event.
+            drained = not getattr(self, "failed", True) and all(
+                p is None or p.finished for p in getattr(self, "pending", ())
+            )
+            try:
+                request(
+                    self.bootstrap_addr,
+                    "/release",
+                    {
+                        "run_id": self.manifest["run_id"],
+                        "client_id": self.client.id,
+                        "lease": self.lease,
+                        "drained": drained,
+                    },
+                )
+            except (OSError, RuntimeError):
+                # An unavailable E or an undrained slot must never be silently
+                # reclaimed by a new process. The server keeps its tombstone.
+                pass
+            self.lease = None
         self.closed = True
         atexit.unregister(self.close)
 
@@ -235,10 +276,19 @@ def get_client() -> ExpertPlexClient:
         resources = get_resources().buffers
         client = resources.get("expertplex_client")
         if client is None:
-            from .integration import runtime_config
+            from .integration import remote_config, runtime_config
 
-            _, attention = attention_config()
-            client = ExpertPlexClient(runtime_config().expertplex_config, attention.id)
+            node, attention = attention_config()
+            cfg = runtime_config()
+            address = getattr(cfg, "expertplex_bootstrap_addr", None)
+            manifest = (
+                remote_config(address, cfg.expertplex_startup_timeout)[1]
+                if address
+                else None
+            )
+            client = ExpertPlexClient(
+                node, attention.id, bootstrap_addr=address, manifest=manifest
+            )
             resources["expertplex_client"] = client
         return client
 

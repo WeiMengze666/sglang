@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import torch
+import torch.distributed.tensor  # Initialize Torch registrations before module mocks.
 
 ROOT = Path(__file__).resolve().parents[3] / "python/sglang/srt"
 
@@ -81,14 +82,16 @@ class DispatcherTests(unittest.TestCase):
             get_resources=lambda: resources
         )
         sys.modules["sglang.srt.expertplex.integration"] = types.SimpleNamespace(
-            attention_config=lambda: (None, types.SimpleNamespace(id=1)),
+            attention_config=lambda: ("node.json", types.SimpleNamespace(id=1)),
             runtime_config=lambda: types.SimpleNamespace(expertplex_config="node.json"),
+            remote_config=lambda *args: None,
         )
         closed = []
 
         def create(path, client_id):
             self.assertEqual((path, client_id), ("node.json", 1))
             client = object.__new__(client_module.ExpertPlexClient)
+            client.lease = None
             client.streams = [
                 types.SimpleNamespace(synchronize=lambda: closed.append("sync"))
             ]
@@ -98,7 +101,7 @@ class DispatcherTests(unittest.TestCase):
         original = client_module.ExpertPlexClient
 
         # Keep the real close method while replacing only GPU construction.
-        def factory(path, client_id):
+        def factory(path, client_id, **kwargs):
             with patch.object(client_module, "ExpertPlexClient", original):
                 return create(path, client_id)
 

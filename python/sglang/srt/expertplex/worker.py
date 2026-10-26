@@ -242,7 +242,7 @@ def expert_main(config_path, rank, manifest, stop_event):
         descriptor_path.unlink(missing_ok=True)
 
 
-def supervise(config_path: str):
+def supervise(config_path: str, *, bootstrap_host=None, bootstrap_port=None):
     config = load_config(config_path)
     config.validate(ModelSpec.from_model_path(config.model_path))
     manifest = begin_run(config)
@@ -262,7 +262,14 @@ def supervise(config_path: str):
     signal.signal(signal.SIGTERM, request_stop)
     children = []
     failed = False
+    bootstrap = None
     try:
+        if bootstrap_port is not None:
+            from .bootstrap import BootstrapServer
+
+            bootstrap = BootstrapServer(
+                config, manifest, bootstrap_host, bootstrap_port
+            )
         for rank in range(len(config.expert_devices)):
             process = context.Process(
                 target=expert_main,
@@ -298,6 +305,8 @@ def supervise(config_path: str):
         stop_event.set()
         manifest["state"] = "failed" if failed else "stopped"
         atomic_json(root / "run.json", manifest)
+        if bootstrap is not None:
+            bootstrap.close()
         for child in children:
             child.join(timeout=5)
         for child in children:
