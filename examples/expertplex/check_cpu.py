@@ -39,6 +39,7 @@ def main():
         "launch.py",
         "check_gpu.py",
         "check_e2e.py",
+        "check_numerical_alignment.py",
         "bench_sweep.py",
     ):
         subprocess.run(

@@ -454,6 +454,31 @@ CPU 拷贝和逐步文件写入会改变执行时序，因此该运行不能用�
 不支持 DP-aware worker 的 rank 注入，也不用于服务性能对比。
 本工具的 GPU/P-D/图回放路径需在实际服务器上验证，CPU 合约测试不替代该验收。
 
+### 同布局的完整词表增量对齐
+
+`check_numerical_alignment.py` 将上述流程包装为两个顺序运行的诊断。
+原生参考使用 EP4、attention DP4、DP LM head，以及与 ExpertPlex 一致的
+modulo expert placement。ExpertPlex 端分别启动 MoE、P、D 服务，使用真实 KV
+传输。它保留默认 1P+3D+4E 拓扑，但只启动其中一个 D，其余 D 槽位空闲。
+四条代码/问答提示各检查 32 个位置，比较强制采样前的完整词表 log-softmax。
+这是有限样本上的算术一致性检查，不等于任务准确率、任意并发形态或吞吐验收。
+
+在同一个 `gpuq` 作业内依次执行（每个输出目录必须不存在）：
+
+```bash
+python examples/expertplex/check_numerical_alignment.py \
+  --variant native --model-path /path/to/model --output /path/to/alignment/native
+python examples/expertplex/check_numerical_alignment.py \
+  --variant expertplex --model-path /path/to/model \
+  --reference /path/to/alignment/native --output /path/to/alignment/expertplex
+```
+
+模型必须支持 Qwen3 MoE 路径，专家数能被 4 整除，参考与被测服务必须使用同一份
+BF16 权重。工具默认使用 33000 附近端口，可用 `--port-base` 调整；大模型可设置
+`--startup-timeout`。该诊断显式限制 KV 池并关闭 CPU/GPU 调度重叠以捕获分数；
+这些设置只属于诊断，不改变正常服务的自动 KV 容量、overlap 和图回放配置。
+完整词表结果较大，应保留在本地实验目录中。工具结束时清理它启动的服务进程。
+
 ### 存储流水线诊断
 
 `bench_preemption.py` 同时检查完整 trace 的 cluster 决策一致性和阶段切换顺序：
