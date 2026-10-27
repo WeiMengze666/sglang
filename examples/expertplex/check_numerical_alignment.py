@@ -40,6 +40,7 @@ def validate_reference(
     steps=None,
     compile_enabled=False,
     expert_count=4,
+    concurrency=1,
 ):
     """Reject incomparable references before allocating GPU memory."""
     if not (reference / "scores.json").is_file():
@@ -75,6 +76,8 @@ def validate_reference(
         raise ValueError(
             "Reference expert count differs; generate a matched native reference"
         )
+    if report.get("concurrency", 1) != concurrency:
+        raise ValueError("Reference request concurrency differs")
     histories = json.loads((reference / "histories.json").read_text())
     if Path(histories["model_path"]).resolve() != model_path.resolve():
         raise ValueError("Reference model path differs")
@@ -128,6 +131,8 @@ def main():
     p.add_argument("--enable-torch-compile", action="store_true")
     p.add_argument("--expert-count", type=int, choices=range(1, 7), default=4)
     p.add_argument("--steps", type=int, default=32)
+    p.add_argument("--concurrency", type=int, default=1)
+    p.add_argument("--require-decode-batch-size", type=int, default=1)
     p.add_argument("--max-prefill-tokens", type=int, default=512)
     p.add_argument("--context-length", type=int, default=4096)
     p.add_argument(
@@ -143,6 +148,8 @@ def main():
         help="Explicit repeated boundary-test pattern for tokenizer-free debug checkpoints; requires --prompt-lengths",
     )
     a = p.parse_args()
+    if not 1 <= a.require_decode_batch_size <= a.concurrency <= 16:
+        p.error("Require 1 <= decode batch size <= concurrency <= 16")
     if a.variant == "expertplex" and not a.reference:
         p.error("ExpertPlex requires the native reference directory")
     if a.variant == "native" and a.reference:
@@ -176,6 +183,7 @@ def main():
                 a.steps,
                 a.enable_torch_compile,
                 a.expert_count,
+                a.concurrency,
             )
             validate_workload(
                 json.loads((a.reference / "histories.json").read_text()),
@@ -203,6 +211,8 @@ def main():
     report = {
         "scope": __doc__,
         "variant": a.variant,
+        "concurrency": a.concurrency,
+        "required_decode_batch_size": a.require_decode_batch_size,
         "tbo_enabled": not a.disable_tbo,
         "torch_compile_enabled": a.enable_torch_compile,
         "expert_count": a.expert_count,
@@ -445,6 +455,10 @@ def main():
             str(a.output / "scores.json"),
             "--steps",
             str(a.steps),
+            "--concurrency",
+            str(a.concurrency),
+            "--require-decode-batch-size",
+            str(a.require_decode_batch_size),
             "--top-k",
             "0",
             *direct,

@@ -18,6 +18,105 @@ incremental = importlib.import_module("check_incremental")
 
 
 class IncrementalCaptureTests(unittest.TestCase):
+    def test_concurrent_capture_flushes_once_and_keeps_reference_order(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            (root / "config.json").write_text('{"vocab_size": 3}')
+            histories = root / "histories.json"
+            histories.write_text(
+                json.dumps(
+                    {
+                        "model_path": str(root),
+                        "outputs": [
+                            {
+                                "prompt": [i],
+                                "meta_info": {
+                                    "output_token_logprobs": [[0, 1], [0, 2]]
+                                },
+                            }
+                            for i in (0, 1)
+                        ],
+                    }
+                )
+            )
+            barrier = threading.Barrier(2, timeout=3)
+
+            def generate(url, payload, **kwargs):
+                self.assertFalse(kwargs["flush"])
+                barrier.wait()
+                return {"meta_info": {"output_token_logprobs": [[0, 1], [0, 2]]}}
+
+            def collect(directory, prompt, forced, vocab, top_k):
+                return [
+                    {
+                        "history": prompt + forced[:step],
+                        "logprobs": [-1.0, -2.0, -3.0],
+                        "sampling_batch_size": 2,
+                    }
+                    for step in range(2)
+                ]
+
+            argv = [
+                "check_incremental.py",
+                "--base-url",
+                "http://d",
+                "--prefill-url",
+                "http://p",
+                "--bootstrap-port",
+                "19000",
+                "--model-path",
+                str(root),
+                "--histories",
+                str(histories),
+                "--capture-dir",
+                str(root / "capture"),
+                "--output",
+                str(root / "out.json"),
+                "--steps",
+                "2",
+                "--top-k",
+                "0",
+                "--concurrency",
+                "2",
+                "--require-decode-batch-size",
+                "2",
+            ]
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(incremental, "make_processor", return_value="fixture"),
+                patch.object(incremental, "post") as post,
+                patch.object(incremental, "generate", side_effect=generate),
+                patch.object(incremental, "collect", side_effect=collect),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                incremental.main()
+            self.assertEqual(
+                post.call_args_list,
+                [
+                    unittest.mock.call("http://p", "/flush_cache"),
+                    unittest.mock.call("http://d", "/flush_cache"),
+                ],
+            )
+            saved = json.loads((root / "out.json").read_text())
+            self.assertEqual([row["case"] for row in saved["cases"]], [0, 1])
+            self.assertEqual(
+                [row["history"] for row in saved["outputs"]], [[0], [0, 1], [1], [1, 1]]
+            )
+
+    def test_decode_batch_guard_does_not_accept_prefill_only_or_missing_metadata(self):
+        for rows in (
+            [{"sampling_batch_size": 16}, {"sampling_batch_size": 1}],
+            [{}, {}],
+        ):
+            with self.assertRaisesRegex(ValueError, "No decode step"):
+                incremental.decode_batch_summary(rows, 2)
+        self.assertEqual(
+            incremental.decode_batch_summary(
+                [{"sampling_batch_size": 1}, {"sampling_batch_size": 2}], 2
+            ),
+            {"minimum": 2, "maximum": 2},
+        )
+
     def test_strict_cli_rejects_tail_difference_and_partial_reference(self):
         # Identical top-1 tokens are insufficient: a changed tail score or an
         # unscored tail must fail the CLI and leave a failed report on disk.

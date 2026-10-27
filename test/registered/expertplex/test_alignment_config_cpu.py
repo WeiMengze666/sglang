@@ -111,6 +111,14 @@ class AlignmentConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expert count"):
             validate(self.root, self.model, True)
 
+    def test_concurrency_must_match_reference(self):
+        self.check()
+        with self.assertRaisesRegex(ValueError, "concurrency"):
+            validate(self.root, self.model, True, concurrency=4)
+        self.report["concurrency"] = 4
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        validate(self.root, self.model, True, concurrency=4)
+
     def test_trajectory_capacity_and_continuation(self):
         histories = {
             "outputs": [

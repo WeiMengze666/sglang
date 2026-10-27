@@ -71,6 +71,7 @@ def make_processor():
                     "pre_forcing_logprobs": entries,
                     "pid": os.getpid(),
                     "retraction_count": req.retraction_count,
+                    "sampling_batch_size": logits.shape[0],
                 }
                 # TP ranks may each sample the gathered logits. Preserve every
                 # copy and require agreement when collecting; never race writes
@@ -108,6 +109,7 @@ def trajectories(source, vocab, max_steps):
 
 def collect(directory, prompt, forced, vocab, top_k):
     by_step = {}
+    batch_sizes = {}
     for path in sorted(directory.glob("step-*-pid-*.json")):
         record = json.loads(path.read_text())
         step = record["step"]
@@ -133,12 +135,17 @@ def collect(directory, prompt, forced, vocab, top_k):
         if previous is not None and previous != scores:
             raise ValueError("Sampling ranks disagree on pre-forcing probabilities")
         by_step[step] = scores
+        size = record.get("sampling_batch_size", 1)
+        if type(size) is not int or size < 1:
+            raise ValueError("Invalid sampling batch size")
+        batch_sizes[step] = min(batch_sizes.get(step, size), size)
     if set(by_step) != set(range(len(forced))):
         raise ValueError("Missing incremental capture steps")
     return [
         {
             "history": prompt + forced[:step],
             "logprobs": [by_step[step].get(i) for i in range(vocab)],
+            "sampling_batch_size": batch_sizes[step],
         }
         for step in range(len(forced))
     ]
@@ -156,17 +163,19 @@ def post(base_url, endpoint, payload=None):
         return json.loads(data) if payload is not None else None
 
 
-def generate(base_url, payload, *, prefill_url=None, bootstrap_port=None):
+def generate(base_url, payload, *, prefill_url=None, bootstrap_port=None, flush=True):
     if prefill_url is None:
-        post(base_url, "/flush_cache")
+        if flush:
+            post(base_url, "/flush_cache")
         return post(base_url, "/generate", payload)
     # Diagnostic-only direct P/D dispatch preserves arbitrary custom_params
     # through gateway versions whose typed sampling schema discards them. Both
     # workers still use the ordinary bootstrap rendezvous and real KV transfer.
     from urllib.parse import urlparse
 
-    post(prefill_url, "/flush_cache")
-    post(base_url, "/flush_cache")
+    if flush:
+        post(prefill_url, "/flush_cache")
+        post(base_url, "/flush_cache")
     request = dict(
         payload,
         bootstrap_host=urlparse(prefill_url).hostname,
@@ -178,6 +187,14 @@ def generate(base_url, payload, *, prefill_url=None, bootstrap_port=None):
         decode = pool.submit(post, base_url, "/generate", request)
         prefill.result()
         return decode.result()
+
+
+def decode_batch_summary(outputs, minimum):
+    """Sampling rows prove batching, not which TBO microbatches executed."""
+    sizes = [row.get("sampling_batch_size", 1) for row in outputs[1:]]
+    if not sizes or max(sizes) < minimum:
+        raise ValueError("No decode step reached the required sampling batch size")
+    return {"minimum": min(sizes), "maximum": max(sizes)}
 
 
 def main():
@@ -198,10 +215,14 @@ def main():
     parser.add_argument("--capture-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=32)
+    parser.add_argument("--concurrency", type=int, default=1)
+    parser.add_argument("--require-decode-batch-size", type=int, default=1)
     parser.add_argument(
         "--top-k", type=int, default=128, help="Zero captures full vocabulary"
     )
     args = parser.parse_args()
+    if not 1 <= args.require_decode_batch_size <= args.concurrency <= 16:
+        parser.error("Require 1 <= decode batch size <= concurrency <= 16")
     if args.require_exact_logprobs and (not args.reference or args.top_k != 0):
         parser.error("Exact logprob acceptance requires --reference and --top-k 0")
     if (args.prefill_url is None) != (args.bootstrap_port is None):
@@ -234,6 +255,8 @@ def main():
         "status": "running",
         "transport": "direct-pd" if args.prefill_url else "single-endpoint",
         "require_exact_logprobs": args.require_exact_logprobs,
+        "concurrency": args.concurrency,
+        "required_decode_batch_size": args.require_decode_batch_size,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -243,41 +266,61 @@ def main():
         tmp.replace(args.output)
 
     save()
-    try:
-        for index, (prompt, forced) in enumerate(cases):
-            directory = args.capture_dir / f"case-{index:04d}"
-            directory.mkdir()
-            result = generate(
-                args.base_url,
-                {
-                    "input_ids": prompt,
-                    "custom_logit_processor": processor,
-                    "return_logprob": True,
-                    "sampling_params": {
-                        "temperature": 0,
-                        "max_new_tokens": len(forced),
-                        "ignore_eos": True,
-                        "custom_params": {
-                            "prompt_ids": prompt,
-                            "forced_ids": forced,
-                            "vocab_size": vocab,
-                            "top_k": args.top_k,
-                            "capture_dir": str(directory),
-                        },
+
+    def capture_case(index):
+        prompt, forced = cases[index]
+        directory = args.capture_dir / f"case-{index:04d}"
+        directory.mkdir()
+        result = generate(
+            args.base_url,
+            {
+                "input_ids": prompt,
+                "custom_logit_processor": processor,
+                "return_logprob": True,
+                "sampling_params": {
+                    "temperature": 0,
+                    "max_new_tokens": len(forced),
+                    "ignore_eos": True,
+                    "custom_params": {
+                        "prompt_ids": prompt,
+                        "forced_ids": forced,
+                        "vocab_size": vocab,
+                        "top_k": args.top_k,
+                        "capture_dir": str(directory),
                     },
                 },
-                prefill_url=args.prefill_url,
-                bootstrap_port=args.bootstrap_port,
-            )
-            returned = [x[1] for x in result["meta_info"]["output_token_logprobs"]]
-            if returned != forced:
-                raise ValueError(
-                    "Server did not generate the complete forced trajectory"
-                )
-            outputs = collect(directory, prompt, forced, vocab, args.top_k)
-            report["cases"].append({"case": index, "steps": len(outputs)})
-            report["outputs"].extend(outputs)
-            save()
+            },
+            prefill_url=args.prefill_url,
+            bootstrap_port=args.bootstrap_port,
+            flush=args.concurrency == 1,
+        )
+        returned = [x[1] for x in result["meta_info"]["output_token_logprobs"]]
+        if returned != forced:
+            raise ValueError("Server did not generate the complete forced trajectory")
+        outputs = collect(directory, prompt, forced, vocab, args.top_k)
+        summary = decode_batch_summary(outputs, args.require_decode_batch_size)
+        return {
+            "case": index,
+            "steps": len(outputs),
+            "decode_sampling_batch": summary,
+        }, outputs
+
+    try:
+        # Flush once before each wave, never while another request is live.
+        # pool.map preserves reference order regardless of completion order.
+        with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
+            for start in range(0, len(cases), args.concurrency):
+                if args.concurrency > 1:
+                    if args.prefill_url:
+                        post(args.prefill_url, "/flush_cache")
+                    post(args.base_url, "/flush_cache")
+                for summary, outputs in pool.map(
+                    capture_case,
+                    range(start, min(start + args.concurrency, len(cases))),
+                ):
+                    report["cases"].append(summary)
+                    report["outputs"].extend(outputs)
+                    save()
         if args.reference:
             report["comparisons"] = compare_distributions(read(args.reference), report)
             exact = all(
