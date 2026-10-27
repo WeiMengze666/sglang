@@ -35,6 +35,32 @@ def make_processor():
 
             if len(custom_param_list) != logits.shape[0]:
                 raise ValueError("Capture batch metadata mismatch")
+            tbo_debug = None
+            if os.environ.get("SGLANG_TBO_DEBUG") == "1":
+                import time
+
+                from sglang.srt.batch_overlap.two_batch_overlap import (
+                    TboCudaGraphRunnerPlugin,
+                )
+                from sglang.srt.expertplex.integration import expertplex_enabled
+
+                tbo_debug = {
+                    "capture_ns": time.monotonic_ns(),
+                    "replay": TboCudaGraphRunnerPlugin.last_debug_replay,
+                }
+                if expertplex_enabled():
+                    from sglang.srt.expertplex.client import get_client
+
+                    client = get_client()
+                    tbo_debug["phase"] = client.client.phase
+                    tbo_debug["client_id"] = client.client.id
+                    tbo_debug["mailbox_timings"] = [
+                        [
+                            client.native.read_timing(peer).cpu().tolist()
+                            for peer in peers
+                        ]
+                        for peers in client.mailboxes
+                    ]
             for row, params in enumerate(custom_param_list):
                 req = params["__req__"]
                 if req.retraction_count:
@@ -72,6 +98,7 @@ def make_processor():
                     "pid": os.getpid(),
                     "retraction_count": req.retraction_count,
                     "sampling_batch_size": logits.shape[0],
+                    "tbo_debug": tbo_debug,
                 }
                 # TP ranks may each sample the gathered logits. Preserve every
                 # copy and require agreement when collecting; never race writes

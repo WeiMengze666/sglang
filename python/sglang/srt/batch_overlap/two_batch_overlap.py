@@ -339,6 +339,10 @@ def compute_split_indices_for_cuda_graph_replay(
 
 
 class TboCudaGraphRunnerPlugin:
+    # Process-local diagnostic snapshot. Consumers must check prepare_ns;
+    # a later eager forward may otherwise observe an earlier graph replay.
+    last_debug_replay = None
+
     def __init__(self):
         self._tbo_children_num_token_non_padded = torch.zeros(
             (2,), dtype=torch.int32, device=get_device().device
@@ -387,6 +391,20 @@ class TboCudaGraphRunnerPlugin:
             )
         )
 
+        if _tbo_debug:
+            import time
+
+            a, b = TboForwardBatchPreparer._split_num_token_non_padded(
+                tbo_split_token_index=tbo_split_token_index,
+                num_token_non_padded=num_token_non_padded,
+            )
+            type(self).last_debug_replay = {
+                "prepare_ns": time.monotonic_ns(),
+                "graph_bs": bs,
+                "actual_tokens": num_token_non_padded,
+                "split_token_index": tbo_split_token_index,
+                "child_tokens": [a, b],
+            }
         self._tbo_children_num_token_non_padded[...] = (
             TboForwardBatchPreparer.compute_tbo_children_num_token_non_padded_raw(
                 tbo_split_token_index=tbo_split_token_index,

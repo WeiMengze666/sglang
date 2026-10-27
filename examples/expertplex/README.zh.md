@@ -696,6 +696,17 @@ TBO 和 torch.compile 模式必须一致，不能复用不同分片布局的 ref
 确定性 attention/GEMM 配置进行隔离诊断。工具拒绝混用两种确定性模式的 reference；
 该模式的结果与常规 serving 路径分别验收，不能用于掩盖常规模式的数值差异或性能损失。
 
+并发 ExpertPlex 数值诊断可附加 `--require-tbo-replays 2`。该选项打开原生
+`SGLANG_TBO_DEBUG`，要求至少两次新的 graph replay 包含两个非空子批，并检查
+两路 mailbox 在所有 E rank 上的完成 epoch 都有推进。仅传入 `--enable-two-batch-overlap`
+或采样 batch 大于一不能证明两路子批实际执行；缺少证据时诊断会失败，结果写入
+`tbo-proof.json`。这些同步与 CPU 快照只用于功能验证，不能用于计时，也不能证明
+两路 GPU 工作的重叠时长。已有捕获可用 `check_tbo_completion.py RUN_DIR`
+离线复查；非 4E 布局应传入对应的 `--expert-count`。
+
+诊断默认端口基数为 23000，使派生的 DP、NCCL 和 bootstrap 端口避开 Linux
+通常的临时端口范围。若显式设置 `--port-base`，需同时保证这些派生端口可用。
+
 `launch_baseline.py` 与 `run_serving_experiment.py` 也默认使用 FlashInfer sampling；
 数值诊断可显式指定 `--sampling-backend pytorch`。实验总入口默认使用 FlashInfer attention，
 保留 `--attention-backend triton` 用于既有固定条件诊断。汇总工具检查 sampling backend

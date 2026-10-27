@@ -132,11 +132,20 @@ def main():
         help="Matched native capture; native may replay it to check baseline repeatability",
     )
     p.add_argument("--model-path", type=Path, required=True)
-    p.add_argument("--port-base", type=int, default=33000)
+    # Keep the HTTP, DP control (+233..239), bootstrap and NCCL ports
+    # below Linux's usual ephemeral range (32768..60999). Otherwise this
+    # process's own outbound connections can occupy a future control port.
+    p.add_argument("--port-base", type=int, default=23000)
     p.add_argument("--startup-timeout", type=float, default=1800)
     p.add_argument("--disable-tbo", action="store_true")
     p.add_argument("--enable-torch-compile", action="store_true")
     p.add_argument("--enable-deterministic-inference", action="store_true")
+    p.add_argument(
+        "--require-tbo-replays",
+        type=int,
+        default=0,
+        help="Require this many completed nonempty two-child replays on all E ranks; diagnostic only",
+    )
     p.add_argument("--expert-count", type=int, choices=range(1, 7), default=4)
     p.add_argument("--steps", type=int, default=32)
     p.add_argument("--concurrency", type=int, default=1)
@@ -160,6 +169,13 @@ def main():
         p.error("Require 1 <= decode batch size <= concurrency <= 16")
     if a.variant == "expertplex" and not a.reference:
         p.error("ExpertPlex requires the native reference directory")
+    if a.require_tbo_replays < 0 or (
+        a.require_tbo_replays
+        and (a.variant != "expertplex" or a.disable_tbo or a.concurrency < 2)
+    ):
+        p.error(
+            "TBO completion proof requires ExpertPlex, enabled TBO and concurrency >= 2"
+        )
     if a.enable_torch_compile and not a.disable_tbo:
         p.error("The torch.compile diagnostic requires --disable-tbo")
     if a.steps < 2 or not 0 < a.max_prefill_tokens < a.context_length:
@@ -214,12 +230,15 @@ def main():
         SGLANG_MOONCAKE_CUSTOM_MEM_POOL="INTRA_NODE_NVLINK",
         MC_INTRANODE_NVLINK="true",
     )
+    if a.require_tbo_replays:
+        env["SGLANG_TBO_DEBUG"] = "1"
     children = []
     report = {
         "scope": __doc__,
         "variant": a.variant,
         "concurrency": a.concurrency,
         "required_decode_batch_size": a.require_decode_batch_size,
+        "required_tbo_replays": a.require_tbo_replays,
         "tbo_enabled": not a.disable_tbo,
         "torch_compile_enabled": a.enable_torch_compile,
         "deterministic_inference": a.enable_deterministic_inference,
@@ -494,6 +513,12 @@ def main():
                 stderr=subprocess.STDOUT,
                 check=True,
                 timeout=1800,
+            )
+        if a.require_tbo_replays:
+            from check_tbo_completion import check
+
+            check(
+                a.output, expert_count=a.expert_count, min_replays=a.require_tbo_replays
             )
         report["status"] = "passed"
     except BaseException as exc:
