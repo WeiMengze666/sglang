@@ -3,7 +3,76 @@
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
+
+
+def validate_sharing_reports(native, apk, mps):
+    """Do not turn partial runs or different workloads into a Pareto comparison."""
+    reports = (native, apk, mps)
+    identities = {r.get("workload_identity") for r in reports}
+    if None in identities or len(identities) != 1:
+        raise ValueError("Workload initialization algorithms differ or are missing")
+    for field in (
+        "hidden",
+        "intermediate",
+        "experts",
+        "world",
+        "top_k",
+        "prefill_rows",
+        "decode_rows",
+        "delay_us",
+        "operation",
+        "iterations",
+    ):
+        if (
+            any(field not in r["settings"] for r in reports)
+            or len({r["settings"][field] for r in reports}) != 1
+        ):
+            raise ValueError(f"Sharing workload mismatch: {field}")
+    for field, default in (
+        ("prefill_expert_rows", None),
+        ("decode_active_experts", None),
+        ("decode_expert_rows", 1),
+    ):
+        if len({r["settings"].get(field, default) for r in reports}) != 1:
+            raise ValueError(f"Controlled routing mismatch: {field}")
+    if native["expert_rows"] != apk["expert_rows"]:
+        raise ValueError("Native/APK expert vectors differ")
+    expected_native = sum(
+        len(native["settings"]["green_divisions"]) if mode == "green" else 1
+        for mode in native["settings"]["modes"]
+    )
+    if len(native["cases"]) != expected_native or any(
+        case.get("finite_outputs") != [True, True] for case in native["cases"]
+    ):
+        raise ValueError("Incomplete or nonfinite native sharing sweep")
+    if [c["decode_budget"] for c in apk["cases"]] != apk["settings"]["budgets"]:
+        raise ValueError("Incomplete APK policy sweep")
+    if [list(c["requested_percentages"]) for c in mps["cases"]] != [
+        list(map(int, value.split(":"))) for value in mps["settings"]["percentages"]
+    ]:
+        raise ValueError("Incomplete MPS policy sweep")
+    for case in mps["cases"]:
+        if [client["expert_rows"] for client in case["clients"]] != native[
+            "expert_rows"
+        ]:
+            raise ValueError("MPS expert vectors differ")
+    for case in apk["cases"]:
+        reference = case.get("native_reference", [])
+        if len(reference) != 2 or not all(r.get("passed") is True for r in reference):
+            raise ValueError("APK numerical check did not pass")
+    for report in reports:
+        if not report["cases"]:
+            raise ValueError("Empty sharing experiment")
+        for case in report["cases"]:
+            values = case["response_upper_bound_us"]
+            if len(values) != 2 or any(not math.isfinite(v) or v <= 0 for v in values):
+                raise ValueError("Sharing timings must be finite and positive")
+    isolated = native["isolated_response_upper_bound_us"]
+    if len(isolated) != 2 or any(not math.isfinite(v) or v <= 0 for v in isolated):
+        raise ValueError("Need finite positive native isolated timings")
+    return native["settings"]
 
 
 def main():
@@ -46,20 +115,7 @@ def main():
         native, apk, mps = [
             json.loads(path.read_text()) for path in (args.native, args.apk, args.mps)
         ]
-        if (
-            len({r.get("workload_identity", "legacy-cuda") for r in (native, apk, mps)})
-            != 1
-        ):
-            raise ValueError("Workload initialization algorithms differ")
-        if native["expert_rows"] != apk["expert_rows"]:
-            raise ValueError("Native/APK expert vectors differ")
-        for case in mps["cases"]:
-            if [client["expert_rows"] for client in case["clients"]] != native[
-                "expert_rows"
-            ]:
-                raise ValueError("MPS expert vectors differ")
-        if len({r["settings"]["operation"] for r in (native, apk, mps)}) != 1:
-            raise ValueError("Operation mismatch")
+        settings = validate_sharing_reports(native, apk, mps)
         isolated = native["isolated_response_upper_bound_us"]
         points = []
         for case in native["cases"]:
@@ -107,7 +163,9 @@ def main():
         ax.grid(alpha=0.2)
         ax.legend(fontsize=8)
         fig.suptitle(
-            f"B300 BF16 {native['settings']['operation']} | P8192 / D128 / top-8\nAttention-clock release→ack; D released 10 µs later",
+            f"B300 BF16 {settings['operation']} | P{settings['prefill_rows']} / "
+            f"D{settings['decode_rows']} / top-{settings['top_k']}\n"
+            f"Attention-clock release→ack; D released {settings['delay_us']} µs later",
             fontsize=10,
         )
         data = {
