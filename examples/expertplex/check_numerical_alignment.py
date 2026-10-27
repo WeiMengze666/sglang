@@ -20,6 +20,31 @@ from check_e2e import PROMPTS, generate
 from launch import wait_http
 
 
+def validate_reference(reference, model_path, tbo_enabled):
+    """Reject incomparable references before allocating GPU memory."""
+    if not (reference / "scores.json").is_file():
+        raise ValueError("Reference must contain native scores.json")
+    report = json.loads((reference / "report.json").read_text())
+    if report.get("variant") != "native" or report.get("status") != "passed":
+        raise ValueError("Reference must be a successful native diagnostic")
+    enabled = report.get("tbo_enabled")
+    if enabled is None:
+        # Backward compatibility with the original diagnostic report format.
+        launches = [
+            cmd for cmd in report.get("commands", []) if "sglang.launch_server" in cmd
+        ]
+        if len(launches) != 1:
+            raise ValueError("Cannot determine reference overlap configuration")
+        enabled = "--enable-two-batch-overlap" in launches[0]
+    if type(enabled) is not bool or enabled != tbo_enabled:
+        raise ValueError(
+            "Reference TBO mode differs; generate a matched native reference"
+        )
+    histories = json.loads((reference / "histories.json").read_text())
+    if Path(histories["model_path"]).resolve() != model_path.resolve():
+        raise ValueError("Reference model path differs")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--variant", choices=["native", "expertplex"], required=True)
@@ -28,9 +53,12 @@ def main():
     p.add_argument("--model-path", type=Path, required=True)
     p.add_argument("--port-base", type=int, default=33000)
     p.add_argument("--startup-timeout", type=float, default=1800)
+    p.add_argument("--disable-tbo", action="store_true")
     a = p.parse_args()
     if a.variant == "expertplex" and not a.reference:
         p.error("ExpertPlex requires the native reference directory")
+    if a.variant == "native" and a.reference:
+        p.error("--reference applies to the ExpertPlex diagnostic")
     if not 1024 <= a.port_base <= 63000:
         p.error("--port-base must leave space for bootstrap/NCCL ports up to +2001")
     if not 0 < a.startup_timeout < float("inf"):
@@ -38,8 +66,10 @@ def main():
     a.output = a.output.resolve()
     if a.reference:
         a.reference = a.reference.resolve()
-        if not (a.reference / "scores.json").is_file():
-            p.error("--reference must contain native scores.json")
+        try:
+            validate_reference(a.reference, a.model_path, not a.disable_tbo)
+        except (OSError, ValueError, KeyError) as exc:
+            p.error(str(exc))
     a.output.mkdir(parents=True, exist_ok=False)
     model = str(a.model_path.resolve())
     config = json.loads((a.model_path / "config.json").read_text())
@@ -54,6 +84,7 @@ def main():
     report = {
         "scope": __doc__,
         "variant": a.variant,
+        "tbo_enabled": not a.disable_tbo,
         "status": "running",
         "commands": [],
     }
@@ -117,10 +148,11 @@ def main():
         "full",
         "--cuda-graph-max-bs-decode",
         "16",
-        "--enable-two-batch-overlap",
         "--enable-custom-logit-processor",
         "--disable-overlap-schedule",
     ]
+    if not a.disable_tbo:
+        prefix.append("--enable-two-batch-overlap")
     try:
         direct = []
         if a.variant == "native":
@@ -200,7 +232,7 @@ def main():
                     "16",
                     "--expertplex-startup-timeout",
                     str(a.startup_timeout),
-                    "--enable-two-batch-overlap",
+                    *([] if a.disable_tbo else ["--enable-two-batch-overlap"]),
                 ],
                 a.port_base + 200,
             )
