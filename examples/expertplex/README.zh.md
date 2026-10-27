@@ -260,7 +260,22 @@ KV pool 默认沿用 SGLang 显存 profiling；以上命令不限制总 KV token
 仅用于显式的控制实验。原生 scheduler overlap、decode CUDA Graph、FlashInfer
 attention/sampling/autotune 和 Mooncake KV 移交继续使用。缓存行为遵循原生 PD 默认值
 （例如 decode radix cache 默认关闭），可以在已支持的原生选项范围内调整。
-尚未适配的 prefill graph、`torch.compile`、SBO、attention TP>1 等组合仍会明确拒绝。
+`torch.compile`、SBO、attention TP>1 等尚未适配的组合仍会明确拒绝。
+
+不使用 TBO 时，P 服务可复用原生 breakable prefill CUDA Graph：从 MoE、P、D
+命令中都移除 `--enable-two-batch-overlap`，只给 P 设置
+`--cuda-graph-backend-prefill breakable --cuda-graph-max-bs-prefill 1024`。
+D 继续使用原生 full decode graph。捕获上限以 token 数计，不能超过 P mailbox
+容量；未被原生图调度器接纳的 batch 继续走 eager 路径。图捕获额外消耗显存，
+应结合原生显存 profiling 调整上限。当前 prefill graph 默认关闭；原生兼容性检查
+会在启用 TBO 时禁用 breakable prefill graph，这个组合尚不支持。应查看实际请求的
+`cuda graph` 日志，不能把启动参数或单独通过的两个选项当作组合验证。
+实验辅助入口 `launch.py`、`launch_baseline.py` 和 `run_serving_experiment.py`
+使用 `--prefill-graph-backend breakable --prefill-graph-max-tokens 1024` 传递相同
+原生选项，便于对 ExpertPlex 和原生基线进行一致的调优。辅助入口会拒绝同时启用
+TBO 和 prefill graph：ExpertPlex 配置使用 `overlap: "none"`，原生基线使用
+`--disable-tbo`。数值比较需要记录并匹配图模式与确定性设置；跨 eager/graph 的
+逐位对齐应另外验证，两端同时启用原生 `--enable-deterministic-inference`。
 
 控制面位于 `sglang/srt/disaggregation/expertplex.py` 和
 `sglang/srt/expertplex/bootstrap.py`；APK、MoE client/worker 等计算后端保留在

@@ -368,10 +368,17 @@ def validate_server_args(cfg: Any) -> None:
             else getattr(phase_config, "backend", None)
         )
         allowed = (
-            ("disabled", "piecewise", "full") if phase == "decode" else ("disabled",)
+            ("disabled", "breakable", "full")
+            if phase == "decode"
+            else ("disabled", "breakable")
         )
         if backend not in allowed:
             errors.append(f"--cuda-graph-backend-{phase} must be one of {allowed}")
+        if phase == "prefill" and backend == "breakable" and config.overlap == "tbo":
+            errors.append(
+                "ExpertPlex prefill breakable graph with TBO is not yet validated; "
+                "use --cuda-graph-backend-prefill disabled with TBO"
+            )
     if (
         Path(cfg.model_path).expanduser().resolve()
         != Path(config.model_path).expanduser().resolve()

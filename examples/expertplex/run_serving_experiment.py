@@ -16,11 +16,17 @@ import sys
 import time
 from pathlib import Path
 
-from launch import kv_token_limit, memory_fraction
+from launch import (
+    add_prefill_graph_args,
+    kv_token_limit,
+    memory_fraction,
+    prefill_graph_options,
+)
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    add_prefill_graph_args(p)
     p.add_argument(
         "--variant",
         choices=("expertplex", "colocated", "chunked", "pdd", "pdmux"),
@@ -100,6 +106,10 @@ def main():
     )
     p.add_argument("--output-dir", required=True, type=Path)
     args = p.parse_args()
+    try:
+        prefill_graph_options(args, args.sequence_cap)
+    except ValueError as exc:
+        p.error(str(exc))
     if args.deepep_config and args.variant == "expertplex":
         p.error("--deepep-config applies to native baselines")
     if args.enable_dp_lm_head and args.variant in ("expertplex", "pdmux"):
@@ -149,6 +159,8 @@ def main():
             setattr(args, field, str(snapshot))
     scripts = Path(__file__).resolve().parent
     common = [
+        "--prefill-graph-backend",
+        args.prefill_graph_backend,
         "--port",
         str(args.port),
         "--tokenizer-path",
@@ -162,6 +174,8 @@ def main():
         "--log-dir",
         str(args.output_dir / "service"),
     ]
+    if args.prefill_graph_max_tokens is not None:
+        common += ["--prefill-graph-max-tokens", str(args.prefill_graph_max_tokens)]
     if args.mem_fraction_static is not None:
         common += ["--mem-fraction-static", str(args.mem_fraction_static)]
     if args.variant == "expertplex":

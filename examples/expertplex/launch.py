@@ -44,7 +44,45 @@ def memory_fraction(value):
     return fraction
 
 
+def prefill_graph_options(args, capacity):
+    """Use native graph buckets within the allocated P token capacity."""
+    backend = getattr(args, "prefill_graph_backend", "disabled")
+    limit = getattr(args, "prefill_graph_max_tokens", None)
+    if backend not in ("disabled", "breakable"):
+        raise ValueError("Prefill graph backend must be disabled or breakable")
+    if backend == "disabled":
+        if limit is not None:
+            raise ValueError("Prefill graph token limit requires an enabled graph")
+        return ["--cuda-graph-backend-prefill", "disabled"]
+    limit = capacity if limit is None else limit
+    if type(limit) is not int or not 0 < limit <= capacity:
+        raise ValueError("Prefill graph token limit must fit the P token capacity")
+    return [
+        "--cuda-graph-backend-prefill",
+        backend,
+        "--cuda-graph-max-bs-prefill",
+        str(limit),
+    ]
+
+
+def add_prefill_graph_args(parser):
+    parser.add_argument(
+        "--prefill-graph-backend",
+        choices=("disabled", "breakable"),
+        default="disabled",
+        help="Native prefill graph backend; eager attention boundaries",
+    )
+    parser.add_argument(
+        "--prefill-graph-max-tokens",
+        type=int,
+        help="Largest captured P token bucket; larger batches use native eager fallback",
+    )
+
+
 def commands(node, args):
+    prefill_graph = prefill_graph_options(args, node.max_prefill_tokens)
+    if prefill_graph[1] != "disabled" and node.overlap == "tbo":
+        raise ValueError("Prefill graph requires overlap=none; native TBO disables it")
     worker = [
         sys.executable,
         "-m",
@@ -106,8 +144,11 @@ def commands(node, args):
             "mooncake",
             "--cuda-graph-backend-decode",
             "full" if args.cuda_graph else "disabled",
-            "--cuda-graph-backend-prefill",
-            "disabled",
+            *(
+                prefill_graph
+                if client.phase == "prefill"
+                else ["--cuda-graph-backend-prefill", "disabled"]
+            ),
             "--chunked-prefill-size",
             str(capacity if client.phase == "decode" or args.chunked_prefill else -1),
             "--max-prefill-tokens",
@@ -197,6 +238,7 @@ def wait_http(url, children, deadline, expected_workers=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    add_prefill_graph_args(parser)
     parser.add_argument("--config", required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=31000)

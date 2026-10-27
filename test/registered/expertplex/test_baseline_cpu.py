@@ -86,6 +86,11 @@ class BaselineLaunchTests(unittest.TestCase):
         args.decode_kv_tokens = None
         args.pdmux_config = "/pdmux.yaml"
         args.deepep_config = "/frozen-deepep.json"
+        args.prefill_graph_backend = "breakable"
+        args.prefill_graph_max_tokens = 4096
+        with self.assertRaisesRegex(ValueError, "disable-tbo"):
+            baseline.commands(args)
+        args.disable_tbo = True
         for variant in ("pdd", "pdmux", "colocated", "chunked"):
             args.variant = variant
             for fraction in (None, 0.9):
@@ -99,6 +104,17 @@ class BaselineLaunchTests(unittest.TestCase):
                         "/frozen-deepep.json",
                     )
                     self.assertNotIn("--max-total-tokens", command)
+                    self.assertEqual(
+                        command[command.index("--cuda-graph-backend-prefill") + 1],
+                        "disabled" if name == "decode" else "breakable",
+                    )
+                    if name == "decode":
+                        self.assertNotIn("--cuda-graph-max-bs-prefill", command)
+                    else:
+                        self.assertEqual(
+                            command[command.index("--cuda-graph-max-bs-prefill") + 1],
+                            "4096",
+                        )
                     if fraction is None:
                         self.assertNotIn("--mem-fraction-static", command)
                     else:

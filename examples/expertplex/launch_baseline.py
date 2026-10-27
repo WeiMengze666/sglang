@@ -15,10 +15,22 @@ import sys
 import time
 from pathlib import Path
 
-from launch import kv_token_limit, memory_fraction, wait_http
+from launch import (
+    add_prefill_graph_args,
+    kv_token_limit,
+    memory_fraction,
+    prefill_graph_options,
+    wait_http,
+)
 
 
 def commands(args):
+    if (
+        getattr(args, "prefill_graph_backend", "disabled") != "disabled"
+        and args.variant != "pdmux"
+        and not args.disable_tbo
+    ):
+        raise ValueError("Prefill graph requires --disable-tbo in the native baseline")
     pdd = args.variant == "pdd"
     tp = 4 if pdd else 8
     attention_dp = 1 if args.variant == "pdmux" else tp
@@ -63,8 +75,7 @@ def commands(args):
         str(args.max_prefill_tokens),
         "--context-length",
         str(args.sequence_cap),
-        "--cuda-graph-backend-prefill",
-        "disabled",
+        *prefill_graph_options(args, args.max_prefill_tokens),
         "--cuda-graph-backend-decode",
         "full",
         "--cuda-graph-max-bs-decode",
@@ -137,6 +148,11 @@ def commands(args):
                     max(args.sequence_cap, args.max_prefill_tokens)
                 )
             command[command.index("--cuda-graph-backend-decode") + 1] = "disabled"
+        else:
+            command[command.index("--cuda-graph-backend-prefill") + 1] = "disabled"
+            if "--cuda-graph-max-bs-prefill" in command:
+                i = command.index("--cuda-graph-max-bs-prefill")
+                del command[i : i + 2]
         servers.append((role, command, port))
     router = [
         sys.executable,
@@ -158,6 +174,7 @@ def commands(args):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    add_prefill_graph_args(p)
     p.add_argument(
         "--variant", choices=("colocated", "chunked", "pdd", "pdmux"), required=True
     )

@@ -202,6 +202,48 @@ class IntegrationTests(unittest.TestCase):
         INTEGRATION.validate_attention_model(hf)
         self.assertEqual(INTEGRATION.attention_config()[1].phase, "decode")
 
+    def test_native_graph_backend_names_and_prefill_overlap_guard(self):
+        for decode in ("disabled", "full", "breakable"):
+            INTEGRATION.validate_server_args(
+                self.server_args(
+                    cuda_graph_config={
+                        "prefill": {"backend": "breakable"},
+                        "decode": {"backend": decode},
+                    }
+                )
+            )
+        with self.assertRaisesRegex(ValueError, "cuda-graph-backend-decode"):
+            INTEGRATION.validate_server_args(
+                self.server_args(
+                    cuda_graph_config={
+                        "prefill": {"backend": "disabled"},
+                        "decode": {"backend": "piecewise"},
+                    }
+                )
+            )
+        with self.assertRaisesRegex(ValueError, "cuda-graph-backend-prefill"):
+            INTEGRATION.validate_server_args(
+                self.server_args(
+                    cuda_graph_config={
+                        "prefill": {"backend": "full"},
+                        "decode": {"backend": "full"},
+                    }
+                )
+            )
+        node = CONFIG.NodeConfig.from_dict(self.config.to_dict() | {"overlap": "tbo"})
+        node.write_json(self.config_path)
+        INTEGRATION._load_attention_config.cache_clear()
+        with self.assertRaisesRegex(ValueError, "prefill breakable graph with TBO"):
+            INTEGRATION.validate_server_args(
+                self.server_args(
+                    enable_two_batch_overlap=True,
+                    cuda_graph_config={
+                        "prefill": {"backend": "breakable"},
+                        "decode": {"backend": "full"},
+                    },
+                )
+            )
+
     def test_bootstrap_runtime_uses_device_namespace(self):
         # ServerArgs has base_gpu_id, but Runtime's Disagg namespace does not.
         cfg = types.SimpleNamespace(
