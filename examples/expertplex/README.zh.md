@@ -414,7 +414,11 @@ PDMux 推进预算及更多边界点仍在调优，这些 pilot 不代替真实�
 rendezvous。`bench_apk_sharing.py` 对 GateUp/Down 分别执行 §7.3 对照；
 `profile_operations.py` 扫 §7.4 的 per-expert rows / active experts；
 `bench_communication.py --cuda-graph` 用 GPU 同步隔离 dispatch 与 combine，
-支持单独构建的固定 DeepEP v1。`--group-transfers` 测试预建整组 attention 通信模板；
+支持单独构建的固定 DeepEP v1。
+DeepEP low-latency 模式会在初始化 NVSHMEM 前按整个 `--rows` 扫描的最大值设置
+`NVSHMEM_QP_DEPTH`（至少 `2 * (max_rows + 1)`，向上取整到二次幂），
+保留更大的用户配置，并将实际深度写入结果元数据。
+`--group-transfers` 测试预建整组 attention 通信模板；
 服务端在启用 E 侧预处理时自动使用整组通信；A 侧预处理消融可通过
 `SGLANG_EXPERTPLEX_GROUP_COMM=1` 显式选择整组通信。
 原始 hidden 通信诊断使用 `--group-transfers --prefill-preprocess --mode normal`，

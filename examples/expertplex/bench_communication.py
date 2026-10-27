@@ -16,6 +16,21 @@ import time
 from pathlib import Path
 
 
+def low_latency_qp_depth(rows, configured=1024):
+    """Size once for the entire sweep, before any worker initializes NVSHMEM."""
+    if (
+        not rows
+        or any(type(n) is not int or n <= 0 for n in rows)
+        or type(configured) is not int
+        or configured <= 0
+    ):
+        raise ValueError("Rows and configured QP depth must be positive integers")
+    # DeepEP's LL dispatch and combine both require two WRs per token plus
+    # completion signaling. NVSHMEM initialization persists across row cases.
+    required = max(configured, 2 * (max(rows) + 1))
+    return 1 << (required - 1).bit_length()
+
+
 def worker(rank, settings):
     import torch
     import torch.distributed as dist
@@ -135,6 +150,9 @@ def worker(rank, settings):
                 nvlink_buffer_bytes=nvlink_bytes,
                 rdma_buffer_bytes=rdma_bytes,
                 deepep_source_revision=args.deepep_revision,
+                nvshmem_qp_depth=int(os.environ["NVSHMEM_QP_DEPTH"])
+                if low_latency
+                else None,
             )
         samples = []
         recv_x = recv_ids = recv_weights = handle = None
@@ -476,6 +494,14 @@ def main():
         p.error("Counts must be positive")
     if os.environ.get("CUDA_VISIBLE_DEVICES") not in (None, "0,1,2,3,4,5,6,7"):
         p.error("Expose eight GPUs in physical order")
+    if args.backend == "deepep" and args.mode == "low_latency":
+        try:
+            depth = low_latency_qp_depth(
+                args.rows, int(os.environ.get("NVSHMEM_QP_DEPTH", "1024"))
+            )
+        except ValueError as exc:
+            p.error(str(exc))
+        os.environ["NVSHMEM_QP_DEPTH"] = str(depth)
     import torch.multiprocessing as mp
 
     mp.spawn(worker, args=(vars(args),), nprocs=8, join=True)
