@@ -5,11 +5,10 @@
 **Qwen/Qwen3-Coder-480B-A35B-Instruct，原始 BF16 safetensors**，调试模型为
 **Qwen/Qwen3-30B-A3B，原始 BF16 safetensors**。默认布局是 **1P + 3D + 4E**。
 
-已在 8×B300 编译并测试 CUDA IPC、原生 TMA/TCGEN05、双 CTA cluster、
-连续 prefill 布局及 COMM stream 协议。小型 BF16 checkpoint 的 1P3D4E HTTP/KV
-生成已打通，但严格 token 对齐未全部通过。Coder 完整真实权重、论文所有实验及
-1.5× goodput **尚未验收**。逐项证据见 [论文对照](PAPER_CONFORMANCE.md) 和
-[验证记录](VALIDATION.md)。
+代码包含 CUDA IPC、原生 TMA/TCGEN05、双 CTA cluster、连续 prefill 布局及
+COMM stream 协议。功能、有限轨迹数值检查和性能验收需分别判断；论文完整复现及
+1.5× goodput **尚未验收**。历史实验记录中的权重、环境和结果应按各自日期解释，
+不能代替当前配置的复验。机制清单见 [论文对照](PAPER_CONFORMANCE.md)。
 
 ## 版本和范围
 
@@ -394,6 +393,26 @@ BF16 partial output；不能继续套用 A 侧展开 top-k 后的 routed-row 通
 `profile_operations.py` 的 GEMM/ACT 数据没有包含 E 侧 Scatter/Gather，不能直接当作
 `prefill_preprocess=true` 的完整 MoE profile；完整 critical path 仍需独立测量。
 
+`profile_full_moe.py` 为 raw-prefill 路径测量完整 E 层，包含 Scatter1/Scatter2、
+GateUp、ACT、Down 和 Gather。它复用 `bench_preemption.py` 的 GPU 发布与独立
+attention/E 进程，但使用 `--trace-capacity 0` 关闭 trace，以 E 的 admission 到
+retirement 计时；传输、attention、KV 迁移和服务排队不在该区间内。例如在一个
+GPUQ 作业内运行：
+
+```bash
+python examples/expertplex/profile_full_moe.py \
+  --sms 32 64 84 116 --prefill-rows 128 512 2048 8192 \
+  --decode-rows 1 8 32 128 --iterations 5 --output-dir /path/to/new-moe-profile
+```
+
+结果保留实际 per-expert 行数、整数 tile footprint、重复测量及拟合残差。
+这是单 E rank 的合成 BF16 权重和随机 top-k 负载，不能当作主模型的实测路由概率。
+拟合包含完整 E 层操作仍不代表端到端模型已校准；需再检查留出点和并发服务误差。
+可同时传入 `--holdout-prefill-rows 64 256 1024 4096 16384` 和
+`--holdout-decode-rows 2 16 64 256`。训练与留出 token 数必须分别不相交；
+工具先保存训练系数，再采集留出点，不使用留出数据重新拟合。报告分别列出
+非正预测、相对误差和超出训练 footprint 范围的样本，并拒绝混用不同运行时代码。
+
 当前关键路径模型是近似，未计入完整排队、KV 迁移和服务 CPU 开销。`--overlap auto`
 同时比较 sequential/TBO，按候选策略计算双 mailbox 内存及独立 microbatch padding。
 TBO 假设 token 均衡切分，实际序列边界会影响预测，需要实测校准。
@@ -420,6 +439,13 @@ PDMux 推进预算及更多边界点仍在调优，这些 pilot 不代替真实�
 `run_serving_experiment.py` 会记录启动参数、环境、完整逐请求结果，并自动生成独立的
 rendezvous。`bench_apk_sharing.py` 对 GateUp/Down 分别执行 §7.3 对照；
 `profile_operations.py` 扫 §7.4 的 per-expert rows / active experts；
+`bench_sharing.py` 与 `bench_apk_sharing.py` 的 `--decode-expert-rows` 可指定活跃
+decode 专家的行数，配合 `--decode-active-experts` 检查部分 tile 和多 tile 的边界。
+`bench_apk_sharing.py --profile-range` 在 E GPU 上标记完整 executor 生命周期，
+用于 Nsight Compute `--replay-mode app-range`。必须包含长驻 kernel 的启动与停止，
+避免普通 kernel replay 打断它与 attention publisher 的并发依赖。该区间包含
+预热、空闲和 isolated/concurrent 工作，不是纯计算时延；绘图工具拒绝把其计时
+放入正常 sharing 对照。
 `bench_communication.py --cuda-graph` 用 GPU 同步隔离 dispatch 与 combine，
 支持单独构建的固定 DeepEP v1。
 DeepEP low-latency 模式会在初始化 NVSHMEM 前按整个 `--rows` 扫描的最大值设置
@@ -499,6 +525,13 @@ BF16 权重。工具默认使用 33000 附近端口，可用 `--port-base` 调�
 显式增加 `--context-length`。工具在启动前检查参考的分数步数、历史长度与容量，
 不会将不同长度的分数集合混作同一个对齐测试。
 
+并发轨迹检查可在两条命令中增加 `--concurrency 16 --require-decode-batch-size 2`，
+并给 native 提供至少 16 个不同的 `--prompt-lengths`。工具在每波请求前统一清缓存，
+并发发送后按原始顺序比对；禁止在其他请求存活时逐请求清缓存。每条轨迹至少一个
+decode 位置的实际 sampling batch 必须达到指定大小，否则测试失败。该记录证明
+实际发生了批处理，仍需结合 TBO operation/trace 证据判断非空 microbatch 的执行，
+不能仅凭 TBO 启动开关验收。参考与被测端的请求并发数必须一致。
+
 ### 存储流水线诊断
 
 `bench_preemption.py` 同时检查完整 trace 的 cluster 决策一致性和阶段切换顺序：
@@ -512,7 +545,14 @@ BF16 权重。工具默认使用 33000 附近端口，可用 `--port-base` 调�
 唯一的决策记录；允许中间插入一次 control flush，但不能插入旧 phase 的真实工作。
 报告中的 observation→handoff 包含仲裁和阶段 drain，不包含更早的 A→E 可见性传播；
 `old_tiles_in_flight_per_cta` 是未退役输出的数量，不等于正在执行的 Tensor Core tile 数。
+同时保存 `*.trace.progress.pt`：记录 epilogue 观察到 accumulator 就绪的时刻
+（GEMM 完成的上界）与输出提交时刻，并与最终退役关联。非 GEMM 操作不填写
+accumulator 时刻；数据计算、异步 store 和未退役输出分开计数，不能用 pending store
+数量直接推断未完成 GEMM 数量。这些 E 侧证据仍不包含完整 A→E 传播上界。
 trace 会扰动时序，不应拿启用 trace 的延迟当作正常服务性能。
+`--check-single-pending-compute` 要求每次已观察到的 phase 决策处，每 CTA 未完成的
+GEMM 与未提交的数据/激活 tile 合计不超过一；没有发生切换也不能通过此检查。
+该检查不把已提交但尚未退役的异步输出误算成执行中的 GEMM，也不认证完整传播上界。
 
 `bench_preemption.py --prefill-preprocess` 进一步覆盖原始 P 数据路径的 Scatter1、
 Scatter2 和 Gather。该单 E 诊断将逻辑 expert world 中 rank 0 的路由映射为本地 ID，
@@ -609,6 +649,30 @@ metadata 的每 CTA 最后工作序号用于判断截断，包括容量末尾是
 `--disable-flashinfer-autotune` 和 `--no-cuda-graph` 是显式消融开关。
 `--diagnostic-logit-processor` 会关闭 CPU/GPU scheduler overlap，以便同步读取 CPU 请求历史；
 该数值捕获配置不能用于吞吐/延迟比较。普通基线同样保留 overlap/autotune，PDMux 使用自身调度循环。
+
+路由分布采集复用 SGLang 的 `--expert-distribution-recorder-mode stat`、
+`--expert-distribution-recorder-buffer-size -1` 与既有
+`/start_expert_distribution_record`、`/stop_expert_distribution_record`、
+`/dump_expert_distribution_record` 接口。每个 P/D 服务设置不同的
+`SGLANG_EXPERT_DISTRIBUTION_RECORDER_DIR`，不要开启 EPLB 改变采集中的专家映射。
+`summarize_routing.py` 接受 `--prefill-records`、`--decode-records`、`--model-path`、
+`--provenance` 和 `--output`，读取原生 stat dump 的 logical counts，保留逐层计数，
+并输出按 token 加权的各 phase 专家概率。stat 已在 TP group 内归约，不要重复传入
+同一 group 的副本。采集会改变执行开销，必须与性能验收分开运行。
+`check_independent_services.py --record-routing` 只检查接口及重启兼容性；
+其少量诊断请求不属于真实数据集的优化器校准。
+进一步指定 `--routing-workload /path/to/custom.jsonl --routing-requests 64
+--routing-seed 42 --routing-sequence-cap 24576 --kv-tokens auto` 可采集固定数据集。
+工具复用原生 custom loader，清除生命周期探测的记录，再逐请求运行真实 KV 移交；
+保存数据集及有序 token 请求的散列，并要求 P/D 计数分别精确覆盖输入 token 与
+输出长度减一。此模式清空 prefix cache，采集仍不作为性能实验。
+
+严格数值诊断的 `check_numerical_alignment.py --expert-count N` 用于匹配不同
+E 数量的 native DP/EP reference 与 ExpertPlex 分片。两边的 expert count、
+TBO 和 torch.compile 模式必须一致，不能复用不同分片布局的 reference。
+启动 native reference 前会检查已安装 DeepEP 是否支持该 EP 数量；未提供配置的
+拓扑不能以其他分片数的结果代替。没有 tokenizer 的小型测试 checkpoint 可使用
+`--prompt-lengths 31 127 255 --prompt-token-ids 11 12 13 14` 构造确定的输入。
 
 `launch_baseline.py` 与 `run_serving_experiment.py` 也默认使用 FlashInfer sampling；
 数值诊断可显式指定 `--sampling-backend pytorch`。实验总入口默认使用 FlashInfer attention，

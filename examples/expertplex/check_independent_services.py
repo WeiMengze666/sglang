@@ -8,12 +8,15 @@ checkpoint for quick checks, or a complete checkpoint for model-scale checks.
 
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import os
+import random
 import signal
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 from _bootstrap import module
@@ -21,6 +24,34 @@ from check_incremental import generate
 from launch import wait_http
 
 bootstrap = module("bootstrap")
+
+
+def recorder_request(url, action):
+    """Native recorder endpoints return text, unlike the JSON bootstrap API."""
+    if action not in ("start", "stop", "dump"):
+        raise ValueError("Unknown recorder action")
+    request = urllib.request.Request(
+        url.rstrip("/") + f"/{action}_expert_distribution_record",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return response.read().decode()
+
+
+def routing_requests(rows, tokenizer, sequence_cap):
+    """Preserve native custom-dataset ordering, tokenizer and output lengths."""
+    requests = []
+    for row in rows:
+        tokens = tokenizer.encode(row.prompt)
+        if len(tokens) != row.prompt_len or min(len(tokens), row.output_len) < 2:
+            raise ValueError("Routing workload tokenizer/length mismatch")
+        if len(tokens) + row.output_len > sequence_cap:
+            raise ValueError("Routing workload exceeds the frozen sequence cap")
+        requests.append((tokens, row.output_len))
+    if not requests:
+        raise ValueError("Empty routing workload")
+    return requests
 
 
 def main():
@@ -37,6 +68,19 @@ def main():
     p.add_argument("--expected-decode-tiles", type=int)
     p.add_argument("--max-decode-sm-fraction", type=float)
     p.add_argument(
+        "--record-routing",
+        action="store_true",
+        help="Exercise native stat recorder endpoints; diagnostic workload only",
+    )
+    p.add_argument(
+        "--routing-workload",
+        type=Path,
+        help="Optional frozen custom dataset for routing calibration after lifecycle checks",
+    )
+    p.add_argument("--routing-requests", type=int, default=64)
+    p.add_argument("--routing-seed", type=int, default=42)
+    p.add_argument("--routing-sequence-cap", type=int, default=24576)
+    p.add_argument(
         "--moe-config",
         type=Path,
         help="Optional E-side JSON to test CLI policy overrides",
@@ -48,9 +92,43 @@ def main():
         not args.kv_tokens.isdecimal() or int(args.kv_tokens) < 256
     ):
         p.error("--kv-tokens must be auto or an integer >= 256")
+    workload = None
+    prefill_capacity = 256
+    if args.routing_workload:
+        if not args.record_routing or args.moe_config:
+            p.error(
+                "Routing calibration requires --record-routing and automatic topology"
+            )
+        if args.routing_requests < 1 or args.routing_sequence_cap < 256:
+            p.error("Use positive routing request count and sequence cap >=256")
+        if args.kv_tokens != "auto" and int(args.kv_tokens) < args.routing_sequence_cap:
+            p.error("Routing calibration KV capacity must cover the sequence cap")
+        from sglang.benchmark.datasets.custom import sample_custom_requests
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_path, local_files_only=True
+        )
+        state = random.getstate()
+        try:
+            random.seed(args.routing_seed)
+            rows = sample_custom_requests(
+                str(args.routing_workload),
+                args.routing_requests,
+                tokenizer,
+                context_len=args.routing_sequence_cap,
+            )
+        finally:
+            random.setstate(state)
+        if len(rows) != args.routing_requests:
+            p.error("Native dataset loader returned fewer calibration requests")
+        workload = routing_requests(rows, tokenizer, args.routing_sequence_cap)
+        prefill_capacity = args.routing_sequence_cap
     args.output_dir.mkdir(parents=True, exist_ok=False)
     report = {"scope": __doc__, "status": "running", "launches": [], "checks": {}}
     children = {}
+    recording = {}
+    routing_sources = {"prefill": [], "decode": []}
     env = dict(os.environ)
     env.update(
         SGLANG_MOONCAKE_CUSTOM_MEM_POOL="INTRA_NODE_NVLINK", MC_INTRANODE_NVLINK="true"
@@ -73,7 +151,7 @@ def main():
         "127.0.0.1",
         "--enable-two-batch-overlap",
         "--max-prefill-tokens",
-        "256",
+        str(prefill_capacity),
         "--max-running-requests",
         "16",
         "--skip-tokenizer-init",
@@ -96,9 +174,14 @@ def main():
 
     def start(name, command, port):
         log = (args.output_dir / f"{name}.log").open("w")
+        child_env = dict(env)
+        if args.record_routing and name != "moe":
+            directory = (args.output_dir / "routing" / name).resolve()
+            directory.mkdir(parents=True, exist_ok=False)
+            child_env["SGLANG_EXPERT_DISTRIBUTION_RECORDER_DIR"] = str(directory)
         proc = subprocess.Popen(
             command,
-            env=env,
+            env=child_env,
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -111,7 +194,23 @@ def main():
             [(name, proc, log)],
             time.monotonic() + args.startup_timeout,
         )
+        if args.record_routing and name != "moe":
+            url = f"http://127.0.0.1:{port}"
+            recorder_request(url, "start")
+            recording[name] = (url, directory)
         print("READY", name, flush=True)
+
+    def dump_routing(name):
+        if name not in recording:
+            return
+        url, directory = recording[name]
+        recorder_request(url, "stop")
+        recorder_request(url, "dump")
+        paths = sorted(directory.glob("expert_distribution_recorder_*.pt"))
+        if len(paths) != 1:
+            raise RuntimeError(f"Expected one native stat dump for {name}: {paths}")
+        routing_sources["prefill" if name == "prefill" else "decode"].extend(paths)
+        del recording[name]
 
     def stop(name):
         import psutil
@@ -168,10 +267,17 @@ def main():
             "16",
         ]
         command[command.index("--max-prefill-tokens") + 1] = (
-            "256" if phase == "prefill" else "16"
+            str(prefill_capacity) if phase == "prefill" else "16"
         )
         if args.kv_tokens != "auto":
             command += ["--max-total-tokens", args.kv_tokens]
+        if args.record_routing:
+            command += [
+                "--expert-distribution-recorder-mode",
+                "stat",
+                "--expert-distribution-recorder-buffer-size",
+                "-1",
+            ]
         return command
 
     def one(device, length=32):
@@ -256,6 +362,7 @@ def main():
                 pool.map(lambda item: one(*item), [(1, 31), (2, 127), (3, 255)])
             )
         report["checks"]["concurrent_pd_requests"] = len(outputs)
+        dump_routing("decode-1")
         stop("decode-1")
         info = bootstrap.request(moe_url, "/get_server_info")
         if {c["id"] for c in info["clients"]} != {0, 2, 3}:
@@ -272,6 +379,78 @@ def main():
         report["checks"].update(
             attention_restart_exact_scores=True, moe_generation_preserved=True
         )
+        if args.record_routing:
+            from summarize_routing import summarize_files
+
+            if workload is not None:
+                # Discard lifecycle probes and the old D1 dump. Starting the
+                # native recorder resets its buffer. Only current live workers
+                # contribute to this workload's calibration.
+                routing_sources = {"prefill": [], "decode": []}
+                for url, _ in recording.values():
+                    recorder_request(url, "stop")
+                    recorder_request(url, "start")
+                report["routing_workload"] = {
+                    "dataset_sha256": hashlib.sha256(
+                        args.routing_workload.read_bytes()
+                    ).hexdigest(),
+                    "seed": args.routing_seed,
+                    "requests": len(workload),
+                    "sequence_cap": args.routing_sequence_cap,
+                    "ordered_token_requests_sha256": hashlib.sha256(
+                        json.dumps(workload).encode()
+                    ).hexdigest(),
+                    "prefill_tokens": sum(len(tokens) for tokens, _ in workload),
+                    "decode_tokens": sum(length - 1 for _, length in workload),
+                    "completed": 0,
+                }
+                for index, (tokens, length) in enumerate(workload):
+                    # Direct PD generation uses native KV handoff and flushes
+                    # both caches first, so repeated contexts are fully counted.
+                    result = generate(
+                        f"http://127.0.0.1:{base + 11 + index % 3}",
+                        {
+                            "input_ids": tokens,
+                            "sampling_params": {
+                                "temperature": 0,
+                                "max_new_tokens": length,
+                                "ignore_eos": True,
+                            },
+                        },
+                        prefill_url=f"http://127.0.0.1:{base + 10}",
+                        bootstrap_port=base + 200,
+                    )
+                    if result.get("meta_info", {}).get("completion_tokens") != length:
+                        raise RuntimeError("Incomplete routing calibration request")
+                    report["routing_workload"]["completed"] += 1
+                    save()
+                    print(f"ROUTING {index + 1}/{len(workload)}", flush=True)
+            for name in list(recording):
+                dump_routing(name)
+            model = json.loads((args.model_path / "config.json").read_text())
+            report["checks"]["native_routing_recorder"] = {
+                phase: summarize_files(
+                    paths,
+                    layers=model["num_hidden_layers"],
+                    experts=model["num_experts"],
+                    top_k=model["num_experts_per_tok"],
+                )
+                for phase, paths in routing_sources.items()
+            }
+            report["routing_scope"] = (
+                "Frozen workload routing with full prompt cache flushes; not performance"
+                if workload is not None
+                else "Lifecycle diagnostic prompts only, not workload calibration or performance"
+            )
+            if workload is not None:
+                for phase in ("prefill", "decode"):
+                    actual = report["checks"]["native_routing_recorder"][phase][
+                        "tokens_per_layer"
+                    ]
+                    if actual != report["routing_workload"][phase + "_tokens"]:
+                        raise RuntimeError(
+                            f"{phase} recorder did not account for exactly the workload tokens: {actual}"
+                        )
         report["status"] = "passed"
     except BaseException as exc:
         report.update(status="failed", error=repr(exc))
