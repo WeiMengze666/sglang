@@ -77,6 +77,26 @@ DECISION_FIELDS = (
 PROGRESS_FIELDS = ("accumulator_ready_ns", "output_submitted_ns")
 
 
+def validate_single_pending_compute(checks):
+    """Check E-side outstanding computation, not the full propagation bound."""
+    counts = [
+        c["gemms_without_ready_observation"] + c["data_operations_before_submission"]
+        for switch in checks["phase_switches"]
+        for c in switch["ctas"]
+    ]
+    if not counts:
+        raise ValueError("Need observed phase switches for a pending-computation check")
+    if any(count < 0 or count > 1 for count in counts):
+        raise ValueError(
+            "Phase decision has more than one unfinished compute tile per CTA"
+        )
+    return {
+        "checked_cta_switches": len(counts),
+        "max_pending_compute_tiles": max(counts),
+        "scope": "E-side computation only; excludes A-to-E propagation and output retirement",
+    }
+
+
 def validate_progress_trace(
     records, decisions, progress, cluster_size, truncated_ctas=0
 ):
@@ -244,6 +264,11 @@ def main():
     parser.add_argument("--delay-us", type=int, default=10)
     parser.add_argument("--trace-capacity", type=int, default=4096)
     parser.add_argument(
+        "--check-single-pending-compute",
+        action="store_true",
+        help="Require at most one unfinished compute tile at E phase decisions; not a full propagation bound",
+    )
+    parser.add_argument(
         "--ctas", type=int, default=0, help="Zero uses all available SMs"
     )
     parser.add_argument("--isolated-repeats", type=int, default=1)
@@ -255,6 +280,8 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.check_single_pending_compute and args.trace_capacity <= 0:
+        parser.error("Pending-computation checks require a complete trace")
     if (
         min(*args.prefill_rows, args.decode_rows, args.repeats, args.isolated_repeats)
         <= 0
@@ -532,6 +559,10 @@ def main():
             report["executor"]["cluster_size"],
             report["trace_truncated_ctas"],
         )
+        if args.check_single_pending_compute:
+            report["pending_compute_checks"] = validate_single_pending_compute(
+                report["progress_trace_checks"]
+            )
     except (OSError, ValueError, KeyError) as exc:
         report.update(status="failed", error=str(exc))
         args.output.write_text(json.dumps(report, indent=2) + "\n")

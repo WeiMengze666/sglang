@@ -624,6 +624,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
   if (warp == 0 && lane == 0) {
     int cursor = blockIdx.x % b.slots;
     int previous_phase = -1;
+    int previous_stage = IDLE;
     int previous_budget = -1;
     bool previous_was_flush = false;
     Task deferred{};
@@ -642,6 +643,26 @@ __global__ __launch_bounds__(Threads, 1) void executor(
           s.cluster_consumed[index].wait(parity ^ 1);
         else
           s.cluster_empty[index].wait(parity ^ 1);
+        // Data/activation tiles execute in the epilogue, without the GEMM
+        // TMA/accumulator pipeline. A two-entry metadata ring must not queue
+        // another such tile while its predecessor is still executing: a
+        // subsequent phase decision would otherwise drain two old data tiles.
+        // Complete only this data tile before the next check epoch. GEMM
+        // prefetch and delayed-store retirement retain their native overlap.
+        if (sequence && !previous_was_flush &&
+            (data_stage(previous_stage) || previous_stage == ACTIVATE)) {
+          if (context.pipelined_stores) {
+            for (int member = 0; member < Cluster; ++member)
+              while (cuda::atomic_ref<U64, cuda::thread_scope_device>(
+                         context.retired_sequence[blockIdx.x + member])
+                         .load(cuda::memory_order_acquire) < sequence)
+                __nanosleep(64);
+          } else {
+            const U64 previous = sequence - 1;
+            s.cluster_empty[previous % OutputStages].wait(
+                (previous / OutputStages) & 1);
+          }
+        }
         if (deferred.slot >= 0) {
           task = deferred;
           deferred.slot = -1;
@@ -773,6 +794,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       if (task.slot == -3)
         continue;
       previous_phase = task.phase;
+      previous_stage = task.stage;
       cursor = (task.slot + 1) % b.slots;
       if (task.stage == ACTIVATE || data_stage(task.stage))
         continue;

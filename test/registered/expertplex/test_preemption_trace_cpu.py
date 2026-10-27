@@ -12,9 +12,36 @@ validate = importlib.import_module("bench_preemption").validate_cluster_trace
 validate_decisions = importlib.import_module("bench_preemption").validate_decision_trace
 validate_progress = importlib.import_module("bench_preemption").validate_progress_trace
 overflow = importlib.import_module("bench_preemption").trace_overflow_ctas
+validate_pending = importlib.import_module(
+    "bench_preemption"
+).validate_single_pending_compute
 
 
 class CooperativeTraceTests(unittest.TestCase):
+    def test_pending_check_combines_data_and_gemm_and_rejects_vacuous_pass(self):
+        for gemms, data in ((0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (2, 0)):
+            checks = {
+                "phase_switches": [
+                    {
+                        "ctas": [
+                            {
+                                "gemms_without_ready_observation": gemms,
+                                "data_operations_before_submission": data,
+                                "unretired_outputs": 2,
+                            }
+                        ]
+                    }
+                ]
+            }
+            if gemms + data <= 1:
+                result = validate_pending(checks)
+                self.assertEqual(result["max_pending_compute_tiles"], gemms + data)
+            else:
+                with self.assertRaisesRegex(ValueError, "more than one"):
+                    validate_pending(checks)
+        with self.assertRaisesRegex(ValueError, "observed phase switches"):
+            validate_pending({"phase_switches": []})
+
     def test_sequence_counts_detect_overflow_past_unrecorded_flush(self):
         metadata = {"trace_sequence_counts": [8, 10], "trace_capacity_per_cta": 8}
         self.assertEqual(overflow(metadata, 2, 8), 1)
