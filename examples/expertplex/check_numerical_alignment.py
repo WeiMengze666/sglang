@@ -2,7 +2,8 @@
 
 Run within one gpuq job. CPU score capture disables scheduling overlap; these
 results must not be used as performance measurements. Native reference uses
-four expert ranks and DP attention/LM head to isolate arithmetic differences.
+the selected expert-rank count and DP attention/LM head to isolate arithmetic
+differences. Reference and candidate must use the same expert placement.
 """
 
 import argparse
@@ -20,7 +21,26 @@ from check_e2e import PROMPTS, generate
 from launch import wait_http
 
 
-def validate_reference(reference, model_path, tbo_enabled, steps=None):
+def validate_native_reference_topology(expert_count, buffer_type):
+    """Check the installed DeepEP configuration before loading model weights."""
+    try:
+        buffer_type.get_dispatch_config(expert_count)
+        buffer_type.get_combine_config(expert_count)
+    except (AssertionError, ValueError, KeyError) as exc:
+        raise ValueError(
+            f"Installed DeepEP has no default dispatch/combine configuration for "
+            f"{expert_count} EP ranks; this matched native reference is unavailable"
+        ) from exc
+
+
+def validate_reference(
+    reference,
+    model_path,
+    tbo_enabled,
+    steps=None,
+    compile_enabled=False,
+    expert_count=4,
+):
     """Reject incomparable references before allocating GPU memory."""
     if not (reference / "scores.json").is_file():
         raise ValueError("Reference must contain native scores.json")
@@ -39,6 +59,21 @@ def validate_reference(reference, model_path, tbo_enabled, steps=None):
     if type(enabled) is not bool or enabled != tbo_enabled:
         raise ValueError(
             "Reference TBO mode differs; generate a matched native reference"
+        )
+    compiled = report.get("torch_compile_enabled")
+    if compiled is None:
+        compiled = any(
+            "--enable-torch-compile" in cmd for cmd in report.get("commands", [])
+        )
+    if type(compiled) is not bool or compiled != compile_enabled:
+        raise ValueError(
+            "Reference torch.compile mode differs; generate a matched native reference"
+        )
+    # Reports written before this option always used four expert ranks.
+    ranks = report.get("expert_count", 4)
+    if type(ranks) is not int or ranks != expert_count:
+        raise ValueError(
+            "Reference expert count differs; generate a matched native reference"
         )
     histories = json.loads((reference / "histories.json").read_text())
     if Path(histories["model_path"]).resolve() != model_path.resolve():
@@ -64,17 +99,21 @@ def validate_workload(histories, steps, max_prefill_tokens, context_length):
             raise ValueError("Reference continuation is shorter than requested steps")
 
 
+def repeat_token_pattern(seed, lengths):
+    if not seed:
+        raise ValueError("Diagnostic token pattern must not be empty")
+    return [
+        (seed * ((length + len(seed) - 1) // len(seed)))[:length] for length in lengths
+    ]
+
+
 def boundary_prompts(tokenizer, lengths):
     """Deterministic token prefixes crossing GEMM and attention tile boundaries."""
     seed = tokenizer.encode(
         "Explain how a hash table resolves collisions and give a Python example.\n",
         add_special_tokens=False,
     )
-    if not seed:
-        raise ValueError("Tokenizer returned an empty diagnostic seed")
-    return [
-        (seed * ((length + len(seed) - 1) // len(seed)))[:length] for length in lengths
-    ]
+    return repeat_token_pattern(seed, lengths)
 
 
 def main():
@@ -86,6 +125,8 @@ def main():
     p.add_argument("--port-base", type=int, default=33000)
     p.add_argument("--startup-timeout", type=float, default=1800)
     p.add_argument("--disable-tbo", action="store_true")
+    p.add_argument("--enable-torch-compile", action="store_true")
+    p.add_argument("--expert-count", type=int, choices=range(1, 7), default=4)
     p.add_argument("--steps", type=int, default=32)
     p.add_argument("--max-prefill-tokens", type=int, default=512)
     p.add_argument("--context-length", type=int, default=4096)
@@ -95,11 +136,19 @@ def main():
         nargs="+",
         help="Native reference only: explicit token lengths for boundary tests",
     )
+    p.add_argument(
+        "--prompt-token-ids",
+        type=int,
+        nargs="+",
+        help="Explicit repeated boundary-test pattern for tokenizer-free debug checkpoints; requires --prompt-lengths",
+    )
     a = p.parse_args()
     if a.variant == "expertplex" and not a.reference:
         p.error("ExpertPlex requires the native reference directory")
     if a.variant == "native" and a.reference:
         p.error("--reference applies to the ExpertPlex diagnostic")
+    if a.enable_torch_compile and not a.disable_tbo:
+        p.error("The torch.compile diagnostic requires --disable-tbo")
     if a.steps < 2 or not 0 < a.max_prefill_tokens < a.context_length:
         p.error("Use steps >=2 and 0 < prefill capacity < context length")
     if a.prompt_lengths is not None:
@@ -110,6 +159,8 @@ def main():
             for n in a.prompt_lengths
         ):
             p.error("Prompt lengths must be distinct, positive and fit both capacities")
+    if a.prompt_token_ids is not None and not a.prompt_lengths:
+        p.error("--prompt-token-ids requires native --prompt-lengths")
     if not 1024 <= a.port_base <= 63000:
         p.error("--port-base must leave space for bootstrap/NCCL ports up to +2001")
     if not 0 < a.startup_timeout < float("inf"):
@@ -118,7 +169,14 @@ def main():
     if a.reference:
         a.reference = a.reference.resolve()
         try:
-            validate_reference(a.reference, a.model_path, not a.disable_tbo, a.steps)
+            validate_reference(
+                a.reference,
+                a.model_path,
+                not a.disable_tbo,
+                a.steps,
+                a.enable_torch_compile,
+                a.expert_count,
+            )
             validate_workload(
                 json.loads((a.reference / "histories.json").read_text()),
                 a.steps,
@@ -130,8 +188,12 @@ def main():
     a.output.mkdir(parents=True, exist_ok=False)
     model = str(a.model_path.resolve())
     config = json.loads((a.model_path / "config.json").read_text())
-    if config["num_experts"] % 4:
-        p.error("The matched reference requires four equal expert shards")
+    if a.prompt_token_ids is not None and any(
+        not 0 <= token < config["vocab_size"] for token in a.prompt_token_ids
+    ):
+        p.error("Diagnostic token pattern is outside the model vocabulary")
+    if config["num_experts"] % a.expert_count:
+        p.error("The matched reference requires equal expert shards")
     env = dict(
         os.environ,
         SGLANG_MOONCAKE_CUSTOM_MEM_POOL="INTRA_NODE_NVLINK",
@@ -142,10 +204,13 @@ def main():
         "scope": __doc__,
         "variant": a.variant,
         "tbo_enabled": not a.disable_tbo,
+        "torch_compile_enabled": a.enable_torch_compile,
+        "expert_count": a.expert_count,
         "steps": a.steps,
         "max_prefill_tokens": a.max_prefill_tokens,
         "context_length": a.context_length,
         "prompt_lengths": a.prompt_lengths,
+        "prompt_token_ids": a.prompt_token_ids,
         "status": "running",
         "commands": [],
     }
@@ -214,15 +279,20 @@ def main():
     ]
     if not a.disable_tbo:
         prefix.append("--enable-two-batch-overlap")
+    if a.enable_torch_compile:
+        prefix += ["--enable-torch-compile", "--torch-compile-max-bs", "16"]
     try:
         direct = []
         if a.variant == "native":
+            from deep_ep import Buffer
+
+            validate_native_reference_topology(a.expert_count, Buffer)
             placement = {
                 "physical_to_logical_map": [
                     [
-                        r + i * 4
-                        for r in range(4)
-                        for i in range(config["num_experts"] // 4)
+                        r + i * a.expert_count
+                        for r in range(a.expert_count)
+                        for i in range(config["num_experts"] // a.expert_count)
                     ]
                 ]
                 * config["num_hidden_layers"]
@@ -238,11 +308,11 @@ def main():
                     "--nccl-port",
                     str(a.port_base + 1000),
                     "--tp-size",
-                    "4",
+                    str(a.expert_count),
                     "--ep-size",
-                    "4",
+                    str(a.expert_count),
                     "--attn-dp-size",
-                    "4",
+                    str(a.expert_count),
                     "--enable-dp-lm-head",
                     "--init-expert-location",
                     str(path),
@@ -259,14 +329,17 @@ def main():
                 ],
                 a.port_base,
             )
-            from transformers import AutoTokenizer
+            if a.prompt_token_ids is not None:
+                prompts = repeat_token_pattern(a.prompt_token_ids, a.prompt_lengths)
+            else:
+                from transformers import AutoTokenizer
 
-            tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
-            prompts = (
-                boundary_prompts(tokenizer, a.prompt_lengths)
-                if a.prompt_lengths
-                else [tokenizer.encode(t) for t in PROMPTS]
-            )
+                tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
+                prompts = (
+                    boundary_prompts(tokenizer, a.prompt_lengths)
+                    if a.prompt_lengths
+                    else [tokenizer.encode(t) for t in PROMPTS]
+                )
             if any(
                 len(tokens) > a.max_prefill_tokens
                 or len(tokens) + a.steps >= a.context_length
@@ -296,6 +369,12 @@ def main():
                     "--enable-expertplex",
                     "--expertplex-role",
                     "expert",
+                    "--expertplex-prefill-count",
+                    "1",
+                    "--expertplex-decode-count",
+                    str(7 - a.expert_count),
+                    "--expertplex-expert-count",
+                    str(a.expert_count),
                     "--host",
                     "127.0.0.1",
                     "--port",
@@ -329,6 +408,11 @@ def main():
                     "-1" if phase == "prefill" else "16",
                 ]
                 if phase == "prefill":
+                    if a.enable_torch_compile:
+                        # Only decode is compiled, matching SGLang's decode graph runner.
+                        command.remove("--enable-torch-compile")
+                        i = command.index("--torch-compile-max-bs")
+                        del command[i : i + 2]
                     command[command.index("--cuda-graph-backend-decode") + 1] = (
                         "disabled"
                     )

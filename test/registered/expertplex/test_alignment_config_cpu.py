@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
@@ -14,6 +15,25 @@ validate = alignment.validate_reference
 
 
 class AlignmentConfigurationTests(unittest.TestCase):
+    def test_tokenizer_free_boundary_patterns_keep_exact_lengths(self):
+        self.assertEqual(
+            alignment.repeat_token_pattern([11, 12], [1, 3, 4]),
+            [[11], [11, 12, 11], [11, 12, 11, 12]],
+        )
+        with self.assertRaises(ValueError):
+            alignment.repeat_token_pattern([], [1])
+
+    def test_installed_deepep_topology_is_checked_before_model_launch(self):
+        buffer = Mock()
+        alignment.validate_native_reference_topology(4, buffer)
+        buffer.get_dispatch_config.assert_called_once_with(4)
+        buffer.get_combine_config.assert_called_once_with(4)
+        for method in ("get_dispatch_config", "get_combine_config"):
+            buffer = Mock()
+            getattr(buffer, method).side_effect = AssertionError("unsupported")
+            with self.assertRaisesRegex(ValueError, "5 EP ranks"):
+                alignment.validate_native_reference_topology(5, buffer)
+
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
@@ -64,6 +84,32 @@ class AlignmentConfigurationTests(unittest.TestCase):
         validate(self.root, self.model, True, 32)
         with self.assertRaisesRegex(ValueError, "step count"):
             validate(self.root, self.model, True, 8)
+
+    def test_compilation_must_match_reference(self):
+        self.check()
+        with self.assertRaisesRegex(ValueError, "torch.compile mode"):
+            validate(self.root, self.model, True, compile_enabled=True)
+        self.report["torch_compile_enabled"] = True
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        validate(self.root, self.model, True, compile_enabled=True)
+        with self.assertRaisesRegex(ValueError, "torch.compile mode"):
+            validate(self.root, self.model, True)
+        del self.report["torch_compile_enabled"]
+        self.report["commands"] = [
+            ["python", "-m", "sglang.launch_server", "--enable-torch-compile"]
+        ]
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        validate(self.root, self.model, True, compile_enabled=True)
+
+    def test_expert_placement_must_match_reference(self):
+        self.check()
+        with self.assertRaisesRegex(ValueError, "expert count"):
+            validate(self.root, self.model, True, expert_count=5)
+        self.report["expert_count"] = 5
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        validate(self.root, self.model, True, expert_count=5)
+        with self.assertRaisesRegex(ValueError, "expert count"):
+            validate(self.root, self.model, True)
 
     def test_trajectory_capacity_and_continuation(self):
         histories = {
