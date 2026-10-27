@@ -15,6 +15,14 @@ validate = alignment.validate_reference
 
 
 class AlignmentConfigurationTests(unittest.TestCase):
+    def test_tokenizer_vocabulary_mismatch_rejected_before_gpu_launch(self):
+        alignment.validate_prompt_ids([[0, 1023]], 1024, 4, 16, 2)
+        for prompts in ([[1024]], [[-1]], [[True]], [[0.0]], [[]], []):
+            with self.subTest(prompts=prompts), self.assertRaises(ValueError):
+                alignment.validate_prompt_ids(prompts, 1024, 4, 16, 2)
+        with self.assertRaisesRegex(ValueError, "capacity"):
+            alignment.validate_prompt_ids([[1] * 5], 1024, 4, 16, 2)
+
     def test_tokenizer_free_boundary_patterns_keep_exact_lengths(self):
         self.assertEqual(
             alignment.repeat_token_pattern([11, 12], [1, 3, 4]),

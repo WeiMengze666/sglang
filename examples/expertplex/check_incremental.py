@@ -203,17 +203,29 @@ def generate(base_url, payload, *, prefill_url=None, bootstrap_port=None, flush=
     if flush:
         post(prefill_url, "/flush_cache")
         post(base_url, "/flush_cache")
+    input_ids = payload.get("input_ids")
     request = dict(
         payload,
         bootstrap_host=urlparse(prefill_url).hostname,
         bootstrap_port=bootstrap_port,
-        bootstrap_room=secrets.randbits(63),
+        bootstrap_room=(
+            [secrets.randbits(63) for _ in payload["input_ids"]]
+            if input_ids and isinstance(input_ids[0], list)
+            else secrets.randbits(63)
+        ),
     )
     with ThreadPoolExecutor(max_workers=2) as pool:
         prefill = pool.submit(post, prefill_url, "/generate", request)
         decode = pool.submit(post, base_url, "/generate", request)
         prefill.result()
         return decode.result()
+
+
+def batch_payload(payloads):
+    """Use native HTTP batching while retaining per-request forced histories."""
+    if not payloads or any(p.keys() != payloads[0].keys() for p in payloads):
+        raise ValueError("Batch requests require matching nonempty payloads")
+    return {key: [p[key] for p in payloads] for key in payloads[0]}
 
 
 def decode_batch_summary(outputs, minimum):
@@ -243,6 +255,11 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=32)
     parser.add_argument("--concurrency", type=int, default=1)
+    parser.add_argument(
+        "--batched-request",
+        action="store_true",
+        help="Submit each wave through native HTTP batching; diagnostic only",
+    )
     parser.add_argument("--require-decode-batch-size", type=int, default=1)
     parser.add_argument(
         "--top-k", type=int, default=128, help="Zero captures full vocabulary"
@@ -283,6 +300,7 @@ def main():
         "transport": "direct-pd" if args.prefill_url else "single-endpoint",
         "require_exact_logprobs": args.require_exact_logprobs,
         "concurrency": args.concurrency,
+        "batched_request": args.batched_request,
         "required_decode_batch_size": args.require_decode_batch_size,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -294,33 +312,31 @@ def main():
 
     save()
 
-    def capture_case(index):
+    def prepare_case(index):
         prompt, forced = cases[index]
         directory = args.capture_dir / f"case-{index:04d}"
         directory.mkdir()
-        result = generate(
-            args.base_url,
-            {
-                "input_ids": prompt,
-                "custom_logit_processor": processor,
-                "return_logprob": True,
-                "sampling_params": {
-                    "temperature": 0,
-                    "max_new_tokens": len(forced),
-                    "ignore_eos": True,
-                    "custom_params": {
-                        "prompt_ids": prompt,
-                        "forced_ids": forced,
-                        "vocab_size": vocab,
-                        "top_k": args.top_k,
-                        "capture_dir": str(directory),
-                    },
+        return {
+            "input_ids": prompt,
+            "custom_logit_processor": processor,
+            "return_logprob": True,
+            "sampling_params": {
+                "temperature": 0,
+                "max_new_tokens": len(forced),
+                "ignore_eos": True,
+                "custom_params": {
+                    "prompt_ids": prompt,
+                    "forced_ids": forced,
+                    "vocab_size": vocab,
+                    "top_k": args.top_k,
+                    "capture_dir": str(directory),
                 },
             },
-            prefill_url=args.prefill_url,
-            bootstrap_port=args.bootstrap_port,
-            flush=args.concurrency == 1,
-        )
+        }
+
+    def finish_case(index, result):
+        prompt, forced = cases[index]
+        directory = args.capture_dir / f"case-{index:04d}"
         returned = [x[1] for x in result["meta_info"]["output_token_logprobs"]]
         if returned != forced:
             raise ValueError("Server did not generate the complete forced trajectory")
@@ -334,6 +350,16 @@ def main():
             "decode_sampling_batch": summary,
         }, outputs
 
+    def capture_case(index):
+        result = generate(
+            args.base_url,
+            prepare_case(index),
+            prefill_url=args.prefill_url,
+            bootstrap_port=args.bootstrap_port,
+            flush=args.concurrency == 1,
+        )
+        return finish_case(index, result)
+
     try:
         # Flush once before each wave, never while another request is live.
         # pool.map preserves reference order regardless of completion order.
@@ -343,10 +369,21 @@ def main():
                     if args.prefill_url:
                         post(args.prefill_url, "/flush_cache")
                     post(args.base_url, "/flush_cache")
-                for summary, outputs in pool.map(
-                    capture_case,
-                    range(start, min(start + args.concurrency, len(cases))),
-                ):
+                indices = range(start, min(start + args.concurrency, len(cases)))
+                if args.batched_request:
+                    results = generate(
+                        args.base_url,
+                        batch_payload([prepare_case(i) for i in indices]),
+                        prefill_url=args.prefill_url,
+                        bootstrap_port=args.bootstrap_port,
+                        flush=args.concurrency == 1,
+                    )
+                    if not isinstance(results, list) or len(results) != len(indices):
+                        raise ValueError("Native batch response count differs")
+                    captured = (finish_case(i, r) for i, r in zip(indices, results))
+                else:
+                    captured = pool.map(capture_case, indices)
+                for summary, outputs in captured:
                     report["cases"].append(summary)
                     report["outputs"].extend(outputs)
                     save()

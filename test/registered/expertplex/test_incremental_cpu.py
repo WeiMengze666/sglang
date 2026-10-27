@@ -130,6 +130,63 @@ class IncrementalCaptureTests(unittest.TestCase):
             self.assertEqual(len(saved["comparisons"]), 4)
             self.assertTrue(saved["all_full_vocab_logprobs_exact"])
 
+            argv.append("--batched-request")
+            argv[argv.index("--capture-dir") + 1] = str(root / "native-batch")
+
+            def generate_batch(url, payload, **kwargs):
+                self.assertEqual(payload["input_ids"], [[0], [1]])
+                self.assertEqual(payload["custom_logit_processor"], ["fixture"] * 2)
+                self.assertEqual(
+                    [
+                        p["custom_params"]["prompt_ids"]
+                        for p in payload["sampling_params"]
+                    ],
+                    [[0], [1]],
+                )
+                return [{"meta_info": {"output_token_logprobs": [[0, 1], [0, 2]]}}] * 2
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(incremental, "make_processor", return_value="fixture"),
+                patch.object(incremental, "post"),
+                patch.object(
+                    incremental, "generate", side_effect=generate_batch
+                ) as send,
+                patch.object(incremental, "collect", side_effect=collect),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                incremental.main()
+            send.assert_called_once()
+            saved = json.loads((root / "out.json").read_text())
+            self.assertEqual(saved["status"], "completed")
+            self.assertTrue(saved["all_full_vocab_logprobs_exact"])
+            self.assertTrue(saved["batched_request"])
+
+    def test_native_batch_pd_uses_same_distinct_rooms_on_both_services(self):
+        payload = incremental.batch_payload(
+            [
+                {"input_ids": [i], "sampling_params": {"custom_params": {"case": i}}}
+                for i in (1, 2)
+            ]
+        )
+        with (
+            patch.object(incremental, "post", return_value=[{}, {}]) as post,
+            patch.object(incremental.secrets, "randbits", side_effect=[101, 102]),
+        ):
+            incremental.generate(
+                "http://d",
+                payload,
+                prefill_url="http://p",
+                bootstrap_port=19000,
+                flush=False,
+            )
+        self.assertEqual(post.call_count, 2)
+        for call in post.call_args_list:
+            self.assertEqual(call.args[2]["bootstrap_room"], [101, 102])
+            self.assertEqual(
+                call.args[2]["sampling_params"], payload["sampling_params"]
+            )
+
     def test_decode_batch_guard_does_not_accept_prefill_only_or_missing_metadata(self):
         for rows in (
             [{"sampling_batch_size": 16}, {"sampling_batch_size": 1}],

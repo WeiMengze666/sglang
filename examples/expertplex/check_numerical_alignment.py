@@ -113,6 +113,25 @@ def repeat_token_pattern(seed, lengths):
     ]
 
 
+def validate_prompt_ids(prompts, vocab_size, max_prefill_tokens, context_length, steps):
+    """Catch tokenizer/checkpoint mismatches before allocating GPU services."""
+    if not prompts or any(
+        not isinstance(tokens, list) or not tokens for tokens in prompts
+    ):
+        raise ValueError("Diagnostic prompts must be nonempty token lists")
+    if any(
+        type(t) is not int or not 0 <= t < vocab_size
+        for tokens in prompts
+        for t in tokens
+    ):
+        raise ValueError("Diagnostic prompt token is outside the model vocabulary")
+    if any(
+        len(tokens) > max_prefill_tokens or len(tokens) + steps >= context_length
+        for tokens in prompts
+    ):
+        raise ValueError("Diagnostic prompts exceed prefill or context capacity")
+
+
 def boundary_prompts(tokenizer, lengths):
     """Deterministic token prefixes crossing GEMM and attention tile boundaries."""
     seed = tokenizer.encode(
@@ -149,6 +168,7 @@ def main():
     p.add_argument("--expert-count", type=int, choices=range(1, 7), default=4)
     p.add_argument("--steps", type=int, default=32)
     p.add_argument("--concurrency", type=int, default=1)
+    p.add_argument("--batched-request", action="store_true")
     p.add_argument("--require-decode-batch-size", type=int, default=1)
     p.add_argument("--max-prefill-tokens", type=int, default=512)
     p.add_argument("--context-length", type=int, default=4096)
@@ -225,6 +245,29 @@ def main():
         p.error("Diagnostic token pattern is outside the model vocabulary")
     if config["num_experts"] % a.expert_count:
         p.error("The matched reference requires equal expert shards")
+    prompts = None
+    if a.variant == "native" and not a.reference:
+        if a.prompt_token_ids is not None:
+            prompts = repeat_token_pattern(a.prompt_token_ids, a.prompt_lengths)
+        else:
+            from transformers import AutoTokenizer
+
+            tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
+            prompts = (
+                boundary_prompts(tokenizer, a.prompt_lengths)
+                if a.prompt_lengths
+                else [tokenizer.encode(t) for t in PROMPTS]
+            )
+        try:
+            validate_prompt_ids(
+                prompts,
+                config["vocab_size"],
+                a.max_prefill_tokens,
+                a.context_length,
+                a.steps,
+            )
+        except ValueError as exc:
+            p.error(str(exc))
     env = dict(
         os.environ,
         SGLANG_MOONCAKE_CUSTOM_MEM_POOL="INTRA_NODE_NVLINK",
@@ -237,6 +280,7 @@ def main():
         "scope": __doc__,
         "variant": a.variant,
         "concurrency": a.concurrency,
+        "batched_request": a.batched_request,
         "required_decode_batch_size": a.require_decode_batch_size,
         "required_tbo_replays": a.require_tbo_replays,
         "tbo_enabled": not a.disable_tbo,
@@ -372,27 +416,6 @@ def main():
                 histories = a.output / "histories.json"
                 histories.write_bytes((a.reference / "histories.json").read_bytes())
             else:
-                if a.prompt_token_ids is not None:
-                    prompts = repeat_token_pattern(a.prompt_token_ids, a.prompt_lengths)
-                else:
-                    from transformers import AutoTokenizer
-
-                    tokenizer = AutoTokenizer.from_pretrained(
-                        model, local_files_only=True
-                    )
-                    prompts = (
-                        boundary_prompts(tokenizer, a.prompt_lengths)
-                        if a.prompt_lengths
-                        else [tokenizer.encode(t) for t in PROMPTS]
-                    )
-                if any(
-                    len(tokens) > a.max_prefill_tokens
-                    or len(tokens) + a.steps >= a.context_length
-                    for tokens in prompts
-                ):
-                    raise ValueError(
-                        "Diagnostic prompts exceed prefill or context capacity"
-                    )
                 outputs = [
                     generate(f"http://127.0.0.1:{a.port_base}", tokens, a.steps)
                     for tokens in prompts
@@ -503,6 +526,8 @@ def main():
             "0",
             *direct,
         ]
+        if a.batched_request:
+            command.append("--batched-request")
         report["commands"].append(command)
         save()
         with (a.output / "capture.log").open("w") as log:
