@@ -35,6 +35,9 @@ TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
    在流水模式下通过每 CTA 单调 64-bit 退役前缀等待旧输出，避免环形 barrier parity 的 ABA；
    这条实现路径和数值通过本身不能证明原文的“至多当前 tile”上界，
    尤其需要检查预取深度、传播延迟和所有 warp/CTA 的收敛。
+   可选 `DecisionRecord` 单独记录 leader 获取策略前的时间、退休前缀、领取与交付序号；
+   `bench_preemption.py::validate_decision_trace` 将其与 tile trace 关联，检查真实工作
+   没有越过已作出的 phase 切换决策。这仍不覆盖此前 attention 发布到 CTA0 的传播。
 4. **SM 自适应（Eq.4）**：`update_policy` 从实际 decode GateUp row tiles 计算 footprint，
    按期望 footprint 缩放 q，向 cluster 倍数取整并限制 Qmax。每 phase 的 runnable 位图仅跳过空闲 mailbox；队列 CAS 仍按 tile 领取。`claim` 在首选 phase 无可领取
    工作时尝试另一 phase，实现空闲资源借用。CPU 对照是

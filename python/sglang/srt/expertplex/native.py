@@ -243,6 +243,10 @@ class PersistentExecutor:
         """Return [CTA, record, field] diagnostics after stop(); never live polling."""
         return self._impl.read_trace()
 
+    def read_decision_trace(self):
+        """Leader check-epoch snapshots; unavailable retired prefixes are -1."""
+        return self._impl.read_decision_trace()
+
     def check_error(self) -> list[int]:
         errors = list(self._impl.check_error())
         if any(errors):

@@ -490,6 +490,18 @@ BF16 权重。工具默认使用 33000 附近端口，可用 `--port-base` 调�
 该检查允许同阶段 tile 的正常流水重叠，不把 handoff→retirement 时间当作完整
 “system-scope 发布→资源重新分配”的上界。
 
+启用 trace 时，额外保存 `*.trace.decisions.pt`：leader 在读取策略前记录 E 侧时间戳、
+退休前缀和 phase，随后关联 tile 领取与实际交付序号。校验器要求每次真实交付都能找到
+唯一的决策记录；允许中间插入一次 control flush，但不能插入旧 phase 的真实工作。
+报告中的 observation→handoff 包含仲裁和阶段 drain，不包含更早的 A→E 可见性传播；
+`old_tiles_in_flight_per_cta` 是未退役输出的数量，不等于正在执行的 Tensor Core tile 数。
+trace 会扰动时序，不应拿启用 trace 的延迟当作正常服务性能。
+
+`bench_preemption.py --prefill-preprocess` 进一步覆盖原始 P 数据路径的 Scatter1、
+Scatter2 和 Gather。该单 E 诊断将逻辑 expert world 中 rank 0 的路由映射为本地 ID，
+其余路由设为 padding；它检查该 shard 的调度与算术，不替代完整多 E 通信验证。
+
+
 调度器保留每次 check epoch 内有界的 CAS 重试；竞争失败但仍有任务时重新检查策略，
 不会因此误判该阶段空闲并借给另一阶段。只有确认无可领取任务后才尝试空闲资源借用。
 流水 store 路径以每 CTA 的 64 位单调退休序号确认阶段交接，避免元数据提前复用后

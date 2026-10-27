@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
 validate = importlib.import_module("bench_preemption").validate_cluster_trace
+validate_decisions = importlib.import_module("bench_preemption").validate_decision_trace
 overflow = importlib.import_module("bench_preemption").trace_overflow_ctas
 
 
@@ -71,6 +72,63 @@ class CooperativeTraceTests(unittest.TestCase):
         rows[0]["finish_ns"] = 100
         with self.assertRaisesRegex(ValueError, "before all"):
             validate(rows, 2)
+
+    def decisions(self):
+        return [
+            dict(
+                cta=0,
+                claim_sequence=claim,
+                handoff_sequence=handoff,
+                observed_ns=observed,
+                retired_self=retired,
+                retired_peer=retired,
+                previous_phase=previous,
+                preferred_phase=selected,
+                selected_phase=selected,
+                preferred_runnable=1 << selected,
+            )
+            for claim, handoff, observed, retired, previous, selected in [
+                (0, 0, 5, 0, 2, 0),
+                (1, 1, 15, 0, 0, 0),
+                (2, 3, 35, 1, 0, 1),
+            ]
+        ]
+
+    def test_decisions_include_pre_drain_inflight_work(self):
+        result = validate_decisions(self.fixture(), self.decisions(), 2)
+        self.assertEqual(result["decisions"], 3)
+        switch = result["phase_switches"][0]
+        self.assertEqual(switch["old_tiles_in_flight_per_cta"], 1)
+        self.assertEqual(switch["unretired_sequence_upper_bound"], 1)
+        self.assertTrue(switch["deferred_control_flush"])
+        self.assertEqual(switch["observed_to_handoff_us"], 0.016)
+
+    def test_missing_duplicate_and_nonleader_decisions_fail(self):
+        decisions = self.decisions()
+        for invalid in [decisions[:-1], decisions + [decisions[-1]]]:
+            with self.assertRaises(ValueError):
+                validate_decisions(self.fixture(), invalid, 2)
+        decisions[-1]["cta"] = 1
+        with self.assertRaisesRegex(ValueError, "leader"):
+            validate_decisions(self.fixture(), decisions, 2)
+
+    def test_invalid_observation_prefix_or_phase_fails(self):
+        for field, value in [
+            ("observed_ns", 100),
+            ("retired_self", 3),
+            ("previous_phase", 1),
+            ("selected_phase", 0),
+            ("handoff_sequence", 4),
+            ("claim_sequence", 1),
+        ]:
+            decisions = self.decisions()
+            decisions[-1][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_decisions(self.fixture(), decisions, 2)
+        decisions = self.decisions()
+        decisions[-1]["retired_self"] = -1
+        result = validate_decisions(self.fixture(), decisions, 2)
+        self.assertIsNone(result["phase_switches"][0]["unretired_sequence_upper_bound"])
 
     def test_empty_truncated_and_unretired_traces_fail(self):
         with self.assertRaises(ValueError):

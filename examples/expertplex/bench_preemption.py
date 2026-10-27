@@ -64,6 +64,91 @@ def validate_cluster_trace(records, cluster_size, truncated_ctas=0):
     return {"cluster_decisions": len(groups), "phase_switches": switches}
 
 
+DECISION_FIELDS = (
+    "observed_ns",
+    "retired_self",
+    "retired_peer",
+    "handoff_sequence",
+    "previous_phase",
+    "preferred_phase",
+    "selected_phase",
+    "preferred_runnable",
+)
+
+
+def validate_decision_trace(records, decisions, cluster_size, truncated_ctas=0):
+    """Join pre-claim observations to post-drain handoffs on the E clock only.
+
+    Runnable masks are snapshots, not evidence that an unclaimed tile existed:
+    an operation keeps its bit while its final tiles are still in flight.
+    """
+    validate_cluster_trace(records, cluster_size, truncated_ctas)
+    groups = {}
+    for row in records:
+        groups.setdefault((row["cta"] // cluster_size, row["sequence"]), []).append(row)
+    by_cluster = {}
+    for (cluster, sequence), members in groups.items():
+        by_cluster.setdefault(cluster, []).append((sequence, members))
+    seen, previous, switches = set(), {}, []
+    for decision in sorted(decisions, key=lambda d: (d["cta"], d["claim_sequence"])):
+        cta = decision["cta"]
+        claim, handoff = decision["claim_sequence"], decision["handoff_sequence"]
+        if cta % cluster_size or claim < 0 or not claim <= handoff <= claim + 1:
+            raise ValueError("Invalid leader or deferred handoff sequence")
+        cluster = cta // cluster_size
+        key = (cluster, handoff)
+        if key in seen or key not in groups:
+            raise ValueError("Duplicate or missing handoff for decision")
+        seen.add(key)
+        selected = decision["selected_phase"]
+        if selected not in (0, 1) or decision["preferred_phase"] not in (0, 1):
+            raise ValueError("Invalid decision phase")
+        if decision["previous_phase"] != previous.get(cluster, 2):
+            raise ValueError("Decision does not follow the previous phase")
+        rows = groups[key]
+        observed = decision["observed_ns"]
+        if observed <= 0 or observed > min(r["begin_ns"] for r in rows):
+            raise ValueError("Observation must precede every member handoff")
+        if any(r["phase"] != selected for r in rows):
+            raise ValueError("Observed decision and handed-off work differ")
+        if any((cluster, seq) in groups for seq in range(claim, handoff)):
+            raise ValueError("Real work claimed between decision and deferred handoff")
+        prefixes = [decision["retired_self"], decision["retired_peer"]]
+        if any(p < -1 or p > claim for p in prefixes):
+            raise ValueError("Invalid retirement prefix at observation")
+        if cluster in previous and previous[cluster] != selected:
+            inflight = [
+                r
+                for seq, members in by_cluster[cluster]
+                if seq < claim
+                for r in members
+                if r["finish_ns"] > observed
+            ]
+            switches.append(
+                {
+                    "cluster": cluster,
+                    "claim_sequence": claim,
+                    "selected_phase": selected,
+                    "observed_to_handoff_us": (
+                        max(r["begin_ns"] for r in rows) - observed
+                    )
+                    / 1000,
+                    "old_tiles_in_flight_per_cta": max(
+                        sum(r["cta"] == member for r in inflight)
+                        for member in range(cta, cta + cluster_size)
+                    ),
+                    "unretired_sequence_upper_bound": (
+                        None if -1 in prefixes else claim - min(prefixes)
+                    ),
+                    "deferred_control_flush": handoff != claim,
+                }
+            )
+        previous[cluster] = selected
+    if seen != set(groups):
+        raise ValueError("Missing pre-claim decision snapshots")
+    return {"decisions": len(seen), "phase_switches": switches}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -80,10 +165,18 @@ def main():
     parser.add_argument("--delay-us", type=int, default=10)
     parser.add_argument("--trace-capacity", type=int, default=4096)
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--prefill-preprocess",
+        action="store_true",
+        help="Include raw prefill Scatter1/Scatter2/Gather in the persistent executor",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if min(*args.prefill_rows, args.decode_rows, args.repeats) <= 0:
         parser.error("Row/repeat counts must be positive")
+    if not 1 <= args.top_k <= args.experts * args.world:
+        parser.error("top-k must fit the global expert count")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     import torch
 
     native = module("native")
@@ -106,11 +199,19 @@ def main():
         expected_tiles=args.expected_tiles,
         trace_capacity=args.trace_capacity,
         trace_path=str(trace_path),
+        prefill_preprocess=args.prefill_preprocess,
+        expert_rank=0,
+        expert_world=1,
     )
     owner = Exporter(settings, 1, execute=True, timeout_s=600)
     owner.__enter__()
     torch.cuda.set_device(0)
     peers = [native.RemoteBuffers(owner.descriptor, slot, 0) for slot in (0, 1)]
+    groups = (
+        [native.RemoteGroup([peer]) for peer in peers]
+        if args.prefill_preprocess
+        else []
+    )
     report = {
         "scope": __doc__,
         "settings": vars(args) | {"output": str(args.output)},
@@ -130,6 +231,10 @@ def main():
             .indices.int()
             .contiguous()
         )
+        if args.prefill_preprocess:
+            # Represent rank zero of the requested logical world on one E GPU.
+            # Group transport contains that one peer; preserve only its routes.
+            ids = torch.where(ids.remainder(args.world) == 0, ids // args.world, -1)
         weights = torch.full(ids.shape, 1 / args.top_k, device=0)
         return (
             x,
@@ -142,13 +247,19 @@ def main():
     def push(slot, case, publish=True):
         x, ids, _, row_map, out = case
         out.zero_()
-        native.dispatch(
-            peers[slot], x, ids, row_map, 0, 0, slot, 0, args.world, publish=publish
-        )
+        if args.prefill_preprocess:
+            groups[slot].dispatch(x, ids, row_map, 0, slot, case[2], publish=publish)
+        else:
+            native.dispatch(
+                peers[slot], x, ids, row_map, 0, 0, slot, 0, args.world, publish=publish
+            )
 
     def pull(slot, case):
         _, ids, weights, row_map, out = case
-        native.combine(peers[slot], out, ids, weights, row_map, 0, 0, args.world)
+        if args.prefill_preprocess:
+            groups[slot].combine(out, ids, weights, row_map)
+        else:
+            native.combine(peers[slot], out, ids, weights, row_map, 0, 0, args.world)
         stamps = native.read_timing(peers[slot]).cpu().tolist()
         if stamps[0] != stamps[1] or stamps[3] < stamps[2]:
             raise AssertionError("Invalid operation timing/epoch")
@@ -212,6 +323,7 @@ def main():
                 )
     finally:
         torch.cuda.synchronize(0)
+        groups.clear()
         for peer in peers:
             peer.close()
         owner.__exit__(None)
@@ -252,6 +364,24 @@ def main():
         report["trace_sequence_counts"] = metadata["trace_sequence_counts"]
         report["trace_truncated_ctas"] = trace_overflow_ctas(
             metadata, trace.shape[0], args.trace_capacity
+        )
+        decision_path = trace_path.with_suffix(".decisions.pt")
+        decision_tensor = torch.load(decision_path, weights_only=True)
+        if decision_tensor.shape != trace.shape:
+            raise ValueError("Decision trace shape differs from tile trace")
+        decisions = [
+            dict(zip(DECISION_FIELDS, values)) | {"cta": cta, "claim_sequence": seq}
+            for cta, row in enumerate(decision_tensor.tolist())
+            for seq, values in enumerate(row)
+            if values[0]
+        ]
+        report["decision_trace_file"] = str(decision_path)
+        report["decision_trace_fields"] = list(DECISION_FIELDS)
+        report["decision_trace_checks"] = validate_decision_trace(
+            records,
+            decisions,
+            report["executor"]["cluster_size"],
+            report["trace_truncated_ctas"],
         )
         report["cooperative_trace_checks"] = validate_cluster_trace(
             records, report["executor"]["cluster_size"], report["trace_truncated_ctas"]
@@ -297,7 +427,11 @@ def main():
         "Lifetime includes pipelining waits. Admission is CTA0's observation, not A publication. "
         "Admission roundtrip bounds use only A's clock and include the return visibility/poll delay. "
         "First-D-tile statistics cover only CTAs that received D work; they do not prove "
-        "the full system-scope propagation bound. Raw trace preserves all records."
+        "the full system-scope propagation bound. Decision snapshots precede policy acquisition "
+        "and tile claim; their E-clock observation-to-handoff intervals include arbitration and "
+        "phase drain, but exclude earlier A-to-E propagation. Retirement prefixes are sampled "
+        "after the timestamp; -1 means unavailable. Tracing perturbs all measured latencies. "
+        "Raw traces preserve all records."
     )
     report["status"] = "passed"
     args.output.write_text(json.dumps(report, indent=2) + "\n")

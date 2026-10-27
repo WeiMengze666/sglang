@@ -76,6 +76,12 @@ struct TraceRecord {
   U64 begin_ns, finish_ns, ready_seen_ns, epoch;
   U64 sequence, slot, phase, stage;
 };
+// Leader-only check-epoch snapshots, separate from the stable tile trace ABI.
+// Index is the claim sequence; handoff may be delayed by one control flush.
+struct DecisionRecord {
+  U64 observed_ns, retired_self, retired_peer, handoff_sequence;
+  U64 previous_phase, preferred_phase, selected_phase, preferred_runnable;
+};
 constexpr int QueueShards = 8;
 struct alignas(128) QueueHead {
   U64 word;
@@ -86,6 +92,7 @@ struct Context {
       0; // Diagnostic single-operation execution; 0 = full MoE.
   int column_group = 0;
   TraceRecord *trace = nullptr;
+  DecisionRecord *decision_trace = nullptr;
   U64 *trace_sequence_counts = nullptr;
   int trace_capacity = 0;
   Maps *maps;
@@ -151,6 +158,10 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
         static_cast<size_t>(ctas) * trace_capacity * sizeof(TraceRecord);
     result.trace = static_cast<TraceRecord *>(owner.allocate(bytes));
     C10_CUDA_CHECK(cudaMemset(result.trace, 0, bytes));
+    static_assert(sizeof(DecisionRecord) == sizeof(TraceRecord));
+    result.decision_trace =
+        static_cast<DecisionRecord *>(owner.allocate(bytes));
+    C10_CUDA_CHECK(cudaMemset(result.decision_trace, 0, bytes));
     result.trace_sequence_counts =
         static_cast<U64 *>(owner.allocate(ctas * sizeof(U64)));
     C10_CUDA_CHECK(cudaMemset(result.trace_sequence_counts, 0,
@@ -623,14 +634,46 @@ __global__ __launch_bounds__(Threads, 1) void executor(
           if (blockIdx.x == 0)
             update_policy<Cluster, Fused>(b, context, layers, decode_budget,
                                           expected, cap, previous_budget);
+          U64 observed = 0, retired_self = sequence, retired_peer = sequence;
+          const bool trace_decision =
+              context.decision_trace && sequence < context.trace_capacity;
+          if (trace_decision) {
+            observed = now_ns();
+            // Non-pipelined retirement is ordered by cluster_empty above,
+            // but its latest prefix is not exported; mark it unavailable.
+            retired_self = retired_peer = ~U64(0);
+            if (context.pipelined_stores) {
+              retired_self = cuda::atomic_ref<U64, cuda::thread_scope_device>(
+                                 context.retired_sequence[blockIdx.x])
+                                 .load(cuda::memory_order_acquire);
+              retired_peer = cuda::atomic_ref<U64, cuda::thread_scope_device>(
+                                 context.retired_sequence[blockIdx.x + Cluster - 1])
+                                 .load(cuda::memory_order_acquire);
+            }
+          }
           int preferred = cuda::atomic_ref<int, cuda::thread_scope_device>(
                               context.policy[blockIdx.x / Cluster])
                               .load(cuda::memory_order_acquire);
+          unsigned preferred_runnable = 0;
+          if (trace_decision)
+            preferred_runnable =
+                cuda::atomic_ref<unsigned, cuda::thread_scope_device>(
+                    context.runnable[preferred]).load(cuda::memory_order_acquire);
           bool contended = false;
           if (!claim<Cluster, Fused>(b, context, preferred, cursor, task,
                                     contended) && !contended)
             claim<Cluster, Fused>(b, context, 1 - preferred, cursor, task,
                                   contended);
+          if (task.slot >= 0 && trace_decision) {
+            const bool needs_flush = context.pipelined_stores && sequence &&
+                task.phase != previous_phase && !previous_was_flush;
+            context.decision_trace[static_cast<size_t>(blockIdx.x) *
+                                       context.trace_capacity + sequence] = {
+                observed, retired_self, retired_peer, sequence + needs_flush,
+                static_cast<U64>(previous_phase < 0 ? 2 : previous_phase),
+                static_cast<U64>(preferred), static_cast<U64>(task.phase),
+                preferred_runnable};
+          }
           if (task.slot < 0) {
             // A final tile cannot wait for a successor that does not exist.
             // A control-only flush releases its pending store/ring ownership.
