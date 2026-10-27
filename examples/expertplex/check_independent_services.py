@@ -160,6 +160,13 @@ def main():
         "--sampling-backend",
         "flashinfer",
     ]
+    if workload is not None:
+        # Native PD overlap launches the next decode before retiring the last
+        # result. Its extra terminal forward is not a generated token. Disable
+        # CPU scheduling overlap for exact N-1 routing accounting only; retain
+        # CUDA Graph/TBO, and leave lifecycle/performance defaults unchanged.
+        prefix.append("--disable-overlap-schedule")
+        report["routing_schedule"] = "serial CPU scheduling; CUDA Graph/TBO enabled"
 
     def save():
         (args.output_dir / "report.json").write_text(

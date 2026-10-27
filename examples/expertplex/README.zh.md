@@ -671,7 +671,9 @@ metadata 的每 CTA 最后工作序号用于判断截断，包括容量末尾是
 --routing-seed 42 --routing-sequence-cap 24576 --kv-tokens auto` 可采集固定数据集。
 工具复用原生 custom loader，清除生命周期探测的记录，再逐请求运行真实 KV 移交；
 保存数据集及有序 token 请求的散列，并要求 P/D 计数分别精确覆盖输入 token 与
-输出长度减一。此模式清空 prefix cache，采集仍不作为性能实验。
+输出长度减一。此模式清空 prefix cache，并关闭 CPU/GPU 调度 overlap，避免原生
+PD 循环在收取末轮结果前提交额外一次 forward；CUDA Graph 和 TBO 保持开启。
+这只用于生成 token 的路由校准，不覆盖生产 overlap 的额外执行，也不作为性能实验。
 
 严格数值诊断的 `check_numerical_alignment.py --expert-count N` 用于匹配不同
 E 数量的 native DP/EP reference 与 ExpertPlex 分片。两边的 expert count、
@@ -679,6 +681,16 @@ TBO 和 torch.compile 模式必须一致，不能复用不同分片布局的 ref
 启动 native reference 前会检查已安装 DeepEP 是否支持该 EP 数量；未提供配置的
 拓扑不能以其他分片数的结果代替。没有 tokenizer 的小型测试 checkpoint 可使用
 `--prompt-lengths 31 127 255 --prompt-token-ids 11 12 13 14` 构造确定的输入。
+与 native DeepEP 对比时，用 `prepare_synthetic.py --geometry tiny-deepep`
+生成 metadata，再用 `prepare_tiny_checkpoint.py` 生成双方共享的随机 BF16 权重。
+该 fixture 保留两层、八个专家，并采用 Qwen3-30B 的 hidden/head/MoE 维度；
+原 `tiny` 的 hidden size 256 不支持 DeepEP 低延迟 dispatch，仅用于独立服务等检查。
+两种 fixture 都不能作为预训练模型的精度或性能证据。
+`--variant native --reference /path/to/native` 可用原生服务重新播放相同历史，
+先检查 reference 自身的重复性。并发请求在 DP reference 与独立 D 服务上可能形成
+不同 batch；可在双方都加 `--enable-deterministic-inference`，复用 SGLang 的
+确定性 attention/GEMM 配置进行隔离诊断。工具拒绝混用两种确定性模式的 reference；
+该模式的结果与常规 serving 路径分别验收，不能用于掩盖常规模式的数值差异或性能损失。
 
 `launch_baseline.py` 与 `run_serving_experiment.py` 也默认使用 FlashInfer sampling；
 数值诊断可显式指定 `--sampling-backend pytorch`。实验总入口默认使用 FlashInfer attention，

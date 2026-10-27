@@ -41,6 +41,7 @@ def validate_reference(
     compile_enabled=False,
     expert_count=4,
     concurrency=1,
+    deterministic=False,
 ):
     """Reject incomparable references before allocating GPU memory."""
     if not (reference / "scores.json").is_file():
@@ -48,6 +49,8 @@ def validate_reference(
     report = json.loads((reference / "report.json").read_text())
     if report.get("variant") != "native" or report.get("status") != "passed":
         raise ValueError("Reference must be a successful native diagnostic")
+    if report.get("deterministic_inference", False) != deterministic:
+        raise ValueError("Reference deterministic inference mode differs")
     enabled = report.get("tbo_enabled")
     if enabled is None:
         # Backward compatibility with the original diagnostic report format.
@@ -123,12 +126,17 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--variant", choices=["native", "expertplex"], required=True)
     p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--reference", type=Path)
+    p.add_argument(
+        "--reference",
+        type=Path,
+        help="Matched native capture; native may replay it to check baseline repeatability",
+    )
     p.add_argument("--model-path", type=Path, required=True)
     p.add_argument("--port-base", type=int, default=33000)
     p.add_argument("--startup-timeout", type=float, default=1800)
     p.add_argument("--disable-tbo", action="store_true")
     p.add_argument("--enable-torch-compile", action="store_true")
+    p.add_argument("--enable-deterministic-inference", action="store_true")
     p.add_argument("--expert-count", type=int, choices=range(1, 7), default=4)
     p.add_argument("--steps", type=int, default=32)
     p.add_argument("--concurrency", type=int, default=1)
@@ -152,15 +160,13 @@ def main():
         p.error("Require 1 <= decode batch size <= concurrency <= 16")
     if a.variant == "expertplex" and not a.reference:
         p.error("ExpertPlex requires the native reference directory")
-    if a.variant == "native" and a.reference:
-        p.error("--reference applies to the ExpertPlex diagnostic")
     if a.enable_torch_compile and not a.disable_tbo:
         p.error("The torch.compile diagnostic requires --disable-tbo")
     if a.steps < 2 or not 0 < a.max_prefill_tokens < a.context_length:
         p.error("Use steps >=2 and 0 < prefill capacity < context length")
     if a.prompt_lengths is not None:
-        if a.variant != "native":
-            p.error("ExpertPlex replays the reference prompts; omit --prompt-lengths")
+        if a.variant != "native" or a.reference:
+            p.error("Reference replay uses saved prompts; omit --prompt-lengths")
         if len(set(a.prompt_lengths)) != len(a.prompt_lengths) or any(
             n <= 0 or n > a.max_prefill_tokens or n + a.steps >= a.context_length
             for n in a.prompt_lengths
@@ -184,6 +190,7 @@ def main():
                 a.enable_torch_compile,
                 a.expert_count,
                 a.concurrency,
+                a.enable_deterministic_inference,
             )
             validate_workload(
                 json.loads((a.reference / "histories.json").read_text()),
@@ -215,6 +222,7 @@ def main():
         "required_decode_batch_size": a.require_decode_batch_size,
         "tbo_enabled": not a.disable_tbo,
         "torch_compile_enabled": a.enable_torch_compile,
+        "deterministic_inference": a.enable_deterministic_inference,
         "expert_count": a.expert_count,
         "steps": a.steps,
         "max_prefill_tokens": a.max_prefill_tokens,
@@ -291,6 +299,8 @@ def main():
         prefix.append("--enable-two-batch-overlap")
     if a.enable_torch_compile:
         prefix += ["--enable-torch-compile", "--torch-compile-max-bs", "16"]
+    if a.enable_deterministic_inference:
+        prefix.append("--enable-deterministic-inference")
     try:
         direct = []
         if a.variant == "native":
@@ -339,31 +349,39 @@ def main():
                 ],
                 a.port_base,
             )
-            if a.prompt_token_ids is not None:
-                prompts = repeat_token_pattern(a.prompt_token_ids, a.prompt_lengths)
+            if a.reference:
+                histories = a.output / "histories.json"
+                histories.write_bytes((a.reference / "histories.json").read_bytes())
             else:
-                from transformers import AutoTokenizer
+                if a.prompt_token_ids is not None:
+                    prompts = repeat_token_pattern(a.prompt_token_ids, a.prompt_lengths)
+                else:
+                    from transformers import AutoTokenizer
 
-                tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
-                prompts = (
-                    boundary_prompts(tokenizer, a.prompt_lengths)
-                    if a.prompt_lengths
-                    else [tokenizer.encode(t) for t in PROMPTS]
+                    tokenizer = AutoTokenizer.from_pretrained(
+                        model, local_files_only=True
+                    )
+                    prompts = (
+                        boundary_prompts(tokenizer, a.prompt_lengths)
+                        if a.prompt_lengths
+                        else [tokenizer.encode(t) for t in PROMPTS]
+                    )
+                if any(
+                    len(tokens) > a.max_prefill_tokens
+                    or len(tokens) + a.steps >= a.context_length
+                    for tokens in prompts
+                ):
+                    raise ValueError(
+                        "Diagnostic prompts exceed prefill or context capacity"
+                    )
+                outputs = [
+                    generate(f"http://127.0.0.1:{a.port_base}", tokens, a.steps)
+                    for tokens in prompts
+                ]
+                histories = a.output / "histories.json"
+                histories.write_text(
+                    json.dumps({"model_path": model, "outputs": outputs})
                 )
-            if any(
-                len(tokens) > a.max_prefill_tokens
-                or len(tokens) + a.steps >= a.context_length
-                for tokens in prompts
-            ):
-                raise ValueError(
-                    "Diagnostic prompts exceed prefill or context capacity"
-                )
-            outputs = [
-                generate(f"http://127.0.0.1:{a.port_base}", tokens, a.steps)
-                for tokens in prompts
-            ]
-            histories = a.output / "histories.json"
-            histories.write_text(json.dumps({"model_path": model, "outputs": outputs}))
             url = f"http://127.0.0.1:{a.port_base}"
         else:
             start(
@@ -436,6 +454,9 @@ def main():
                 f"http://127.0.0.1:{a.port_base}",
                 "--bootstrap-port",
                 str(a.port_base + 2000),
+            ]
+        if a.reference:
+            direct += [
                 "--reference",
                 str(a.reference / "scores.json"),
                 "--require-exact-logprobs",

@@ -92,6 +92,7 @@ class AlignmentConfigurationTests(unittest.TestCase):
         self.report["torch_compile_enabled"] = True
         (self.root / "report.json").write_text(json.dumps(self.report))
         validate(self.root, self.model, True, compile_enabled=True)
+
         with self.assertRaisesRegex(ValueError, "torch.compile mode"):
             validate(self.root, self.model, True)
         del self.report["torch_compile_enabled"]
@@ -100,6 +101,16 @@ class AlignmentConfigurationTests(unittest.TestCase):
         ]
         (self.root / "report.json").write_text(json.dumps(self.report))
         validate(self.root, self.model, True, compile_enabled=True)
+
+    def test_determinism_mode_must_match_reference(self):
+        self.check()
+        with self.assertRaisesRegex(ValueError, "deterministic inference"):
+            validate(self.root, self.model, True, deterministic=True)
+        self.report["deterministic_inference"] = True
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        validate(self.root, self.model, True, deterministic=True)
+        with self.assertRaisesRegex(ValueError, "deterministic inference"):
+            validate(self.root, self.model, True)
 
     def test_expert_placement_must_match_reference(self):
         self.check()

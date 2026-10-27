@@ -14,7 +14,7 @@ def main():
     from safetensors.torch import save_file
 
     data = json.loads((args.metadata / "config.json").read_text())
-    if data.get("expertplex_synthetic_geometry") != "tiny":
+    if data.get("expertplex_synthetic_geometry") not in ("tiny", "tiny-deepep"):
         p.error("Only the tiny test geometry may be materialized by this script")
     args.output.mkdir(parents=True, exist_ok=False)
     h = data["hidden_size"]
@@ -59,6 +59,7 @@ def main():
             {
                 "scope": "tiny random BF16 correctness fixture; not pretrained accuracy",
                 "seed": 20261015,
+                "geometry": data["expertplex_synthetic_geometry"],
                 "tensors": len(weights),
             },
             indent=2,

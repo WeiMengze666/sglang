@@ -9,10 +9,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-config", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--geometry", choices=("tiny", "30b", "480b"), default="tiny")
+    parser.add_argument(
+        "--geometry", choices=("tiny", "tiny-deepep", "30b", "480b"), default="tiny"
+    )
     args = parser.parse_args()
     data = json.loads(args.source_config.read_text())
-    if args.geometry == "tiny":
+    if args.geometry in ("tiny", "tiny-deepep"):
         data.update(
             hidden_size=256,
             intermediate_size=512,
@@ -28,6 +30,18 @@ def main():
             max_window_layers=2,
             eos_token_id=1023,
         )
+        if args.geometry == "tiny-deepep":
+            # Keep two layers/eight experts, but use the Qwen3-30B head and
+            # MoE dimensions for the native DeepEP/DeepGEMM reference path.
+            # Legacy DeepEP low-latency dispatch cannot run hidden_size=256.
+            data.update(
+                hidden_size=2048,
+                intermediate_size=6144,
+                moe_intermediate_size=768,
+                num_attention_heads=32,
+                num_key_value_heads=4,
+                head_dim=128,
+            )
     elif args.geometry == "30b":
         data.update(
             hidden_size=2048,
