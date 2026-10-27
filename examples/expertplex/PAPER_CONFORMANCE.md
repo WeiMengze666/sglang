@@ -5,6 +5,9 @@
 PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`。
 本文件记录复现要求及当前差距，不表示全部要求已经实现。
 
+当前用户确认的验收范围为单节点 8×B300。§5.3 跨节点 MoE RDMA 转发与
+InfiniBand 流量隔离暂缓；保留这些原文要求以供后续多节点验证，不以单机结果代替。
+
 辅助阅读：[HaoyangPing 的 ExpertPlex 解读](https://pinghaoyang.com.cn/aigc/posts/expertplex/)。
 实现约束仍以以上原始 PDF 为准，尤其是 tile 提交后的协作切换、单边最终缓冲区访问、
 TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
