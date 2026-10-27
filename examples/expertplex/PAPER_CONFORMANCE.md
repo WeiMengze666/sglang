@@ -8,6 +8,13 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
 当前用户确认的验收范围为单节点 8×B300。§5.3 跨节点 MoE RDMA 转发与
 InfiniBand 流量隔离暂缓；保留这些原文要求以供后续多节点验证，不以单机结果代替。
 
+当前验收边界：真实 Coder BF16 权重在确定性模式下，已通过固定历史、并发请求的
+全词表逐位对照，覆盖三路 D 同时活动、实际 decode 批处理和非空 TBO 重放完成。
+三路 D 重复使用同一组参考轨迹；这不代表更多独立提示，也不是完整模型质量评估。
+数值捕获关闭 CPU 调度重叠，不作为性能证据。APK 的算子开销、完整传播上界、
+优化器搜索与预测质量、SBO、attention TP 和编译路径的严格数值验收仍有缺口；
+尚未达到相对最强原生基线的端到端 1.5× P90 goodput 要求。
+
 辅助阅读：[HaoyangPing 的 ExpertPlex 解读](https://pinghaoyang.com.cn/aigc/posts/expertplex/)。
 实现约束仍以以上原始 PDF 为准，尤其是 tile 提交后的协作切换、单边最终缓冲区访问、
 TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
@@ -66,7 +73,7 @@ TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
 
 | 原文 | 必须保留的机制 | 当前证据或差距 | 验收方式 |
 |---|---|---|---|
-| §3 | P、D attention 独占 GPU；E 共享完整专家权重 | 62 层 480B 随机权重完成完整服务及 Poisson sweep；最新小 checkpoint 的 24 个固定历史位置 top-1 全部对齐，但 logprob 非 bitwise、非完整词表 | 同权重基线逐 token / logprob 对照，真实 KV 移交 |
+| §3 | P、D attention 独占 GPU；E 共享完整专家权重 | 原生独立 P/D/E 服务已接入；真实 Coder BF16 的确定性固定历史检查通过三路 D 并发全词表逐位对照，实际使用原生 KV 移交；仅限已验证轨迹与模式 | 继续扩大独立提示、序列长度和运行模式覆盖；保留失败记录 |
 | §4.2、§7.1 | 一个长驻 kernel 融合两个 grouped GEMM、激活、数据处理、cluster scheduler | 默认 SM100 长驻融合 TMA/TCGEN05；当前性能明显落后于原生 DeepGEMM，不能验收调度开销 | 对照原生 BF16 GEMM，并记录融合前后开销 |
 | §7.1、§7.6 Fig.15 | MoE 预处理/后处理也是 APK 中的 tile operation，包含 EP Scatter 两阶段与 EP Gather | `prefill_preprocess` 的 4E/top-8 数值、并发、graph 和完整随机权重服务通过；六种操作已有 tile interval 数据，但不构成完整传播/抢占上界证明 | 原生 BF16 per-rank gather 舍入边界对照；完整负载的各操作抢占间隔测试 |
 | §4.2 | 启动前固定 operation templates、buffer、TMA descriptors；shape 在启动时编译为常量 | buffers / TMA descriptors 已固定；Coder/30B 的 H/I 已做编译期特化，小调试模型保留通用形状 | 多层、动态 batch、图 replay 的地址与描述符检查 |
@@ -76,7 +83,7 @@ TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
 | §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 双 accumulator，延迟 store 退休与 Task ring 元数据复用已分离；跨 mailbox 回归通过，配对汇总仍慢约 0.73%。完整 SM100 后端默认开启，可显式关闭做消融 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
 | §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | NVLink IPC 路径已验证全部 56 个有向 GPU 对 | 多发送方、重复 epoch、容量边界、故障路径 |
 | §5.2 | E 无通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 默认服务路径已实现，E 侧预处理直接读取最终 raw buffer；通信微基准的 identity echo 仅为计时外诊断 | kernel trace、并发 P/D 数值验证 |
-| §5.2 Fig.5 | 单线程 WaitDone 位于 COMM stream；COMPUTE stream 可继续 TBO/SBO | 独立 COMM stream 和双 mailbox 已实现；client 的 TBO/graph 对照通过，小 checkpoint 完整 SGLang TBO/图回放通过，真实模型待验收 | CUDA timeline 及双 microbatch 生命周期检查 |
+| §5.2 Fig.5 | 单线程 WaitDone 位于 COMM stream；COMPUTE stream 可继续 TBO/SBO | 独立 COMM stream 和双 mailbox 已实现；真实模型三路 D 已验证非空双 microbatch 图重放及所有 E 的 epoch 完成，SBO 尚未适配；完成证据不等于重叠时长证明 | CUDA timeline 的计算/通信重叠量与 SBO 验证 |
 | §5.3 | 跨节点 P 同 local rank 转发，节点内 NVLink multicast/gather；无 P 节点走低优先级 IB VL | 单节点 MoE 路径为 NVLink；多节点 MoE RDMA/层次转发未实现 | 需要多节点与 IB 硬件；单机测试不能替代 |
 | §6.1–6.3 Eq.1–3 | 联合枚举 attention/MoE 并行、布局、overlap、q；内存过滤；SLO 二分批量；critical path 估计 | 当前优化器只覆盖部分布局与简化模型，需补齐可执行策略 | profile 拟合留出集误差、候选可执行性、预测/实测对比 |
 | §6.4 Eq.4 | q 随当前/预期 decode tile footprint 缩放，按 cluster 向上取整，Qmax 保证 P 进展；单 phase 借用全部资源 | CPU 对照及默认 SM100 调度器均使用实际 masked/packed tile footprint；仍需完整策略质量与饥饿上界验收 | 稀疏度变化、空闲借用、P/D 饥饿测试 |
@@ -97,7 +104,10 @@ TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
 Coder BF16 的 SLO 必须在对比前固定，不能在看到结果后改阈值以得到 1.5×。
 论文短请求默认 1P3D4E，长请求使用 3P1D4E；用户的 1P3D4E 保留为默认，其他布局作为明确标记的实验配置。
 
-## 已取得证据（不等同于完整验收）
+## 早期证据与修复历史（不等同于当前完整验收）
+
+以下按当时状态保留早期观察，不能覆盖上方当前验收边界；后续通过也不抹去早期
+失败。实验原始记录单独保存，不随源码发布。
 
 2026-10-15：8×B300，4E 随机 BF16 权重覆盖全部 62 层，初始 masked 版本每个 E 进程实测占用约 227.65 GiB（包含缓冲区，并非纯权重）；
 1P+3D 并发逐层 MoE 测试通过。参考 CUDA kernel 的 20 次变化输入/路由的 graph replay 通过。
