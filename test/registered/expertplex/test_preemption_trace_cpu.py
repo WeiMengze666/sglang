@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
 validate = importlib.import_module("bench_preemption").validate_cluster_trace
 validate_decisions = importlib.import_module("bench_preemption").validate_decision_trace
+validate_progress = importlib.import_module("bench_preemption").validate_progress_trace
 overflow = importlib.import_module("bench_preemption").trace_overflow_ctas
 
 
@@ -139,6 +140,73 @@ class CooperativeTraceTests(unittest.TestCase):
         rows[0]["finish_ns"] = 0
         with self.assertRaises(ValueError):
             validate(rows, 2)
+
+    def progress(self):
+        return [
+            dict(
+                cta=r["cta"],
+                sequence=r["sequence"],
+                accumulator_ready_ns=r["begin_ns"] + 2,
+                output_submitted_ns=r["finish_ns"] - 2,
+            )
+            for r in self.fixture()
+        ]
+
+    def test_progress_distinguishes_two_outputs_from_one_unfinished_gemm(self):
+        rows, decisions, progress = self.fixture(), self.decisions(), self.progress()
+        decisions[-1]["observed_ns"] = 25
+        decisions[-1]["retired_self"] = decisions[-1]["retired_peer"] = 0
+        for p in progress:
+            if p["sequence"] == 0:
+                p["output_submitted_ns"] = 24
+            elif p["sequence"] == 1:
+                p["accumulator_ready_ns"] = 32
+        result = validate_progress(rows, decisions, progress, 2)
+        self.assertEqual(result["max_gemms_without_ready_observation_per_cta"], 1)
+        for c in result["phase_switches"][0]["ctas"]:
+            self.assertEqual(c["unretired_outputs"], 2)
+            self.assertEqual(c["submitted_outputs_awaiting_retirement"], 1)
+
+    def test_progress_does_not_hide_multiple_unfinished_gemms(self):
+        decisions, progress = self.decisions(), self.progress()
+        decisions[-1]["observed_ns"] = 25
+        decisions[-1]["retired_self"] = decisions[-1]["retired_peer"] = 0
+        for p in progress:
+            if p["sequence"] <= 1:
+                p["accumulator_ready_ns"] = 27
+        result = validate_progress(self.fixture(), decisions, progress, 2)
+        self.assertEqual(result["max_gemms_without_ready_observation_per_cta"], 2)
+
+    def test_progress_rejects_incomplete_or_out_of_order_evidence(self):
+        for samples in [self.progress()[:-1], self.progress() + [self.progress()[0]]]:
+            with self.assertRaises(ValueError):
+                validate_progress(self.fixture(), self.decisions(), samples, 2)
+        for field, value in [
+            ("accumulator_ready_ns", 0),
+            ("accumulator_ready_ns", 100),
+            ("output_submitted_ns", 1),
+            ("output_submitted_ns", 100),
+        ]:
+            samples = self.progress()
+            samples[0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                validate_progress(self.fixture(), self.decisions(), samples, 2)
+
+    def test_data_operations_are_not_counted_as_gemms(self):
+        rows, samples = self.fixture(), self.progress()
+        for r in rows:
+            r["stage"] = 3
+        for p in samples:
+            p["accumulator_ready_ns"] = 0
+        result = validate_progress(rows, self.decisions(), samples, 2)
+        self.assertEqual(result["max_gemms_without_ready_observation_per_cta"], 0)
+        self.assertEqual(
+            result["phase_switches"][0]["ctas"][0]["data_operations_before_submission"],
+            1,
+        )
+        samples[0]["accumulator_ready_ns"] = 12
+        with self.assertRaisesRegex(ValueError, "Non-GEMM"):
+            validate_progress(rows, self.decisions(), samples, 2)
 
 
 if __name__ == "__main__":

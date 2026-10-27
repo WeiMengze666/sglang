@@ -1368,6 +1368,18 @@ public:
                                 cudaMemcpyDeviceToHost));
     return result;
   }
+  torch::Tensor read_progress_trace() {
+    TORCH_CHECK(!running, "Stop the executor before reading diagnostic traces");
+    c10::cuda::CUDAGuard guard(owner->device);
+    auto result = torch::zeros(
+        {launch_ctas, native_context.trace_capacity, 2},
+        torch::TensorOptions().dtype(torch::kInt64).device(torch::kCPU));
+    if (native_context.trace_capacity)
+      C10_CUDA_CHECK(cudaMemcpy(result.data_ptr(), native_context.progress_trace,
+                                result.numel() * sizeof(U64),
+                                cudaMemcpyDeviceToHost));
+    return result;
+  }
   void check_weight(const torch::Tensor &t, int dims, const char *name) {
     TORCH_CHECK(t.is_cuda() && t.device().index() == owner->device &&
                     t.is_contiguous() && t.scalar_type() == at::kBFloat16 &&
@@ -1637,6 +1649,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("describe", &PersistentExecutor::describe)
       .def("read_trace", &PersistentExecutor::read_trace)
       .def("read_decision_trace", &PersistentExecutor::read_decision_trace)
+      .def("read_progress_trace", &PersistentExecutor::read_progress_trace)
       .def("check_error", &PersistentExecutor::check_error,
            py::call_guard<py::gil_scoped_release>());
   py::class_<RemoteGroup, std::shared_ptr<RemoteGroup>>(m, "RemoteGroup")

@@ -74,6 +74,85 @@ DECISION_FIELDS = (
     "selected_phase",
     "preferred_runnable",
 )
+PROGRESS_FIELDS = ("accumulator_ready_ns", "output_submitted_ns")
+
+
+def validate_progress_trace(
+    records, decisions, progress, cluster_size, truncated_ctas=0
+):
+    """Separate unretired outputs from computation, without certifying a bound.
+
+    GEMM readiness is observed by the epilogue after its accumulator barrier;
+    this is later than or equal to actual Tensor Core completion. A zero value
+    is required for non-GEMM operations. Output submission is distinct from
+    global-store completion. All timestamps belong to one expert GPU.
+    """
+    checks = validate_decision_trace(records, decisions, cluster_size, truncated_ctas)
+    indexed = {(r["cta"], r["sequence"]): r for r in records}
+    if len(indexed) != len(records):
+        raise ValueError("Duplicate tile progress key")
+    seen = set()
+    by_cluster = {}
+    for sample in progress:
+        key = (sample["cta"], sample["sequence"])
+        if key in seen or key not in indexed:
+            raise ValueError("Duplicate or unknown tile progress")
+        seen.add(key)
+        row = indexed[key] | sample
+        ready, submitted = row["accumulator_ready_ns"], row["output_submitted_ns"]
+        if not row["begin_ns"] <= submitted <= row["finish_ns"]:
+            raise ValueError("Output submission must lie within tile lifetime")
+        if row["stage"] in (1, 2):
+            if not row["begin_ns"] <= ready <= submitted:
+                raise ValueError("GEMM requires an ordered accumulator observation")
+        elif ready != 0:
+            raise ValueError("Non-GEMM work has no accumulator observation")
+        by_cluster.setdefault(row["cta"] // cluster_size, []).append(row)
+    if seen != set(indexed):
+        raise ValueError("Missing tile progress")
+    decision_index = {
+        (d["cta"] // cluster_size, d["claim_sequence"]): d for d in decisions
+    }
+    switches = []
+    for switch in checks["phase_switches"]:
+        cluster, claim = switch["cluster"], switch["claim_sequence"]
+        decision = decision_index[cluster, claim]
+        observed = decision["observed_ns"]
+        inflight = [
+            row
+            for row in by_cluster[cluster]
+            if row["sequence"] < claim and row["finish_ns"] > observed
+        ]
+        counts = []
+        for cta in range(cluster * cluster_size, (cluster + 1) * cluster_size):
+            rows = [r for r in inflight if r["cta"] == cta]
+            counts.append(
+                {
+                    "cta": cta,
+                    "unretired_outputs": len(rows),
+                    "gemms_without_ready_observation": sum(
+                        r["stage"] in (1, 2) and r["accumulator_ready_ns"] > observed
+                        for r in rows
+                    ),
+                    "data_operations_before_submission": sum(
+                        r["stage"] not in (1, 2) and r["output_submitted_ns"] > observed
+                        for r in rows
+                    ),
+                    "submitted_outputs_awaiting_retirement": sum(
+                        r["output_submitted_ns"] <= observed for r in rows
+                    ),
+                }
+            )
+        switches.append({"cluster": cluster, "claim_sequence": claim, "ctas": counts})
+    return {
+        "records": len(seen),
+        "phase_switches": switches,
+        "max_gemms_without_ready_observation_per_cta": max(
+            (c["gemms_without_ready_observation"] for s in switches for c in s["ctas"]),
+            default=0,
+        ),
+        "scope": "E-side progress only; not a bound on publication, propagation, or full tile drain",
+    }
 
 
 def validate_decision_trace(records, decisions, cluster_size, truncated_ctas=0):
@@ -164,6 +243,10 @@ def main():
     parser.add_argument("--expected-tiles", type=float, default=40)
     parser.add_argument("--delay-us", type=int, default=10)
     parser.add_argument("--trace-capacity", type=int, default=4096)
+    parser.add_argument(
+        "--ctas", type=int, default=0, help="Zero uses all available SMs"
+    )
+    parser.add_argument("--isolated-repeats", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument(
         "--prefill-preprocess",
@@ -172,8 +255,15 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if min(*args.prefill_rows, args.decode_rows, args.repeats) <= 0:
+    if (
+        min(*args.prefill_rows, args.decode_rows, args.repeats, args.isolated_repeats)
+        <= 0
+    ):
         parser.error("Row/repeat counts must be positive")
+    if args.trace_capacity < 0 or args.ctas < 0 or args.ctas % 2:
+        parser.error(
+            "Trace capacity must be nonnegative; CTA count must be zero or even"
+        )
     if not 1 <= args.top_k <= args.experts * args.world:
         parser.error("top-k must fit the global expert count")
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -198,7 +288,8 @@ def main():
         decode_budget=args.decode_budget,
         expected_tiles=args.expected_tiles,
         trace_capacity=args.trace_capacity,
-        trace_path=str(trace_path),
+        trace_path=str(trace_path) if args.trace_capacity else None,
+        ctas=args.ctas,
         prefill_preprocess=args.prefill_preprocess,
         expert_rank=0,
         expert_world=1,
@@ -275,11 +366,36 @@ def main():
     try:
         for rows in args.prefill_rows:
             cases = [prepare(rows, rows), prepare(args.decode_rows, 128)]
-            isolated, references = [], []
+            expert_rows = []
+            for case in cases:
+                ids = case[1].flatten()
+                local_ids = (
+                    ids[ids >= 0]
+                    if args.prefill_preprocess
+                    else ids[ids.remainder(args.world) == 0] // args.world
+                )
+                expert_rows.append(
+                    torch.bincount(local_ids.long(), minlength=args.experts)
+                    .cpu()
+                    .tolist()
+                )
+            isolated, references, isolated_samples = [], [], []
             for slot, case in enumerate(cases):
+                # Warm outside the optional repeated profile interval.
                 push(slot, case)
-                isolated.append(pull(slot, case))
+                warm = pull(slot, case)
                 references.append(case[-1].clone())
+                samples = [warm] if args.isolated_repeats == 1 else []
+                if args.isolated_repeats > 1:
+                    for _ in range(args.isolated_repeats):
+                        push(slot, case)
+                        samples.append(pull(slot, case))
+                        if not bool(torch.equal(case[-1], references[-1])):
+                            raise AssertionError("Repeated isolated output changed")
+                isolated_samples.append(samples)
+                isolated.append(
+                    sorted(samples, key=lambda s: s["expert_ms"])[len(samples) // 2]
+                )
             for repeat in range(args.repeats):
                 for slot, case in enumerate(cases):
                     push(slot, case, publish=False)
@@ -304,6 +420,8 @@ def main():
                         "prefill": prefill,
                         "decode": decode,
                         "isolated": isolated,
+                        "isolated_samples": isolated_samples,
+                        "expert_rows": expert_rows,
                         "actual_attention_release_gap_us": (
                             timestamps[1] - timestamps[0]
                         )
@@ -327,6 +445,15 @@ def main():
         for peer in peers:
             peer.close()
         owner.__exit__(None)
+    if not args.trace_capacity:
+        report.update(
+            status="passed",
+            trace_status="disabled",
+            timing_scope="E admission-to-retirement includes full configured MoE operations; excludes transport and serving",
+        )
+        args.output.write_text(json.dumps(report, indent=2) + "\n")
+        print(json.dumps({"status": report["status"], "output": str(args.output)}))
+        return
     trace = torch.load(trace_path, weights_only=True)
     records = []
     for cta, row in enumerate(trace.tolist()):
@@ -386,6 +513,25 @@ def main():
         report["cooperative_trace_checks"] = validate_cluster_trace(
             records, report["executor"]["cluster_size"], report["trace_truncated_ctas"]
         )
+        progress_path = trace_path.with_suffix(".progress.pt")
+        progress_tensor = torch.load(progress_path, weights_only=True)
+        if tuple(progress_tensor.shape) != (*trace.shape[:2], len(PROGRESS_FIELDS)):
+            raise ValueError("Progress trace shape differs from tile trace")
+        progress = [
+            dict(zip(PROGRESS_FIELDS, values)) | {"cta": cta, "sequence": seq}
+            for cta, row in enumerate(progress_tensor.tolist())
+            for seq, values in enumerate(row)
+            if any(values)
+        ]
+        report["progress_trace_file"] = str(progress_path)
+        report["progress_trace_fields"] = list(PROGRESS_FIELDS)
+        report["progress_trace_checks"] = validate_progress_trace(
+            records,
+            decisions,
+            progress,
+            report["executor"]["cluster_size"],
+            report["trace_truncated_ctas"],
+        )
     except (OSError, ValueError, KeyError) as exc:
         report.update(status="failed", error=str(exc))
         args.output.write_text(json.dumps(report, indent=2) + "\n")
@@ -431,6 +577,8 @@ def main():
         "and tile claim; their E-clock observation-to-handoff intervals include arbitration and "
         "phase drain, but exclude earlier A-to-E propagation. Retirement prefixes are sampled "
         "after the timestamp; -1 means unavailable. Tracing perturbs all measured latencies. "
+        "Progress snapshots distinguish epilogue-observed accumulator readiness from output "
+        "submission and final retirement, without equating a pending store to an unfinished GEMM. "
         "Raw traces preserve all records."
     )
     report["status"] = "passed"

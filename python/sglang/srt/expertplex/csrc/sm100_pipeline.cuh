@@ -82,6 +82,12 @@ struct DecisionRecord {
   U64 observed_ns, retired_self, retired_peer, handoff_sequence;
   U64 previous_phase, preferred_phase, selected_phase, preferred_runnable;
 };
+// Epilogue observations, on the same E clock as the decision/tile traces.
+// accumulator_ready is an upper bound on GEMM completion (zero for data ops).
+// output_submitted precedes asynchronous-store retirement, not global visibility.
+struct ProgressRecord {
+  U64 accumulator_ready_ns, output_submitted_ns;
+};
 constexpr int QueueShards = 8;
 struct alignas(128) QueueHead {
   U64 word;
@@ -93,6 +99,7 @@ struct Context {
   int column_group = 0;
   TraceRecord *trace = nullptr;
   DecisionRecord *decision_trace = nullptr;
+  ProgressRecord *progress_trace = nullptr;
   U64 *trace_sequence_counts = nullptr;
   int trace_capacity = 0;
   Maps *maps;
@@ -162,6 +169,11 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
     result.decision_trace =
         static_cast<DecisionRecord *>(owner.allocate(bytes));
     C10_CUDA_CHECK(cudaMemset(result.decision_trace, 0, bytes));
+    const size_t progress_bytes =
+        static_cast<size_t>(ctas) * trace_capacity * sizeof(ProgressRecord);
+    result.progress_trace =
+        static_cast<ProgressRecord *>(owner.allocate(progress_bytes));
+    C10_CUDA_CHECK(cudaMemset(result.progress_trace, 0, progress_bytes));
     result.trace_sequence_counts =
         static_cast<U64 *>(owner.allocate(ctas * sizeof(U64)));
     C10_CUDA_CHECK(cudaMemset(result.trace_sequence_counts, 0,
@@ -934,6 +946,12 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         break;
       }
       s.accum_full[index].wait(parity);
+      if (local_row == 0 && task.slot >= 0 && context.progress_trace &&
+          sequence < context.trace_capacity &&
+          (task.stage == GATE || task.stage == DOWN))
+        context.progress_trace[static_cast<size_t>(blockIdx.x) *
+                                   context.trace_capacity + sequence]
+            .accumulator_ready_ns = now_ns();
       if (context.pipelined_stores) {
         // Task metadata has been copied by the producer, MMA and all epilogue
         // readers. Reuse its ring independently of global-store retirement;
@@ -1104,6 +1122,11 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       deep_gemm::ptx::tcgen05_before_thread_sync();
       if (Fused || task.stage == ACTIVATE || data_stage(task.stage))
         s.accum_empty[index].arrive(0u);
+      if (local_row == 0 && context.progress_trace &&
+          sequence < context.trace_capacity)
+        context.progress_trace[static_cast<size_t>(blockIdx.x) *
+                                   context.trace_capacity + sequence]
+            .output_submitted_ns = now_ns();
       if (context.pipelined_stores && !Fused && task.stage != ACTIVATE &&
           !data_stage(task.stage)) {
         if (pending.slot >= 0) {

@@ -247,6 +247,10 @@ class PersistentExecutor:
         """Leader check-epoch snapshots; unavailable retired prefixes are -1."""
         return self._impl.read_decision_trace()
 
+    def read_progress_trace(self):
+        """Epilogue observations of accumulator readiness and output submission."""
+        return self._impl.read_progress_trace()
+
     def check_error(self) -> list[int]:
         errors = list(self._impl.check_error())
         if any(errors):

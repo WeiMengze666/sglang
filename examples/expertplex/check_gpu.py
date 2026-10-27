@@ -88,7 +88,7 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
                 decode_sm_budget=settings.get("decode_budget", 2),
                 expected_decode_tiles=settings.get("expected_tiles", 64),
                 max_decode_sm_fraction=0.75,
-                ctas=0,
+                ctas=settings.get("ctas", 0),
                 trace_capacity=settings.get("trace_capacity", 0),
             )
         outbox.put(
@@ -116,6 +116,10 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
                 torch.save(
                     executor.read_decision_trace(),
                     Path(settings["trace_path"]).with_suffix(".decisions.pt"),
+                )
+                torch.save(
+                    executor.read_progress_trace(),
+                    Path(settings["trace_path"]).with_suffix(".progress.pt"),
                 )
                 Path(settings["trace_path"]).with_suffix(".metadata.json").write_text(
                     json.dumps(executor.describe(), indent=2) + "\n"
