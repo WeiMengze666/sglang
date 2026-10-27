@@ -78,6 +78,8 @@ def commands(args):
         common += ["--max-total-tokens", str(kv)]
     if getattr(args, "mem_fraction_static", None) is not None:
         common += ["--mem-fraction-static", str(args.mem_fraction_static)]
+    if getattr(args, "deepep_config", None):
+        common += ["--deepep-config", args.deepep_config]
     if getattr(args, "enable_dp_lm_head", False):
         if attention_dp <= 1:
             raise ValueError("DP LM head requires a baseline with DP attention")
@@ -183,6 +185,7 @@ def main():
         help="Aggregate decode KV cap across attention DP ranks; default auto profiles memory",
     )
     p.add_argument("--mem-fraction-static", type=memory_fraction)
+    p.add_argument("--deepep-config", help="Native DeepEP tuned JSON string or file")
     p.add_argument(
         "--sequence-cap",
         type=int,

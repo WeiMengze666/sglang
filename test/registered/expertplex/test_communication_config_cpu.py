@@ -8,9 +8,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
 depth = importlib.import_module("bench_communication").low_latency_qp_depth
+normal_sms = importlib.import_module("bench_communication").validate_normal_sms
 
 
 class CommunicationConfigurationTests(unittest.TestCase):
+    def test_normal_sm_tuning_cannot_silently_change_other_paths(self):
+        normal_sms(None, "expertplex", "low_latency")
+        normal_sms(64, "deepep", "normal")
+        for value, backend, mode in (
+            (0, "deepep", "normal"),
+            (3, "deepep", "normal"),
+            (True, "deepep", "normal"),
+            (32, "expertplex", "normal"),
+            (32, "deepep", "low_latency"),
+        ):
+            with self.assertRaises(ValueError):
+                normal_sms(value, backend, mode)
+
     def test_maximum_sweep_case_and_completion_slots(self):
         self.assertEqual(depth([16, 64, 256]), 1024)
         self.assertEqual(depth([16, 512, 64]), 2048)

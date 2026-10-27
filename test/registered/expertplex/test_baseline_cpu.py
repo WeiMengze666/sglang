@@ -85,13 +85,19 @@ class BaselineLaunchTests(unittest.TestCase):
         )
         args.decode_kv_tokens = None
         args.pdmux_config = "/pdmux.yaml"
+        args.deepep_config = "/frozen-deepep.json"
         for variant in ("pdd", "pdmux", "colocated", "chunked"):
             args.variant = variant
             for fraction in (None, 0.9):
                 args.mem_fraction_static = fraction
                 for name, command, _ in baseline.commands(args):
                     if name == "router":
+                        self.assertNotIn("--deepep-config", command)
                         continue
+                    self.assertEqual(
+                        command[command.index("--deepep-config") + 1],
+                        "/frozen-deepep.json",
+                    )
                     self.assertNotIn("--max-total-tokens", command)
                     if fraction is None:
                         self.assertNotIn("--mem-fraction-static", command)

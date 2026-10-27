@@ -448,6 +448,12 @@ decode 专家的行数，配合 `--decode-active-experts` 检查部分 tile 和�
 放入正常 sharing 对照。
 `bench_communication.py --cuda-graph` 用 GPU 同步隔离 dispatch 与 combine，
 支持单独构建的固定 DeepEP v1。
+原生 normal 模式可添加 `--deepep-num-sms N`，在分配通信缓冲区前使用
+DeepEP 的 `Buffer.set_num_sms` 调参；只接受正偶数且不能超过实际 GPU SM 数。
+该选项不改变 low-latency 路径。组件最优值需再做服务验证，尤其不能超过
+PDMux 所有可能 Green Context 分区的可用 SM 数。
+基线服务启动器支持原生 `--deepep-config`；实验总入口接受对应 JSON 文件路径，
+启动前复制到实验目录并透传给原生服务，保持调参和留出配置可追踪。
 DeepEP low-latency 模式会在初始化 NVSHMEM 前按整个 `--rows` 扫描的最大值设置
 `NVSHMEM_QP_DEPTH`（至少 `2 * (max_rows + 1)`，向上取整到二次幂），
 保留更大的用户配置，并将实际深度写入结果元数据。

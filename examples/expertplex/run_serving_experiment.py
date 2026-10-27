@@ -33,6 +33,10 @@ def main():
     p.add_argument("--tokenizer-path", required=True)
     p.add_argument("--config", help="ExpertPlex node configuration")
     p.add_argument("--pdmux-config")
+    p.add_argument(
+        "--deepep-config",
+        help="Baseline-only native DeepEP JSON file, snapshotted before launch",
+    )
     p.add_argument("--weight-mode", choices=("checkpoint", "synthetic"), required=True)
     p.add_argument("--dataset-path", required=True)
     p.add_argument("--requests", type=int, default=256)
@@ -96,6 +100,8 @@ def main():
     )
     p.add_argument("--output-dir", required=True, type=Path)
     args = p.parse_args()
+    if args.deepep_config and args.variant == "expertplex":
+        p.error("--deepep-config applies to native baselines")
     if args.enable_dp_lm_head and args.variant in ("expertplex", "pdmux"):
         p.error("DP LM head tuning applies to colocated/chunked/PDD baselines")
     if args.warmup_requests < 1:
@@ -132,7 +138,11 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=False)
     # Freeze tuning inputs before launch. A later experiment may select another
     # node/Green Context policy at the same source path.
-    for field, filename in (("config", "node.json"), ("pdmux_config", "pdmux.yaml")):
+    for field, filename in (
+        ("config", "node.json"),
+        ("pdmux_config", "pdmux.yaml"),
+        ("deepep_config", "deepep.json"),
+    ):
         if original := getattr(args, field):
             snapshot = args.output_dir.resolve() / filename
             snapshot.write_bytes(Path(original).read_bytes())
@@ -206,6 +216,8 @@ def main():
         ]
         if args.pdmux_config:
             launch += ["--pdmux-config", args.pdmux_config]
+        if args.deepep_config:
+            launch += ["--deepep-config", args.deepep_config]
         if args.variant == "chunked":
             launch += ["--chunk-size", str(args.chunk_size)]
         if args.disable_tbo:

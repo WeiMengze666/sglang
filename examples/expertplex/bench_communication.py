@@ -44,6 +44,15 @@ def low_latency_qp_depth(rows, configured=1024):
     return 1 << (required - 1).bit_length()
 
 
+def validate_normal_sms(value, backend, mode):
+    if value is None:
+        return
+    if type(value) is not int or value < 2 or value % 2:
+        raise ValueError("DeepEP normal SM count must be a positive even integer")
+    if backend != "deepep" or mode != "normal":
+        raise ValueError("DeepEP SM tuning applies only to its normal backend")
+
+
 def worker(rank, settings):
     import torch
     import torch.distributed as dist
@@ -129,6 +138,14 @@ def worker(rank, settings):
             if deepep_files is None:
                 deepep_files = package_fingerprint(Path(deep_ep.__file__).parent)
             Buffer = deep_ep.Buffer
+            if args.deepep_num_sms is not None:
+                if (
+                    args.deepep_num_sms
+                    > torch.cuda.get_device_properties(rank).multi_processor_count
+                ):
+                    raise ValueError("Requested DeepEP SM count exceeds this GPU")
+                # Set before buffer-size hints: these depend on channel count.
+                Buffer.set_num_sms(args.deepep_num_sms)
             total_experts = args.experts * 8
             mapped = ((ids % 4 + 4) * args.experts + ids // 4).contiguous()
             low_latency = args.mode == "low_latency"
@@ -163,6 +180,7 @@ def worker(rank, settings):
             metadata.update(
                 deepep_module=deep_ep.__file__,
                 deepep_version=getattr(deep_ep, "__version__", None),
+                deepep_normal_num_sms=Buffer.num_sms,
                 nvlink_buffer_bytes=nvlink_bytes,
                 rdma_buffer_bytes=rdma_bytes,
                 deepep_source_revision=args.deepep_revision,
@@ -484,6 +502,11 @@ def main():
     )
     p.add_argument("--cuda-graph", action="store_true")
     p.add_argument(
+        "--deepep-num-sms",
+        type=int,
+        help="Tune native normal-mode communication before allocating buffers",
+    )
+    p.add_argument(
         "--routing-weights",
         choices=("uniform", "nonuniform", "cancellation"),
         default="uniform",
@@ -501,6 +524,10 @@ def main():
     )
     p.add_argument("--output", required=True)
     args = p.parse_args()
+    try:
+        validate_normal_sms(args.deepep_num_sms, args.backend, args.mode)
+    except ValueError as exc:
+        p.error(str(exc))
     if args.prefill_preprocess and (
         args.backend != "expertplex"
         or args.mode != "normal"
