@@ -23,8 +23,9 @@ def main():
     p.add_argument("--tokenizer-path", required=True)
     p.add_argument("--client-id", type=int, default=1)
     p.add_argument(
-        "--attention-backend", choices=("triton", "flashinfer"), default="triton"
+        "--attention-backend", choices=("triton", "flashinfer"), default="flashinfer"
     )
+    p.add_argument("--disable-flashinfer-autotune", action="store_true")
     p.add_argument("--batches", type=int, nargs="+", default=[1, 2, 4, 8, 16, 32])
     p.add_argument("--lengths", type=int, nargs="+", default=[128, 512, 2048, 8192])
     p.add_argument("--holdout-batches", type=int, nargs="*", default=[3, 12])
@@ -185,11 +186,10 @@ def main():
         "--disaggregation-transfer-backend",
         "mooncake",
         "--disable-overlap-schedule",
-        "--disable-flashinfer-autotune",
         "--attention-backend",
         args.attention_backend,
         "--sampling-backend",
-        "pytorch",
+        "flashinfer",
         "--cuda-graph-backend-prefill",
         "disabled",
         "--cuda-graph-backend-decode",
@@ -209,6 +209,8 @@ def main():
         "--context-length",
         str(max(args.lengths + args.holdout_lengths) + args.iterations + 4),
     ]
+    if args.disable_flashinfer_autotune:
+        cli.append("--disable-flashinfer-autotune")
     report["server_arguments"] = cli
     server = ServerArgs.from_cli_args(parser.parse_args(cli))
     try:
