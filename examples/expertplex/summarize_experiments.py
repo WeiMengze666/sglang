@@ -43,7 +43,7 @@ def wilson(k, n):
     return [centre - radius, centre + radius]
 
 
-def summarize(paths):
+def summarize(paths, *, allow_memory_tuning=False):
     # The same deterministic initializer seed is required for synthetic runs.
     # Source digests are retained below for review of implementation revisions.
     common = None
@@ -72,7 +72,8 @@ def summarize(paths):
             "SGLANG_EXPERTPLEX_SYNTHETIC_SEED"
         )
         identity["warmup_requests"] = settings.get("warmup_requests", 1)
-        identity["mem_fraction_static"] = settings.get("mem_fraction_static")
+        if not allow_memory_tuning:
+            identity["mem_fraction_static"] = settings.get("mem_fraction_static")
         # Legacy experiments forced PyTorch sampling and disabled scheduling
         # overlap/autotune. Do not silently mix them with restored defaults.
         identity["sampling_backend"] = settings.get("sampling_backend", "pytorch")
@@ -107,6 +108,7 @@ def summarize(paths):
                 "path": root.name,
                 "variant": settings.get("label") or settings["variant"],
                 "experiment_status": experiment.get("status", "unrecorded"),
+                "mem_fraction_static": settings.get("mem_fraction_static"),
                 "numerical_diagnostic_requested": settings.get(
                     "numerical_check", False
                 ),
@@ -206,6 +208,12 @@ def summarize(paths):
         "common_conditions": common,
         "ordered_input_lengths_sha256": expected_input_digest,
         "runs": runs,
+        "memory_fraction_policy": (
+            "Per-method tuning; individual static memory fractions are recorded in runs. "
+            "This is not a fixed-KV-pool comparison."
+            if allow_memory_tuning
+            else "Same static memory fraction required"
+        ),
         "rows": rows,
         "uncertainty_note": "Wilson intervals describe finite-request attainment, not uncertainty in the arrival-rate boundary; repeated Poisson seeds remain necessary.",
     }
@@ -216,8 +224,14 @@ def main():
     p.add_argument("--experiments", type=Path, nargs="+", required=True)
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--no-plots", action="store_true")
+    p.add_argument(
+        "--allow-memory-tuning",
+        action="store_true",
+        help="Explicitly allow per-method static memory fractions; keep sequence cap, "
+        "explicit KV cap, workload, warmup and SLO checks unchanged",
+    )
     args = p.parse_args()
-    report = summarize(args.experiments)
+    report = summarize(args.experiments, allow_memory_tuning=args.allow_memory_tuning)
     args.output_dir.mkdir(parents=True, exist_ok=False)
     (args.output_dir / "comparison.json").write_text(
         json.dumps(report, indent=2) + "\n"
@@ -282,6 +296,8 @@ def main():
         f"{mode}; n={conditions['requests']}, seed={conditions['seed']}, "
         f"warmup={conditions['warmup_requests']}"
     )
+    if args.allow_memory_tuning:
+        title += "; per-method static memory fractions"
     fig.suptitle(title, fontsize=10)
     for suffix in ("svg", "pdf", "png"):
         fig.savefig(args.output_dir / f"serving-curves.{suffix}", dpi=180)

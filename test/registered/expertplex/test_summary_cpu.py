@@ -63,6 +63,35 @@ def write_fixture(root, warmup=1):
 
 
 class ServingSummaryTests(unittest.TestCase):
+    def test_explicit_memory_tuning_retains_fractions_and_other_constraints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            roots = [Path(tmp) / "first", Path(tmp) / "second"]
+            for root, fraction in zip(roots, (0.935, 0.9)):
+                write_fixture(root)
+                path = root / "experiment.json"
+                data = json.loads(path.read_text())
+                data["settings"]["mem_fraction_static"] = fraction
+                path.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "mismatch"):
+                SUMMARY.summarize(roots)
+            report = SUMMARY.summarize(roots, allow_memory_tuning=True)
+            self.assertEqual(
+                [r["mem_fraction_static"] for r in report["runs"]], [0.935, 0.9]
+            )
+            self.assertNotIn("mem_fraction_static", report["common_conditions"])
+            self.assertIn("Per-method tuning", report["memory_fraction_policy"])
+            for key, value in (
+                ("sequence_cap", 64),
+                ("decode_kv_tokens", None),
+                ("ttft_slo_ms", 2000),
+            ):
+                changed = json.loads(path.read_text())
+                changed["settings"][key] = value
+                path.write_text(json.dumps(changed))
+                with self.assertRaisesRegex(ValueError, "mismatch"):
+                    SUMMARY.summarize(roots, allow_memory_tuning=True)
+                path.write_text(json.dumps(data))
+
     def test_memory_budget_or_capacity_policy_cannot_be_mixed(self):
         for field, value in (("mem_fraction_static", 0.9), ("decode_kv_tokens", None)):
             with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
