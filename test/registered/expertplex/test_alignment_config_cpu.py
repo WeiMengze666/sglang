@@ -2,6 +2,7 @@
 
 import importlib
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -137,6 +138,59 @@ class AlignmentConfigurationTests(unittest.TestCase):
         self.report["concurrency"] = 4
         (self.root / "report.json").write_text(json.dumps(self.report))
         validate(self.root, self.model, True, concurrency=4)
+
+    def test_native_batch_submission_must_match_reference(self):
+        # Same concurrency, different submission boundaries: reject before
+        # either the score payload or GPU services are loaded.
+        self.report["concurrency"] = 4
+        for saved, requested in [(False, True), (True, False), (1, True)]:
+            with self.subTest(saved=saved, requested=requested):
+                self.report["batched_request"] = saved
+                (self.root / "report.json").write_text(json.dumps(self.report))
+                with self.assertRaisesRegex(ValueError, "batch submission"):
+                    validate(
+                        self.root,
+                        self.model,
+                        True,
+                        concurrency=4,
+                        batched_request=requested,
+                    )
+        for saved in (False, True):
+            self.report["batched_request"] = saved
+            (self.root / "report.json").write_text(json.dumps(self.report))
+            validate(self.root, self.model, True, concurrency=4, batched_request=saved)
+        del self.report["batched_request"]
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        validate(self.root, self.model, True, concurrency=4)
+        with self.assertRaisesRegex(ValueError, "batch submission"):
+            validate(self.root, self.model, True, concurrency=4, batched_request=True)
+
+        # The CLI must forward the requested mode and fail before trying to
+        # load this intentionally nonexistent checkpoint or the empty scores.
+        result = subprocess.run(
+            [
+                sys.executable,
+                alignment.__file__,
+                "--variant",
+                "expertplex",
+                "--reference",
+                str(self.root),
+                "--model-path",
+                str(self.model),
+                "--output",
+                str(self.root / "candidate"),
+                "--concurrency",
+                "4",
+                "--batched-request",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Reference batch submission mode differs", result.stderr)
+        self.assertFalse((self.root / "candidate").exists())
 
     def test_trajectory_capacity_and_continuation(self):
         histories = {

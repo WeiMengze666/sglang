@@ -42,6 +42,7 @@ def validate_reference(
     expert_count=4,
     concurrency=1,
     deterministic=False,
+    batched_request=False,
 ):
     """Reject incomparable references before allocating GPU memory."""
     if not (reference / "scores.json").is_file():
@@ -81,6 +82,14 @@ def validate_reference(
         )
     if report.get("concurrency", 1) != concurrency:
         raise ValueError("Reference request concurrency differs")
+    # Equal concurrency does not imply equal scheduling: a single native batch
+    # and multiple HTTP requests can select different numerical kernel paths.
+    # Older reports predate native batch submission and used separate requests.
+    batched = report.get("batched_request", False)
+    if type(batched) is not bool or batched != batched_request:
+        raise ValueError(
+            "Reference batch submission mode differs; generate a matched native reference"
+        )
     histories = json.loads((reference / "histories.json").read_text())
     if Path(histories["model_path"]).resolve() != model_path.resolve():
         raise ValueError("Reference model path differs")
@@ -227,6 +236,7 @@ def main():
                 a.expert_count,
                 a.concurrency,
                 a.enable_deterministic_inference,
+                a.batched_request,
             )
             validate_workload(
                 json.loads((a.reference / "histories.json").read_text()),
