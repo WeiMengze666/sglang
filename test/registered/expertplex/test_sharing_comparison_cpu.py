@@ -48,6 +48,12 @@ class SharingComparisonTests(unittest.TestCase):
         settings = validate(*self.fixture())
         self.assertEqual(settings["prefill_rows"], 128)
 
+    def test_rejects_profiler_instrumented_timings(self):
+        reports = self.fixture()
+        reports[1]["settings"]["profile_range"] = True
+        with self.assertRaisesRegex(ValueError, "Profiler-instrumented"):
+            validate(*reports)
+
     def test_rejects_same_expert_counts_but_different_workload(self):
         for field, value in [
             ("hidden", 1024),

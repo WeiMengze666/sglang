@@ -9,10 +9,32 @@ are publication-to-DONE acknowledgement upper bounds on that GPU's clock.
 import argparse
 import json
 import statistics
+from contextlib import contextmanager
 from pathlib import Path
 
 from _bootstrap import module
 from bench_sharing import WORKLOAD_IDENTITY, weights, workload
+
+
+@contextmanager
+def profile_executor_range(torch, device, enabled):
+    """Include the persistent launch and stop in one application-replay range.
+
+    The E device must be current when marking the range. Starting after the
+    executor launch would omit the persistent kernel; kernel replay would also
+    break its dependency on the attention GPU's concurrent publisher.
+    """
+    if not enabled:
+        yield
+        return
+    with torch.cuda.device(device):
+        torch.cuda.synchronize(device)
+        torch.cuda.profiler.start()
+    try:
+        yield
+    finally:
+        with torch.cuda.device(device):
+            torch.cuda.profiler.stop()
 
 
 def main():
@@ -58,6 +80,11 @@ def main():
         default=0,
         help="Additional inactive mailboxes for scheduler overhead diagnostics",
     )
+    p.add_argument(
+        "--profile-range",
+        action="store_true",
+        help="Mark the complete E executor lifetime for ncu app-range; not a performance run",
+    )
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
     if not 1 <= args.decode_expert_rows <= args.decode_rows or (
@@ -97,6 +124,11 @@ def main():
     report = {
         "scope": __doc__,
         "workload_identity": WORKLOAD_IDENTITY,
+        "timing_scope": (
+            "Profiler-instrumented executor lifetime, including idle and isolated work; not serving performance"
+            if args.profile_range
+            else "Unprofiled attention-clock publication-to-acknowledgement upper bound"
+        ),
         "settings": vars(args) | {"output": str(args.output)},
         "native_source_sha256": native.source_fingerprint(),
         "expert_rows": [work[2] for work in works],
@@ -145,60 +177,63 @@ def main():
             valid_rows.append(selected_rows)
         torch.cuda.synchronize(args.device)
         expected_tiles = sum((count + 127) // 128 for count in works[1][2])
-        executor = native.PersistentExecutor(
-            buffers,
-            w13.unsqueeze(0),
-            w2.unsqueeze(0),
-            decode_sm_budget=budget,
-            expected_decode_tiles=max(1, expected_tiles),
-            max_decode_sm_fraction=0.875,
-            benchmark_operation=args.operation,
-            ctas=args.ctas,
-        )
-        row = {
-            "decode_budget": budget,
-            "expected_decode_tiles": expected_tiles,
-            "executor": executor.describe(),
-        }
-
-        def measure(enabled=(True, True), owner=buffers._impl):
-            stamps = extension.benchmark_publish(
-                owner, args.control_device, *enabled, args.delay_us
+        with profile_executor_range(torch, args.device, args.profile_range):
+            executor = native.PersistentExecutor(
+                buffers,
+                w13.unsqueeze(0),
+                w2.unsqueeze(0),
+                decode_sm_budget=budget,
+                expected_decode_tiles=max(1, expected_tiles),
+                max_decode_sm_fraction=0.875,
+                benchmark_operation=args.operation,
+                ctas=args.ctas,
             )
-            values = stamps.cpu().tolist()
-            if any(values[4:]) or any(
-                enabled[i] and values[i + 2] <= values[i] for i in range(2)
-            ):
-                raise RuntimeError(f"APK publication/ack error: {values}")
-            return {
-                "release_gap_us": (values[1] - values[0]) / 1000,
-                "response_upper_bound_us": [
-                    (values[i + 2] - values[i]) / 1000 if enabled[i] else None
-                    for i in range(2)
-                ],
+            row = {
+                "decode_budget": budget,
+                "expected_decode_tiles": expected_tiles,
+                "executor": executor.describe(),
             }
 
-        try:
-            for _ in range(3):
-                measure()
-            isolated = [
-                [
-                    measure(tuple(i == phase for i in range(2)))
-                    for _ in range(args.iterations)
+            def measure(enabled=(True, True), owner=buffers._impl):
+                stamps = extension.benchmark_publish(
+                    owner, args.control_device, *enabled, args.delay_us
+                )
+                values = stamps.cpu().tolist()
+                if any(values[4:]) or any(
+                    enabled[i] and values[i + 2] <= values[i] for i in range(2)
+                ):
+                    raise RuntimeError(f"APK publication/ack error: {values}")
+                return {
+                    "release_gap_us": (values[1] - values[0]) / 1000,
+                    "response_upper_bound_us": [
+                        (values[i + 2] - values[i]) / 1000 if enabled[i] else None
+                        for i in range(2)
+                    ],
+                }
+
+            try:
+                for _ in range(3):
+                    measure()
+                isolated = [
+                    [
+                        measure(tuple(i == phase for i in range(2)))
+                        for _ in range(args.iterations)
+                    ]
+                    for phase in range(2)
                 ]
-                for phase in range(2)
-            ]
-            samples = [measure() for _ in range(args.iterations)]
-            row.update(
-                samples=samples,
-                isolated=isolated,
-                response_upper_bound_us=[
-                    statistics.median(s["response_upper_bound_us"][i] for s in samples)
-                    for i in range(2)
-                ],
-            )
-        finally:
-            executor.stop()
+                samples = [measure() for _ in range(args.iterations)]
+                row.update(
+                    samples=samples,
+                    isolated=isolated,
+                    response_upper_bound_us=[
+                        statistics.median(
+                            s["response_upper_bound_us"][i] for s in samples
+                        )
+                        for i in range(2)
+                    ],
+                )
+            finally:
+                executor.stop()
         numerics = []
         for phase, view in enumerate(views):
             output = view["gateup" if args.operation == "gateup" else "output"]

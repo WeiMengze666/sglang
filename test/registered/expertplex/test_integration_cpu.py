@@ -134,6 +134,11 @@ class SchedulerTboTests(unittest.TestCase):
 
 class IntegrationTests(unittest.TestCase):
     def setUp(self):
+        # These stdlib-only argument tests model a full-node deployment even
+        # when the test runner itself deliberately hides CUDA devices.
+        self.enterContext(
+            patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7"})
+        )
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.model_path = Path(self.temp.name) / "model"

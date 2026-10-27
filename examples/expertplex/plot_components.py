@@ -38,6 +38,8 @@ def validate_deepep_build(report):
 def validate_sharing_reports(native, apk, mps):
     """Do not turn partial runs or different workloads into a Pareto comparison."""
     reports = (native, apk, mps)
+    if any(r["settings"].get("profile_range", False) for r in reports):
+        raise ValueError("Profiler-instrumented timings cannot form a sharing comparison")
     identities = {r.get("workload_identity") for r in reports}
     if None in identities or len(identities) != 1:
         raise ValueError("Workload initialization algorithms differ or are missing")
