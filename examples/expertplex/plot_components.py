@@ -7,6 +7,34 @@ import math
 from pathlib import Path
 
 
+def validate_deepep_build(report):
+    """A wheel's file hashes identify its build without inventing a Git commit."""
+    identities = set()
+    for rank in report["ranks"]:
+        for row in rank:
+            revision = row.get("deepep_source_revision")
+            files = row.get("deepep_installed_files_sha256")
+            if files is not None:
+                if (
+                    not isinstance(files, dict)
+                    or not any(name.endswith(".so") for name in files)
+                    or any(
+                        not isinstance(digest, str)
+                        or len(digest) != 64
+                        or any(c not in "0123456789abcdef" for c in digest)
+                        for digest in files.values()
+                    )
+                ):
+                    raise ValueError("Invalid installed DeepEP fingerprint")
+            elif not isinstance(revision, str) or not revision.strip():
+                raise ValueError(
+                    "Record a DeepEP source revision or installed-file hashes"
+                )
+            identities.add(json.dumps([revision, files], sort_keys=True))
+    if len(identities) != 1:
+        raise ValueError("Missing or inconsistent DeepEP build across ranks")
+
+
 def validate_sharing_reports(native, apk, mps):
     """Do not turn partial runs or different workloads into a Pareto comparison."""
     reports = (native, apk, mps)
@@ -422,13 +450,7 @@ def main():
                 if settings.get("prefill_preprocess"):
                     method += " raw"
             else:
-                revisions = {
-                    r["deepep_source_revision"]
-                    for rank in report["ranks"]
-                    for r in rank
-                }
-                if len(revisions) != 1 or not next(iter(revisions)):
-                    raise ValueError("DeepEP source revision must be recorded")
+                validate_deepep_build(report)
                 method += " v1"
             if args.labels:
                 method = args.labels[report_index]

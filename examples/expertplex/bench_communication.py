@@ -9,11 +9,24 @@ paper's 16-GPU hierarchical RDMA experiment. Echo work is outside timing.
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import statistics
 import time
 from pathlib import Path
+
+
+def package_fingerprint(root):
+    """Pin installed Python wrappers and binaries when no source commit exists."""
+    root = Path(root)
+    files = sorted(p for p in root.rglob("*") if p.suffix in (".py", ".so"))
+    if not any(p.suffix == ".so" for p in files):
+        raise ValueError("Installed DeepEP package has no extension binary")
+    return {
+        str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in files
+    }
 
 
 def low_latency_qp_depth(rows, configured=1024):
@@ -49,6 +62,7 @@ def worker(rank, settings):
 
     native = module("native")
     extension = native.load_extension() if args.backend == "expertplex" else None
+    deepep_files = None
     reports = []
     for rows in args.rows:
         if rank == 0:
@@ -112,6 +126,8 @@ def worker(rank, settings):
         else:
             import deep_ep
 
+            if deepep_files is None:
+                deepep_files = package_fingerprint(Path(deep_ep.__file__).parent)
             Buffer = deep_ep.Buffer
             total_experts = args.experts * 8
             mapped = ((ids % 4 + 4) * args.experts + ids // 4).contiguous()
@@ -150,6 +166,7 @@ def worker(rank, settings):
                 nvlink_buffer_bytes=nvlink_bytes,
                 rdma_buffer_bytes=rdma_bytes,
                 deepep_source_revision=args.deepep_revision,
+                deepep_installed_files_sha256=deepep_files,
                 nvshmem_qp_depth=int(os.environ["NVSHMEM_QP_DEPTH"])
                 if low_latency
                 else None,
