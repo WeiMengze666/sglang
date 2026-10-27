@@ -145,7 +145,8 @@ HTTP 仅用于启动、独占槽位登记与退出释放，每层 activation 仍
 | FlashInfer autotune | 删除无条件禁用参数；保留显式调试开关，普通启动遵循 SGLang 行为。 |
 | KV / prefix cache | 沿用原生 allocator、radix cache 和显存容量 profiling；启动器默认不传 `--max-total-tokens`。§7.1 统一的是按 PDD 容量限制的采样序列长度，并非各布局的总 KV pool 容量。显式固定总 KV 的实验仅作为额外控制实验。 |
 | Attention backend | 保留 SGLang backend 选择；Triton 的固定数值对照不能代表 FlashInfer/FA4 等路径的最佳性能。 |
-| Prefill graph / torch.compile | 当前 ExpertPlex 的 opaque Python/native 通信接口尚未完成该路径集成。这是实现差距，不应写成论文必然冲突。原生 DeepEP normal 路径自身也在参数解析中关闭 prefill graph。 |
+| Prefill graph | 已接入原生 breakable prefill graph，D 保留原生 full decode graph。P graph 默认关闭，须使用 `overlap=none`；辅助入口拒绝与 TBO 同时启用，原生参数解析也会禁用该组合。应分别验证同模式数值对齐和实际 prefill 图执行，不能把捕获成功当作请求已经走图。跨 eager/graph 的逐位比较须另做确定性模式验证。 |
+| torch.compile | 尚未完成严格验收；原生编译路径自身的重复性和 ExpertPlex 同模式对齐仍需分别验证。该差距不能解释为论文必然冲突，也不能通过放宽数值门槛消除。 |
 | DeepGEMM | 复用原生 TMA、TCGEN05、双 CTA multicast、STSM/TMA epilogue 和 BF16 舍入边界；新增的是长驻 operation 选择与合作阶段切换。负收益的替代实现不能替换已验证路径。 |
 | DeepEP | Decode combine 保持原生 low-latency 的 top-k 顺序 FP32 FMA 与最终 BF16 舍入；P 保持 normal 的每 rank BF16 gather 边界。普通 SGLang 基线继续调用原生 normal / low-latency dispatcher；ExpertPlex 的 attention-initiated M-to-N 不能直接套用要求 E 侧 receiver kernel 的原始 API。新的协议仍需继续对照 DeepEP 的路由布局、向量搬运和归并实现，不能据仅有功能通过宣称保留了全部性能优化。 |
 | Chunked prefill / SBO / TP | chunked prefill 有显式选项；SBO 与 attention TP>1 等当前尚未适配，不能以“论文冲突”代替实现与验证。默认整请求 P 是论文实验配置，不是 SGLang 能力被全局删除。 |
