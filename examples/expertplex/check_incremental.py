@@ -298,7 +298,9 @@ def main():
         if returned != forced:
             raise ValueError("Server did not generate the complete forced trajectory")
         outputs = collect(directory, prompt, forced, vocab, args.top_k)
-        summary = decode_batch_summary(outputs, args.require_decode_batch_size)
+        # Keep every trajectory even if scheduling left one request unbatched.
+        # Enforce the requested threshold after recording numerical comparisons.
+        summary = decode_batch_summary(outputs, 1)
         return {
             "case": index,
             "steps": len(outputs),
@@ -329,8 +331,18 @@ def main():
                 for row in report["comparisons"]
             )
             report["all_full_vocab_logprobs_exact"] = exact
-            if args.require_exact_logprobs and not exact:
-                raise AssertionError("Full-vocabulary logprobs are not exactly equal")
+        report["decode_batch_failures"] = [
+            row["case"]
+            for row in report["cases"]
+            if row["decode_sampling_batch"]["maximum"] < args.require_decode_batch_size
+        ]
+        if report["decode_batch_failures"]:
+            raise ValueError(
+                "No decode step reached the required sampling batch size for cases "
+                + str(report["decode_batch_failures"])
+            )
+        if args.require_exact_logprobs and not report["all_full_vocab_logprobs_exact"]:
+            raise AssertionError("Full-vocabulary logprobs are not exactly equal")
         # Without the strict option, completion only means the diagnostic ran.
         report["status"] = "completed"
     except BaseException as exc:

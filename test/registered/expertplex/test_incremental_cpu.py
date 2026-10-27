@@ -1,7 +1,7 @@
 """Reject incomplete, forced-probability, or mismatched incremental evidence."""
 
-import importlib
 import contextlib
+import importlib
 import io
 import json
 import math
@@ -102,6 +102,33 @@ class IncrementalCaptureTests(unittest.TestCase):
             self.assertEqual(
                 [row["history"] for row in saved["outputs"]], [[0], [0, 1], [1], [1, 1]]
             )
+            reference = root / "reference.json"
+            reference.write_text(json.dumps(saved))
+            argv[argv.index("--capture-dir") + 1] = str(root / "unbatched")
+            argv.extend(["--reference", str(reference), "--require-exact-logprobs"])
+
+            def unbatched(*args):
+                rows = collect(*args)
+                if args[1] == [0]:
+                    for row in rows:
+                        row["sampling_batch_size"] = 1
+                return rows
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(incremental, "make_processor", return_value="fixture"),
+                patch.object(incremental, "post"),
+                patch.object(incremental, "generate", side_effect=generate),
+                patch.object(incremental, "collect", side_effect=unbatched),
+                self.assertRaisesRegex(ValueError, "required sampling batch size"),
+            ):
+                incremental.main()
+            saved = json.loads((root / "out.json").read_text())
+            self.assertEqual(saved["status"], "failed")
+            self.assertEqual(saved["decode_batch_failures"], [0])
+            self.assertEqual(len(saved["outputs"]), 4)
+            self.assertEqual(len(saved["comparisons"]), 4)
+            self.assertTrue(saved["all_full_vocab_logprobs_exact"])
 
     def test_decode_batch_guard_does_not_accept_prefill_only_or_missing_metadata(self):
         for rows in (
@@ -232,11 +259,13 @@ class IncrementalCaptureTests(unittest.TestCase):
                 raise ValueError("prefill failed")
             return {"ok": True}
 
-        with patch.object(incremental, "post", side_effect=post):
-            with self.assertRaisesRegex(ValueError, "prefill failed"):
-                incremental.generate(
-                    "http://decode", {}, prefill_url="http://prefill", bootstrap_port=1
-                )
+        with (
+            patch.object(incremental, "post", side_effect=post),
+            self.assertRaisesRegex(ValueError, "prefill failed"),
+        ):
+            incremental.generate(
+                "http://decode", {}, prefill_url="http://prefill", bootstrap_port=1
+            )
 
     def records(self, directory):
         for step in range(2):
