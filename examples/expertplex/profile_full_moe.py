@@ -70,6 +70,34 @@ def collect_samples(evidence):
     return samples
 
 
+def evaluate_holdout(fit, training, holdout):
+    """Evaluate frozen coefficients; never refit using validation samples."""
+    lower, upper = min(s["x"] for s in training), max(s["x"] for s in training)
+    rows = []
+    for sample in holdout:
+        predicted = fit["alpha"] + fit["beta"] * sample["x"]
+        actual = sample["latency_s"]
+        if not math.isfinite(predicted) or not math.isfinite(actual) or actual <= 0:
+            raise ValueError("Holdout latency and prediction must be finite")
+        rows.append(
+            sample
+            | {
+                "predicted_latency_s": predicted,
+                "relative_error": abs(predicted - actual) / actual,
+                "within_training_footprint_range": lower <= sample["x"] <= upper,
+            }
+        )
+    if not rows:
+        raise ValueError("No holdout measurements")
+    return {
+        "training_footprint_range": [lower, upper],
+        "all_predictions_positive": all(r["predicted_latency_s"] > 0 for r in rows),
+        "max_relative_error": max(r["relative_error"] for r in rows),
+        "median_relative_error": statistics.median(r["relative_error"] for r in rows),
+        "measurements": rows,
+    }
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--sms", nargs="+", type=int, default=[32, 64, 84, 116])
@@ -77,11 +105,35 @@ def main():
         "--prefill-rows", nargs="+", type=int, default=[128, 512, 2048, 8192]
     )
     p.add_argument("--decode-rows", nargs="+", type=int, default=[1, 8, 32, 128])
+    p.add_argument("--holdout-prefill-rows", nargs="+", type=int)
+    p.add_argument("--holdout-decode-rows", nargs="+", type=int)
     p.add_argument("--iterations", type=int, default=5)
     p.add_argument("--output-dir", type=Path, required=True)
     args = p.parse_args()
+    if bool(args.holdout_prefill_rows) != bool(args.holdout_decode_rows):
+        p.error("Provide both P and D holdout sizes")
+    if any(
+        len(values) != len(set(values))
+        for values in (
+            args.sms,
+            args.prefill_rows,
+            args.decode_rows,
+            args.holdout_prefill_rows or [],
+            args.holdout_decode_rows or [],
+        )
+    ):
+        p.error("Profile grids must not contain duplicate sizes")
+    if set(args.prefill_rows) & set(args.holdout_prefill_rows or []) or set(
+        args.decode_rows
+    ) & set(args.holdout_decode_rows or []):
+        p.error("Training and holdout token counts must be disjoint in each phase")
     if min(
-        *args.sms, *args.prefill_rows, *args.decode_rows, args.iterations
+        *args.sms,
+        *args.prefill_rows,
+        *args.decode_rows,
+        *(args.holdout_prefill_rows or []),
+        *(args.holdout_decode_rows or []),
+        args.iterations,
     ) <= 0 or any(s < 4 or s % 2 for s in args.sms):
         p.error("Use positive sizes and even SM counts >= 4")
     args.output_dir.mkdir(parents=True, exist_ok=False)
@@ -99,60 +151,85 @@ def main():
         "fits": {},
     }
     try:
+        source_identity = None
         for sms in args.sms:
-            samples = {"prefill": [], "decode": []}
-            for decode in args.decode_rows:
-                path = args.output_dir / f"sm{sms}-d{decode}.json"
-                command = [
-                    sys.executable,
-                    str(root / "bench_preemption.py"),
-                    "--prefill-preprocess",
-                    "--trace-capacity",
-                    "0",
-                    "--ctas",
-                    str(sms),
-                    "--decode-budget",
-                    str(max(2, sms // 4 * 2)),
-                    "--prefill-rows",
-                    *map(str, args.prefill_rows),
-                    "--decode-rows",
-                    str(decode),
-                    "--isolated-repeats",
-                    str(args.iterations),
-                    "--repeats",
-                    "1",
-                    "--output",
-                    str(path),
-                ]
-                row = {
-                    "sms": sms,
-                    "decode_rows": decode,
-                    "command": command,
-                    "evidence": str(path),
-                }
-                report["measurements"].append(row)
-                with path.with_suffix(".log").open("w") as log:
-                    subprocess.run(
-                        command,
-                        check=True,
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                        timeout=600,
-                    )
-                evidence = json.loads(path.read_text())
-                measured = collect_samples(evidence)
-                row.update(
-                    status="passed",
-                    native_source_sha256=evidence["native_source_sha256"],
-                    executor=evidence["executor"],
+            training = None
+            grids = [("training", args.prefill_rows, args.decode_rows)]
+            if args.holdout_prefill_rows:
+                grids.append(
+                    ("holdout", args.holdout_prefill_rows, args.holdout_decode_rows)
                 )
-                for phase in samples:
-                    samples[phase].extend(measured[phase])
-                print(f"Completed SM={sms}, D={decode}", flush=True)
-            for phase, values in samples.items():
-                fit = fit_line([(s["x"], s["latency_s"]) for s in values])
-                fit["measurements"] = values
-                report["fits"][f"{phase}:{sms}"] = fit
+            for split, prefill_rows, decode_rows in grids:
+                samples = {"prefill": [], "decode": []}
+                for decode in decode_rows:
+                    path = args.output_dir / f"{split}-sm{sms}-d{decode}.json"
+                    command = [
+                        sys.executable,
+                        str(root / "bench_preemption.py"),
+                        "--prefill-preprocess",
+                        "--trace-capacity",
+                        "0",
+                        "--ctas",
+                        str(sms),
+                        "--decode-budget",
+                        str(max(2, sms // 4 * 2)),
+                        "--prefill-rows",
+                        *map(str, prefill_rows),
+                        "--decode-rows",
+                        str(decode),
+                        "--isolated-repeats",
+                        str(args.iterations),
+                        "--repeats",
+                        "1",
+                        "--output",
+                        str(path),
+                    ]
+                    row = {
+                        "split": split,
+                        "sms": sms,
+                        "decode_rows": decode,
+                        "command": command,
+                        "evidence": str(path),
+                    }
+                    report["measurements"].append(row)
+                    with path.with_suffix(".log").open("w") as log:
+                        subprocess.run(
+                            command,
+                            check=True,
+                            stdout=log,
+                            stderr=subprocess.STDOUT,
+                            timeout=600,
+                        )
+                    evidence = json.loads(path.read_text())
+                    identity = evidence["native_source_sha256"]
+                    if source_identity is not None and source_identity != identity:
+                        raise ValueError(
+                            "Runtime source changed within the profile experiment"
+                        )
+                    source_identity = identity
+                    measured = collect_samples(evidence)
+                    row.update(
+                        status="passed",
+                        native_source_sha256=evidence["native_source_sha256"],
+                        executor=evidence["executor"],
+                    )
+                    for phase, values in samples.items():
+                        values.extend(measured[phase])
+                    print(f"Completed {split} SM={sms}, D={decode}", flush=True)
+                if split == "training":
+                    training = samples
+                    for phase, values in samples.items():
+                        fit = fit_line([(s["x"], s["latency_s"]) for s in values])
+                        fit["measurements"] = values
+                        report["fits"][f"{phase}:{sms}"] = fit
+                else:
+                    for phase, values in samples.items():
+                        fit = report["fits"][f"{phase}:{sms}"]
+                        fit["holdout"] = evaluate_holdout(fit, training[phase], values)
+                # Preserve the frozen training fit before collecting holdout data.
+                (args.output_dir / "profiles.json").write_text(
+                    json.dumps(report, indent=2) + "\n"
+                )
         report["status"] = "completed"
     except BaseException as exc:
         report.update(status="failed", error=repr(exc))
