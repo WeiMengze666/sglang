@@ -63,9 +63,9 @@ def workload(args, rows, phase, w13, w2, *, return_buffers=False):
         counts = [args.prefill_expert_rows] * experts
         forced = True
     if phase == 1 and getattr(args, "decode_active_experts", None) is not None:
-        counts = [1] * args.decode_active_experts + [0] * (
-            experts - args.decode_active_experts
-        )
+        counts = [
+            getattr(args, "decode_expert_rows", 1)
+        ] * args.decode_active_experts + [0] * (experts - args.decode_active_experts)
         forced = True
 
     def source_rows(expert, count):
@@ -167,7 +167,13 @@ def main():
     p.add_argument(
         "--decode-active-experts",
         type=int,
-        help="Controlled active D experts, one row each",
+        help="Controlled active D experts",
+    )
+    p.add_argument(
+        "--decode-expert-rows",
+        type=int,
+        default=1,
+        help="Rows per controlled active D expert (default: one)",
     )
     p.add_argument(
         "--num-sms", type=int, help="Native kernel SM limit for offline profiles"
@@ -191,6 +197,12 @@ def main():
     )
     p.add_argument("--output", required=True, type=Path)
     args = p.parse_args()
+    if not 1 <= args.decode_expert_rows <= args.decode_rows or (
+        args.decode_expert_rows != 1 and args.decode_active_experts is None
+    ):
+        p.error(
+            "Decode expert rows must fit capacity and require controlled active experts"
+        )
     if args.prefill_expert_rows is not None and args.prefill_expert_rows <= 0:
         p.error("Prefill expert rows must be positive")
     if (

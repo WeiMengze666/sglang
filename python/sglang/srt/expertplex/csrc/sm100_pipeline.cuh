@@ -216,6 +216,17 @@ __device__ __forceinline__ int operation_columns(const DeviceBuffers &b,
   return stage == DOWN ? b.hidden
                        : b.intermediate * (stage == GATE && !Fused ? 2 : 1);
 }
+// Reuse native swap-AB's dynamic UMMA-N and epilogue effective-M mechanism
+// for masked decode. The allocation, tile queue, cluster and TMA stage geometry
+// stay M128; only valid rows (aligned to the native 16-row store atom) are used.
+template <bool Fused>
+__device__ __forceinline__ int effective_rows(const Task &task) {
+  if constexpr (Fused)
+    return task.phase == 0 ? M : DecodeM;
+  return task.phase == 0 ? M
+      : ((min(DecodeM, task.rows - task.row) + 15) / 16) * 16;
+}
+
 __device__ __forceinline__ unsigned operation_tiles(const SlotState *state,
                                                     int stage) {
   return stage == SCATTER1   ? state->scatter1_tiles
@@ -757,7 +768,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       const auto &weights = context.weights[0];
       const bool gate = task.stage == GATE;
       const int reduction = gate ? hidden : intermediate;
-      const int tile_m = tile_rows(task.phase, task.stage);
+      const int tile_m = effective_rows<Fused>(task);
       const int map_row =
           task.row + static_cast<int>(expert_base(b, task.slot, task.expert) -
                                       b.base_rows[task.slot]);
@@ -773,12 +784,12 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         // Native 2-SM TMA completion signals the leader barrier only.
         if (task.phase == 0)
           deep_gemm::tma::copy<K, M / Cluster, 128, Element>(
-              a, &s.full[stage], s.a[stage], k, map_row + rank * (M / Cluster),
+              a, &s.full[stage], s.a[stage], k, map_row + rank * (tile_m / Cluster),
               Cluster);
         else
           deep_gemm::tma::copy<K, DecodeM / Cluster, 128, Element>(
               a, &s.full[stage], s.a[stage], k,
-              map_row + rank * (DecodeM / Cluster), Cluster);
+              map_row + rank * (tile_m / Cluster), Cluster);
         deep_gemm::tma::copy<K, N, 128, Element>(g, &s.full[stage], s.g[stage],
                                                  k, weight_row, Cluster);
         if (Fused && gate)
@@ -787,7 +798,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
               weight_row + intermediate, Cluster);
         if (rank == 0)
           s.full[stage].arrive_and_expect_tx(
-              (tile_m / Cluster + N * (Fused && gate ? 2 : 1)) * K * 2 *
+              (M / Cluster + N * (Fused && gate ? 2 : 1)) * K * 2 *
               Cluster);
         else
           s.full[stage].arrive(0u);
@@ -837,8 +848,10 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         continue;
       }
       const bool gate = task.stage == GATE;
-      const auto instruction = cute::UMMA::make_runtime_instr_desc(
-          task.phase == 0 ? prefill_descriptor : decode_descriptor);
+      auto descriptor = task.phase == 0 ? prefill_descriptor : decode_descriptor;
+      deep_gemm::mma::sm100::update_instr_desc_with_umma_n(
+          descriptor, effective_rows<Fused>(task));
+      const auto instruction = cute::UMMA::make_runtime_instr_desc(descriptor);
       const int reduction = gate ? hidden : intermediate;
       for (int k = 0; k < reduction; k += K, advance()) {
         s.full[stage].wait(phase);
@@ -937,7 +950,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       }
       deep_gemm::ptx::tcgen05_after_thread_sync();
       const bool gate = task.stage == GATE;
-      const int tile_m = tile_rows(task.phase, task.stage);
+      const int tile_m = effective_rows<Fused>(task);
       const auto &maps = context.maps[task.slot];
       const int map_row =
           task.row + static_cast<int>(expert_base(b, task.slot, task.expert) -
@@ -946,12 +959,59 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         process_data_tile<Hidden>(b, task, local_row);
       } else if (task.stage == ACTIVATE) {
         const size_t base = expert_base(b, task.slot, task.expert);
+        if (task.phase == 0) {
+          // Preserve the 32x128 tile, using native activation's aligned BF16
+          // vectors. A half warp spans one row; each thread owns four vectors
+          // instead of issuing 64 scalar loads over 32 individual rows.
+          const int column = task.column + (local_row % 16) * 8;
+          uint4 gates[4], ups[4];
+#pragma unroll
+          for (int part = 0; part < 4; ++part) {
+            const int row = task.row + local_row / 16 + part * 8;
+            const size_t offset = (base + row) * (2 * intermediate) + column;
+            const bool valid = row < task.rows && column < intermediate;
+            gates[part] = valid ? load_vector_cg(b.gateup + offset)
+                                : uint4{0, 0, 0, 0};
+            ups[part] = valid ? load_vector_cg(b.gateup + offset + intermediate)
+                              : uint4{0, 0, 0, 0};
+          }
+#pragma unroll
+          for (int part = 0; part < 4; ++part) {
+            const int row = task.row + local_row / 16 + part * 8;
+            const uint32_t gate_words[4] = {gates[part].x, gates[part].y,
+                                            gates[part].z, gates[part].w};
+            const uint32_t up_words[4] = {ups[part].x, ups[part].y,
+                                          ups[part].z, ups[part].w};
+            alignas(16) BF16 values[8];
+#pragma unroll
+            for (int pair = 0; pair < 4; ++pair) {
+#pragma unroll
+              for (int half = 0; half < 2; ++half) {
+                const float gate = __bfloat162float(__ushort_as_bfloat16(
+                    (gate_words[pair] >> (16 * half)) & 65535));
+                const float up = __bfloat162float(__ushort_as_bfloat16(
+                    (up_words[pair] >> (16 * half)) & 65535));
+                values[pair * 2 + half] = __float2bfloat16(
+                    expertplex_activation::silu_mul(gate, up, 0));
+              }
+            }
+            if (row < task.rows && column < intermediate)
+              *reinterpret_cast<uint4 *>(
+                  b.activation + (base + row) * intermediate + column) =
+                  *reinterpret_cast<uint4 *>(values);
+          }
+        } else {
         const int column = task.column + local_row;
         if (column < intermediate) {
           // Four rows in flight, matching the native activation software
           // pipeline. Each CTA covers 4096 BF16 elements, independent of the
           // total routed batch; no operation-length loop is introduced.
-          for (int token = 0; token < 32; token += 4) {
+          // Masked decode often has only one routed row per active expert.
+          // Unused rows cannot affect valid BF16 GEMM rows (no block scaling).
+          // Keep the native four-row pipeline, but do not execute 32 rows of
+          // activation for a one-row tile. The last vector still zeros its tail.
+          const int valid_rows = min(32, max(0, task.rows - task.row));
+          for (int token = 0; token < valid_rows; token += 4) {
             float gate_values[4], up_values[4];
 #pragma unroll
             for (int j = 0; j < 4; ++j) {
@@ -973,6 +1033,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
                            column] = value;
             }
           }
+        }
         }
         __threadfence();
         asm volatile("fence.proxy.async.global;" ::: "memory");
@@ -1050,7 +1111,12 @@ __global__ __launch_bounds__(Threads, 1) void executor(
             // Native epilogue commits eight store groups per M128 tile.
             // Retain this tile's final two groups while retiring all older
             // writes. Do not use .read: DONE requires global completion.
-            asm volatile("cp.async.bulk.wait_group 2;" ::: "memory");
+            // Dynamic M16 emits only one store group. Retaining two here
+            // could leave the previous tile unfinished while publishing DONE.
+            if (tile_m == 16)
+              asm volatile("cp.async.bulk.wait_group 1;" ::: "memory");
+            else
+              asm volatile("cp.async.bulk.wait_group 2;" ::: "memory");
             asm volatile("fence.proxy.async.global;" ::: "memory");
             __threadfence();
           }
