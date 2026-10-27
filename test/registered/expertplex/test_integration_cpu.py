@@ -356,6 +356,38 @@ class IntegrationTests(unittest.TestCase):
                     )
                 )
 
+    def test_json_policy_overrides_reach_expert_workers_without_rewriting_source(self):
+        entry = load_module(
+            "expertplex_entry_test", SRT / "disaggregation/expertplex.py"
+        )
+        original = self.config_path.read_text()
+        captured = {}
+
+        def supervise(path, **kwargs):
+            captured.update(json.loads(Path(path).read_text()))
+            self.assertEqual(
+                kwargs, {"bootstrap_host": "127.0.0.1", "bootstrap_port": 31010}
+            )
+
+        worker = types.SimpleNamespace(supervise=supervise)
+        rendezvous = types.SimpleNamespace(
+            atomic_json=lambda path, data: Path(path).write_text(json.dumps(data))
+        )
+        args = self.server_args(
+            expertplex_decode_sm_budget=64, host="127.0.0.1", port=31010
+        )
+        with patch.dict(
+            sys.modules,
+            {
+                "sglang.srt.expertplex.worker": worker,
+                "sglang.srt.expertplex.rendezvous": rendezvous,
+            },
+        ):
+            entry.launch_server(args)
+        self.assertEqual(captured["decode_sm_budget"], 64)
+        self.assertEqual(captured["rendezvous_dir"], self.config.rendezvous_dir)
+        self.assertEqual(self.config_path.read_text(), original)
+
     def test_expert_role_does_not_silently_ignore_attention_or_precision_options(self):
         for invalid in (
             {"disaggregation_mode": "decode"},

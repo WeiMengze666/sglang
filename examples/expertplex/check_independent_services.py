@@ -36,6 +36,11 @@ def main():
     p.add_argument("--decode-sm-budget", type=int)
     p.add_argument("--expected-decode-tiles", type=int)
     p.add_argument("--max-decode-sm-fraction", type=float)
+    p.add_argument(
+        "--moe-config",
+        type=Path,
+        help="Optional E-side JSON to test CLI policy overrides",
+    )
     args = p.parse_args()
     if args.startup_timeout <= 0 or not 0 < args.mem_fraction_static < 1:
         p.error("Use positive startup timeout and memory fraction in (0, 1)")
@@ -205,6 +210,8 @@ def main():
             for name, setting in policy.items()
             for value in ("--expertplex-" + name.replace("_", "-"), str(setting))
         ]
+        if args.moe_config:
+            policy_flags += ["--expertplex-config", str(args.moe_config.resolve())]
         start(
             "moe",
             prefix
