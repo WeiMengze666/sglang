@@ -540,6 +540,13 @@ BF16 权重。工具默认使用 23000 附近端口，可用 `--port-base` 调�
 并使用新的参考/输出目录。工具在启动 GPU 服务前拒绝 TBO 模式不同、模型路径不同
 或未成功结束的参考。改变 overlap 会改变原生执行形态，不能混用参考分数。
 
+检查原生 breakable prefill CUDA Graph 时，两端都添加
+`--disable-tbo --prefill-graph-backend breakable`，并使用相同的
+`--max-prefill-tokens` 作为图捕获容量。另建 native 参考，先重放一次 native
+验证可重复性，再比较 ExpertPlex。检查器在加载权重前拒绝图模式或捕获容量不同的
+参考，并要求服务日志中出现实际 prefill 图重放；仅完成图捕获不能通过检查。
+该诊断不接受 eager 与 graph 混用参考，跨模式算术差异需要单独研究。
+
 边界回归可在 native 命令上增加 `--prompt-lengths 1 127 128 129 511 512 513 2047`，
 并在两条命令上都设置 `--max-prefill-tokens 2048 --steps 8`。提示使用确定性的 token
 序列，ExpertPlex 重放参考中的完整历史；两端采集前均清空 prefix cache。更长的测试可

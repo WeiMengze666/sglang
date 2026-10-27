@@ -121,6 +121,82 @@ class AlignmentConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "deterministic inference"):
             validate(self.root, self.model, True)
 
+    def test_prefill_graph_mode_and_padding_configuration_must_match(self):
+        self.report.update(
+            tbo_enabled=False,
+            prefill_graph_backend="breakable",
+            max_prefill_tokens=1024,
+        )
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        with self.assertRaisesRegex(ValueError, "prefill graph mode"):
+            validate(self.root, self.model, False)
+        validate(
+            self.root,
+            self.model,
+            False,
+            prefill_graph_backend="breakable",
+            prefill_graph_max_tokens=1024,
+        )
+        with self.assertRaisesRegex(ValueError, "capture configuration"):
+            validate(
+                self.root,
+                self.model,
+                False,
+                prefill_graph_backend="breakable",
+                prefill_graph_max_tokens=2048,
+            )
+        self.report["prefill_exact_buckets"] = True
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        with self.assertRaisesRegex(ValueError, "capture configuration"):
+            validate(
+                self.root,
+                self.model,
+                False,
+                prefill_graph_backend="breakable",
+                prefill_graph_max_tokens=1024,
+            )
+
+    def test_prefill_graph_cli_rejects_incomparable_reference_before_loading(self):
+        self.report["tbo_enabled"] = False
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        common = [
+            sys.executable,
+            alignment.__file__,
+            "--variant",
+            "expertplex",
+            "--reference",
+            str(self.root),
+            "--model-path",
+            str(self.model),
+            "--output",
+            str(self.root / "candidate"),
+            "--prefill-graph-backend",
+            "breakable",
+        ]
+        for extra, message in [
+            ([], "requires --disable-tbo"),
+            (["--disable-tbo"], "Reference prefill graph mode differs"),
+        ]:
+            result = subprocess.run(
+                common + extra, check=False, capture_output=True, text=True, timeout=10
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(message, result.stderr)
+            self.assertFalse((self.root / "candidate").exists())
+
+    def test_prefill_graph_capture_does_not_prove_actual_replay(self):
+        log = self.root / "prefill.log"
+        for text in (
+            "Capture CUDA Graph completed",
+            "Prefill batch: cuda graph: False",
+            "Decode batch: cuda graph: True",
+        ):
+            log.write_text(text + "\n")
+            with self.assertRaisesRegex(ValueError, "No prefill CUDA Graph replay"):
+                alignment.require_prefill_graph_replay(log)
+        log.write_text("Prefill batch: #new-token: 127, cuda graph: True\n")
+        alignment.require_prefill_graph_replay(log)
+
     def test_expert_placement_must_match_reference(self):
         self.check()
         with self.assertRaisesRegex(ValueError, "expert count"):

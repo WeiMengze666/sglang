@@ -43,6 +43,8 @@ def validate_reference(
     concurrency=1,
     deterministic=False,
     batched_request=False,
+    prefill_graph_backend="disabled",
+    prefill_graph_max_tokens=None,
 ):
     """Reject incomparable references before allocating GPU memory."""
     if not (reference / "scores.json").is_file():
@@ -52,6 +54,18 @@ def validate_reference(
         raise ValueError("Reference must be a successful native diagnostic")
     if report.get("deterministic_inference", False) != deterministic:
         raise ValueError("Reference deterministic inference mode differs")
+    if report.get("prefill_graph_backend", "disabled") != prefill_graph_backend:
+        raise ValueError("Reference prefill graph mode differs")
+    if prefill_graph_backend != "disabled":
+        # Earlier private graph diagnostics used max_prefill_tokens as the
+        # graph capacity. Different capacities can select different padding.
+        capacity = report.get(
+            "prefill_graph_max_tokens", report.get("max_prefill_tokens")
+        )
+        if capacity != prefill_graph_max_tokens or report.get(
+            "prefill_exact_buckets", False
+        ):
+            raise ValueError("Reference prefill graph capture configuration differs")
     enabled = report.get("tbo_enabled")
     if enabled is None:
         # Backward compatibility with the original diagnostic report format.
@@ -150,6 +164,14 @@ def boundary_prompts(tokenizer, lengths):
     return repeat_token_pattern(seed, lengths)
 
 
+def require_prefill_graph_replay(log_path):
+    """Capture success alone does not prove a request used the graph."""
+    with log_path.open() as log:
+        if any("Prefill batch" in line and "cuda graph: True" in line for line in log):
+            return
+    raise ValueError("No prefill CUDA Graph replay observed in the server log")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--variant", choices=["native", "expertplex"], required=True)
@@ -166,6 +188,12 @@ def main():
     p.add_argument("--port-base", type=int, default=23000)
     p.add_argument("--startup-timeout", type=float, default=1800)
     p.add_argument("--disable-tbo", action="store_true")
+    p.add_argument(
+        "--prefill-graph-backend",
+        choices=("disabled", "breakable"),
+        default="disabled",
+        help="Match the native reference; graph capacity is --max-prefill-tokens",
+    )
     p.add_argument("--enable-torch-compile", action="store_true")
     p.add_argument("--enable-deterministic-inference", action="store_true")
     p.add_argument(
@@ -194,6 +222,8 @@ def main():
         help="Explicit repeated boundary-test pattern for tokenizer-free debug checkpoints; requires --prompt-lengths",
     )
     a = p.parse_args()
+    if a.prefill_graph_backend != "disabled" and not a.disable_tbo:
+        p.error("Prefill CUDA Graph requires --disable-tbo in the native SGLang runner")
     if not 1 <= a.require_decode_batch_size <= a.concurrency <= 16:
         p.error("Require 1 <= decode batch size <= concurrency <= 16")
     if a.variant == "expertplex" and not a.reference:
@@ -237,6 +267,8 @@ def main():
                 a.concurrency,
                 a.enable_deterministic_inference,
                 a.batched_request,
+                a.prefill_graph_backend,
+                a.max_prefill_tokens if a.prefill_graph_backend != "disabled" else None,
             )
             validate_workload(
                 json.loads((a.reference / "histories.json").read_text()),
@@ -291,6 +323,10 @@ def main():
         "variant": a.variant,
         "concurrency": a.concurrency,
         "batched_request": a.batched_request,
+        "prefill_graph_backend": a.prefill_graph_backend,
+        "prefill_graph_max_tokens": (
+            a.max_prefill_tokens if a.prefill_graph_backend != "disabled" else None
+        ),
         "required_decode_batch_size": a.require_decode_batch_size,
         "required_tbo_replays": a.require_tbo_replays,
         "tbo_enabled": not a.disable_tbo,
@@ -360,7 +396,7 @@ def main():
         "--mem-fraction-static",
         ".95",
         "--cuda-graph-backend-prefill",
-        "disabled",
+        a.prefill_graph_backend,
         "--cuda-graph-backend-decode",
         "full",
         "--cuda-graph-max-bs-decode",
@@ -368,6 +404,8 @@ def main():
         "--enable-custom-logit-processor",
         "--disable-overlap-schedule",
     ]
+    if a.prefill_graph_backend != "disabled":
+        prefix += ["--cuda-graph-max-bs-prefill", str(a.max_prefill_tokens)]
     if not a.disable_tbo:
         prefix.append("--enable-two-batch-overlap")
     if a.enable_torch_compile:
@@ -498,6 +536,9 @@ def main():
                     )
                 else:
                     command[command.index("--max-prefill-tokens") + 1] = "16"
+                    command[command.index("--cuda-graph-backend-prefill") + 1] = (
+                        "disabled"
+                    )
                 start(phase, command, a.port_base + device)
             histories = a.reference / "histories.json"
             url = f"http://127.0.0.1:{a.port_base + 1}"
@@ -555,6 +596,11 @@ def main():
             check(
                 a.output, expert_count=a.expert_count, min_replays=a.require_tbo_replays
             )
+        if a.prefill_graph_backend != "disabled":
+            require_prefill_graph_replay(
+                a.output / ("native.log" if a.variant == "native" else "prefill.log")
+            )
+            report["prefill_graph_replay_observed"] = True
         report["status"] = "passed"
     except BaseException as exc:
         report.update(status="failed", error=repr(exc))
