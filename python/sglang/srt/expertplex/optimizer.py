@@ -383,6 +383,7 @@ class MeasuredProfiles:
     moe: dict[tuple[str, int], LatencyCoefficients]
     expert_probabilities: dict[str, tuple[float, ...]]
     prefill_preprocess: bool = False
+    probabilities_by_layer: dict[str, tuple[tuple[float, ...], ...]] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], model: ModelSpec) -> MeasuredProfiles:
@@ -424,6 +425,7 @@ class MeasuredProfiles:
         attention: dict[str, LatencyCoefficients] = {}
         moe: dict[tuple[str, int], LatencyCoefficients] = {}
         probabilities: dict[str, tuple[float, ...]] = {}
+        by_layer = {}
         for phase in ("prefill", "decode"):
             phase_data = data[phase]
             attention[phase] = LatencyCoefficients(**phase_data["attention"])
@@ -449,6 +451,40 @@ class MeasuredProfiles:
                     "measured expert probabilities must be in [0,1], one per expert, and sum to top_k"
                 )
             probabilities[phase] = routing
+            if "probabilities_by_layer" in phase_data:
+                layers = tuple(
+                    tuple(row) for row in phase_data["probabilities_by_layer"]
+                )
+                if len(layers) != model.num_layers or any(
+                    len(row) != model.num_experts
+                    or any(
+                        isinstance(p, bool)
+                        or not isinstance(p, (float, int))
+                        or not math.isfinite(p)
+                        or not 0 <= p <= 1
+                        for p in row
+                    )
+                    or not math.isclose(
+                        sum(row), model.top_k, rel_tol=1e-6, abs_tol=1e-6
+                    )
+                    for row in layers
+                ):
+                    raise ValueError(
+                        "Need valid routing probabilities for every model layer"
+                    )
+                if any(
+                    not math.isclose(
+                        sum(row[e] for row in layers) / model.num_layers,
+                        routing[e],
+                        rel_tol=1e-6,
+                        abs_tol=1e-6,
+                    )
+                    for e in range(model.num_experts)
+                ):
+                    raise ValueError(
+                        "Phase routing probabilities must match the layer mean"
+                    )
+                by_layer[phase] = layers
         return cls(
             provenance,
             data["total_sms"],
@@ -458,6 +494,7 @@ class MeasuredProfiles:
             moe,
             probabilities,
             preprocess,
+            by_layer or None,
         )
 
     @classmethod
@@ -496,11 +533,13 @@ class SearchResult:
         return self.layout.config(source.model_path, **overrides)
 
 
-def expected_rank_footprint(profiles, layout, phase, batch, input_length, overlap):
-    """Expected maximum EP-rank footprint, retaining each mailbox's padding.
+def expected_rank_footprints(profiles, layout, phase, batch, input_length, overlap):
+    """Maximum expected EP-rank footprint per measured layer.
 
     The analytical TBO case assumes balanced token microbatches. Actual prefill
     sequence-boundary splits can differ; this remains a profile-model assumption.
+    A legacy phase-average profile returns one representative layer. IID routing
+    and max-of-expectations remain approximations, even with per-layer profiles.
     """
     attention_count = (
         layout.prefill_count if phase == "prefill" else layout.decode_count
@@ -513,21 +552,34 @@ def expected_rank_footprint(profiles, layout, phase, batch, input_length, overla
         mailbox_tokens.extend(
             (tokens // 2, tokens - tokens // 2) if overlap == "tbo" else (tokens,)
         )
-    probabilities = profiles.expert_probabilities[phase]
+    layers = (profiles.probabilities_by_layer or {}).get(
+        phase, (profiles.expert_probabilities[phase],)
+    )
     tile_rows = (
         profiles.tile_rows[phase]
         if isinstance(profiles.tile_rows, dict)
         else profiles.tile_rows
     )
-    return max(
-        sum(
-            expected_expert_tiles(tokens, probability, tile_rows)
-            for tokens in mailbox_tokens
-            if tokens
-            for probability in probabilities[rank :: layout.expert_count]
+    return tuple(
+        max(
+            sum(
+                expected_expert_tiles(tokens, probability, tile_rows)
+                for tokens in mailbox_tokens
+                if tokens
+                for probability in probabilities[rank :: layout.expert_count]
+            )
+            for rank in range(layout.expert_count)
         )
-        for rank in range(layout.expert_count)
+        for probabilities in layers
     )
+
+
+def expected_rank_footprint(profiles, layout, phase, batch, input_length, overlap):
+    """Layer-average expected footprint for the adaptive SM policy's denominator."""
+    values = expected_rank_footprints(
+        profiles, layout, phase, batch, input_length, overlap
+    )
+    return sum(values) / len(values)
 
 
 def nvlink_payload_bytes(
@@ -575,10 +627,10 @@ def _iteration_latency(
     # Mailboxes belong to independent attention clients. Their partial tiles
     # cannot be merged into a single global-batch tile without changing the
     # runtime. Sum each client's tiles on every expert rank, then take max rank.
-    footprint = expected_rank_footprint(
+    footprints = expected_rank_footprints(
         profiles, layout, phase, batch, input_length, overlap
     )
-    moe = profiles.moe[phase, sm_count].predict(footprint)
+    moe = [profiles.moe[phase, sm_count].predict(x) for x in footprints]
     # Match the selected transport's actual duplication boundary. Bandwidth
     # must be measured for that path; launch/control overhead is not inferred
     # from payload bytes and remains a limitation of this approximation.
@@ -588,12 +640,13 @@ def _iteration_latency(
         )
         / profiles.nvlink_bytes_per_second
     )
-    layer = (
-        max(attention, moe + communication)
+    layers = [
+        max(attention, latency + communication)
         if overlap == "tbo"
-        else attention + moe + communication
-    )
-    return layer * model.num_layers
+        else attention + latency + communication
+        for latency in moe
+    ]
+    return sum(layers) / len(layers) * model.num_layers
 
 
 def search(

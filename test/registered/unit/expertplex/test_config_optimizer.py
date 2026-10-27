@@ -335,6 +335,76 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(optimizer.expected_expert_tiles(33, 1.0, 16), 3.0)
         self.assertEqual(optimizer.expected_expert_tiles(33, 0.0, 16), 0.0)
 
+    def test_layer_skew_is_not_averaged_before_rank_and_critical_path_maxima(self):
+        model = config.ModelSpec.from_dict(model_config() | {"num_hidden_layers": 2})
+        data = profiles_dict(model)
+        phase = data["decode"]
+        phase["expert_probabilities"] = [0.5] * 16 + [0.0] * 112
+        phase["probabilities_by_layer"] = [
+            [float(e < 16 and e % 2 == rank) for e in range(128)] for rank in range(2)
+        ]
+        phase["attention"] = {"alpha": 6, "beta": 0}
+        phase["moe_by_sm_count"]["2"] = {"alpha": 0, "beta": 1}
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        layout = optimizer.Layout(1, 1, 2)
+        self.assertEqual(
+            optimizer.expected_rank_footprints(
+                profiles, layout, "decode", 1, 16, "tbo"
+            ),
+            (8, 8),
+        )
+        latency = optimizer._iteration_latency(
+            model, profiles, layout, "decode", 1, 16, 16, 2, "tbo"
+        )
+        communication = (
+            optimizer.nvlink_payload_bytes(
+                model, layout, "decode", 1, prefill_preprocess=False
+            )
+            / 1e11
+        )
+        self.assertAlmostEqual(latency, 16 + 2 * communication)
+        del phase["probabilities_by_layer"]
+        averaged = optimizer.MeasuredProfiles.from_dict(data, model)
+        self.assertEqual(
+            optimizer.expected_rank_footprint(averaged, layout, "decode", 1, 16, "tbo"),
+            4,
+        )
+        self.assertEqual(
+            optimizer._iteration_latency(
+                model, averaged, layout, "decode", 1, 16, 16, 2, "tbo"
+            ),
+            12,
+        )
+        # Even after preserving each layer's rank maximum, TBO must take its
+        # attention/MoE maximum before summing layers with different bottlenecks.
+        layers = [
+            [float(e < 16 and e % 2 == 0) for e in range(128)],
+            [float(e < 8) for e in range(128)],
+        ]
+        phase["probabilities_by_layer"] = layers
+        phase["expert_probabilities"] = [sum(v) / 2 for v in zip(*layers)]
+        mixed = optimizer.MeasuredProfiles.from_dict(data, model)
+        self.assertAlmostEqual(
+            optimizer._iteration_latency(
+                model, mixed, layout, "decode", 1, 16, 16, 2, "tbo"
+            ),
+            14 + communication,
+        )
+
+    def test_per_layer_routing_requires_complete_consistent_model_counts(self):
+        model = config.ModelSpec.from_dict(model_config() | {"num_hidden_layers": 2})
+        for invalid in (
+            [],
+            [[1.0] * 8 + [0.0] * 120],
+            [[1.0] * 8 + [0.0] * 120] * 2,
+            [[True] * 8 + [False] * 120] * 2,
+            [[float("nan")] * 128] * 2,
+        ):
+            data = profiles_dict(model)
+            data["decode"]["probabilities_by_layer"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                optimizer.MeasuredProfiles.from_dict(data, model)
+
     def test_sparse_footprint_counts_partial_tiles_per_expert(self):
         self.assertEqual(optimizer.tile_footprint([0, 1, 128, 129], 128), 4)
         self.assertEqual(optimizer.tile_footprint([1] * 8, 128), 8)
