@@ -218,7 +218,7 @@ class PersistentExecutor:
         self._buffers = buffers
         self._weights = (w13, w2)
         self.kernel = kernel or os.environ.get("SGLANG_EXPERTPLEX_KERNEL", "sm100")
-        if benchmark_operation not in ("moe", "gateup", "down"):
+        if benchmark_operation not in ("moe", "gateup", "down", "activation"):
             raise ValueError("Unknown diagnostic operation")
         self._impl = load_extension().PersistentExecutor(
             buffers._impl,
@@ -230,7 +230,7 @@ class PersistentExecutor:
             ctas,
             self.kernel,
             trace_capacity,
-            {"moe": 0, "gateup": 1, "down": 2}[benchmark_operation],
+            {"moe": 0, "gateup": 1, "down": 2, "activation": 3}[benchmark_operation],
         )
 
     def stop(self) -> None:

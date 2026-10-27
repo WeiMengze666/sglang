@@ -326,7 +326,8 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
     c[FINISH_NS] = now_ns();
     system_store(c + DONE, epoch);
   } else {
-    Stage first = context.benchmark_stage == DOWN ? DOWN : GATE;
+    Stage first = context.benchmark_stage == DOWN ? DOWN
+        : context.benchmark_stage == ACTIVATE ? ACTIVATE : GATE;
     reset_queues(context, slot, epoch, first);
     queue_store(&s->queue, queue_value(epoch, first));
     cuda::atomic_ref<unsigned, cuda::thread_scope_device>(context.runnable[s->phase])

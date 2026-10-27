@@ -48,7 +48,9 @@ def main():
     p.add_argument("--top-k", type=int, default=8)
     p.add_argument("--prefill-rows", type=int, default=8192)
     p.add_argument("--decode-rows", type=int, default=128)
-    p.add_argument("--operation", choices=("gateup", "down", "moe"), default="gateup")
+    p.add_argument(
+        "--operation", choices=("gateup", "down", "moe", "activation"), default="gateup"
+    )
     p.add_argument("--budgets", type=int, nargs="+", default=[8, 16, 32, 48, 64, 96])
     p.add_argument("--delay-us", type=int, default=10)
     p.add_argument("--iterations", type=int, default=20)
@@ -164,7 +166,9 @@ def main():
                     else expert * source_stride
                 )
                 dest = cursor if phase == 0 else expert * capacity
-                for name in ("input", "activation"):
+                for name in ("input", "activation", "gateup"):
+                    if name == "gateup" and args.operation != "activation":
+                        continue
                     if name == "activation" and args.operation != "down":
                         continue
                     source = inputs[name].reshape(-1, inputs[name].shape[-1])
@@ -236,7 +240,11 @@ def main():
                 executor.stop()
         numerics = []
         for phase, view in enumerate(views):
-            output = view["gateup" if args.operation == "gateup" else "output"]
+            output = view[
+                {"gateup": "gateup", "activation": "activation"}.get(
+                    args.operation, "output"
+                )
+            ]
             indices = torch.tensor(valid_rows[phase], device=args.device)
             reference_output = works[phase][1].reshape(-1, output.shape[-1])
             passed = True

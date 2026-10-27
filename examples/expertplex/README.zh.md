@@ -753,6 +753,13 @@ python examples/expertplex/check_activation.py --output /tmp/expertplex-activati
 负权重的算术压力测试，不代表模型 router。组件基准使用新的 native-activation-v2
 身份，拒绝与旧版 masked decode 使用 contiguous 激活的完整 MoE 结果混合。
 
+`bench_sharing.py` 与 `bench_apk_sharing.py` 均支持 `--operation activation`，
+用于把激活阶段从 GateUp 和 Down GEMM 中单独测量。两端先用同一原生 DeepGEMM
+路径生成 BF16 GateUp 张量，在计时外准备输入，再分别运行原生 P CUDA / D masked
+Triton 激活和 APK 激活。该模式不改变服务使用的完整 MoE 路径。数值报告覆盖所有
+有效行；计时仍包含发布到完成确认的控制开销，不能解释为纯激活计算时间或端到端
+goodput。评估候选优化时应同时复测 `--operation moe` 和完整服务。
+
 原生 DP-attention 基线可以通过 `launch_baseline.py --enable-dp-lm-head` 或
 `run_serving_experiment.py --enable-dp-lm-head` 启用 SGLang 的 DP LM head，避免跨 DP
 组的 logits 通信。它增加每个 attention rank 的 LM head 权重占用，应在独立调优集

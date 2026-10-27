@@ -1174,7 +1174,8 @@ public:
     TORCH_CHECK(backend == "wmma" || sm100, "Unknown ExpertPlex kernel");
     TORCH_CHECK(benchmark_stage == 0 ||
                     (sm100 && !fused &&
-                     (benchmark_stage == GATE || benchmark_stage == DOWN)),
+                     (benchmark_stage == GATE || benchmark_stage == DOWN ||
+                      benchmark_stage == ACTIVATE)),
                 "Single-operation benchmarks require an unfused SM100 kernel");
     TORCH_CHECK(ctas % cluster == 0 && ctas >= 2 * cluster,
                 "CTA count must fit at least two complete clusters");

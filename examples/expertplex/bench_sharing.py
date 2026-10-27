@@ -14,7 +14,6 @@ import math
 import statistics
 from pathlib import Path
 
-
 # CUDA random generation depends on the visible SM count (notably under MPS).
 # Generate on CPU, in fixed per-expert chunks, so partitions receive identical
 # weights and routing, not merely identical seeds.
@@ -45,7 +44,6 @@ def weights(args):
 def workload(args, rows, phase, w13, w2, *, return_buffers=False):
     import deep_gemm
     import torch
-
     from sglang.kernels.ops.activation.activation import silu_and_mul
     from sglang.kernels.ops.moe.ep_moe_kernels import silu_and_mul_masked_fwd
 
@@ -98,6 +96,13 @@ def workload(args, rows, phase, w13, w2, *, return_buffers=False):
                 deep_gemm.m_grouped_bf16_gemm_nt_contiguous(a, w13, gateup, layout)
 
             out = gateup
+        elif args.operation == "activation":
+            deep_gemm.m_grouped_bf16_gemm_nt_contiguous(a, w13, gateup, layout)
+
+            def invoke():
+                silu_and_mul(gateup, activated)
+
+            out = activated
         elif args.operation == "down":
             invoke()  # Prepare the activation outside the timed operation.
 
@@ -133,6 +138,13 @@ def workload(args, rows, phase, w13, w2, *, return_buffers=False):
                 )
 
             out = gateup
+        elif args.operation == "activation":
+            deep_gemm.m_grouped_bf16_gemm_nt_masked(a, w13, gateup, layout, expected)
+
+            def invoke():
+                silu_and_mul_masked_fwd(gateup, activated, layout)
+
+            out = activated
         elif args.operation == "down":
             invoke()
 
@@ -142,7 +154,12 @@ def workload(args, rows, phase, w13, w2, *, return_buffers=False):
                 )
 
     if return_buffers:
-        return invoke, out, counts, {"input": a, "activation": activated}
+        return (
+            invoke,
+            out,
+            counts,
+            {"input": a, "activation": activated, "gateup": gateup},
+        )
     return invoke, out, counts
 
 
@@ -180,7 +197,7 @@ def main():
     )
     p.add_argument(
         "--operation",
-        choices=("gateup", "down", "moe"),
+        choices=("gateup", "down", "moe", "activation"),
         default="gateup",
         help="Paper 7.3 compares grouped GEMMs; moe is an additional whole-MoE ablation",
     )
