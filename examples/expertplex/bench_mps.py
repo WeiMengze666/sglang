@@ -15,7 +15,17 @@ import signal
 import statistics
 import subprocess
 import traceback
+import uuid as uuid_module
 from pathlib import Path
+
+
+def canonical_gpu_uuid(value):
+    """Use the CUDA-visible device identity, never reinterpret a logical ordinal."""
+    if isinstance(value, bytes) and len(value) == 16:
+        identity = uuid_module.UUID(bytes=value)
+    else:
+        identity = uuid_module.UUID(str(value).removeprefix("GPU-"))
+    return "GPU-" + str(identity)
 
 
 def extension():
@@ -111,10 +121,6 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     if args.device == args.control_device or args.iterations <= 0:
         p.error("Use distinct GPUs and positive iteration count")
-    if os.environ.get("CUDA_VISIBLE_DEVICES"):
-        p.error(
-            "Coordinator must use physical GPU ordinals without CUDA_VISIBLE_DEVICES"
-        )
     partitions = [tuple(map(int, value.split(":"))) for value in args.percentages]
     if any(
         len(pair) != 2 or any(not 1 <= v <= 100 for v in pair) for pair in partitions
@@ -123,25 +129,27 @@ def main():
     args.work_dir.mkdir(parents=True, exist_ok=False)
     (args.work_dir / "pipes").mkdir()
     (args.work_dir / "logs").mkdir()
-    uuid = subprocess.check_output(
-        [
-            "nvidia-smi",
-            "-i",
-            str(args.device),
-            "--query-gpu=uuid",
-            "--format=csv,noheader",
-        ],
-        text=True,
-    ).strip()
+    import torch
+
+    torch.set_num_threads(4)
+    if (
+        min(args.device, args.control_device) < 0
+        or max(args.device, args.control_device) >= torch.cuda.device_count()
+    ):
+        p.error("Device indices must belong to the CUDA-visible GPU allocation")
+    # GPUQ may set/reorder CUDA_VISIBLE_DEVICES. Resolve through CUDA, which
+    # honors that mask; nvidia-smi -i would instead use a physical ordinal.
+    # Children narrow the allocation to this UUID and remap it to local GPU 0.
+    uuid = canonical_gpu_uuid(torch.cuda.get_device_properties(args.device).uuid)
+    control_uuid = canonical_gpu_uuid(
+        torch.cuda.get_device_properties(args.control_device).uuid
+    )
     mps_env = dict(
         os.environ,
         CUDA_VISIBLE_DEVICES=uuid,
         CUDA_MPS_PIPE_DIRECTORY=str(args.work_dir / "pipes"),
         CUDA_MPS_LOG_DIRECTORY=str(args.work_dir / "logs"),
     )
-    import torch
-
-    torch.set_num_threads(4)
     torch.cuda.set_device(args.device)
     control = extension()
     flags = control.allocate_flags(args.device)
@@ -156,6 +164,8 @@ def main():
         "settings": vars(args)
         | {"work_dir": str(args.work_dir), "output": str(args.output)},
         "gpu_uuid": uuid,
+        "control_gpu_uuid": control_uuid,
+        "coordinator_cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "cases": [],
     }
     processes = []
