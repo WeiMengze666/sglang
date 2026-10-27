@@ -69,10 +69,22 @@ def remote_config(address, timeout):
 
 
 def expert_node_config(cfg):
+    from dataclasses import replace
+
     from .config import default_config, load_config
 
+    policy = {
+        name: getattr(cfg, "expertplex_" + name)
+        for name in (
+            "decode_sm_budget",
+            "expected_decode_tiles",
+            "max_decode_sm_fraction",
+        )
+        if getattr(cfg, "expertplex_" + name, None) is not None
+    }
     if cfg.expertplex_config:
-        return load_config(cfg.expertplex_config)
+        node = load_config(cfg.expertplex_config)
+        return replace(node, **policy)
     return default_config(
         str(Path(cfg.model_path).expanduser().resolve()),
         prefill_count=getattr(cfg, "expertplex_prefill_count", 1),
@@ -85,9 +97,14 @@ def expert_node_config(cfg):
         synthetic_seed=int(os.environ.get("SGLANG_EXPERTPLEX_SYNTHETIC_SEED", "1234")),
         overlap="tbo" if cfg.enable_two_batch_overlap else "none",
         prefill_preprocess=True,
-        decode_sm_budget=96,
-        expected_decode_tiles=8,
-        max_decode_sm_fraction=0.875,
+        **(
+            {
+                "decode_sm_budget": 96,
+                "expected_decode_tiles": 8,
+                "max_decode_sm_fraction": 0.875,
+            }
+            | policy
+        ),
     )
 
 
@@ -136,6 +153,11 @@ def attention_weights_iterator(
 
 def validate_server_args(cfg: Any) -> None:
     """Reject unsupported combinations before the engine spawns GPU processes."""
+    policy_options = (
+        "expertplex_decode_sm_budget",
+        "expertplex_expected_decode_tiles",
+        "expertplex_max_decode_sm_fraction",
+    )
     if any(
         name in os.environ
         for name in ("SGLANG_EXPERTPLEX_CONFIG", "SGLANG_EXPERTPLEX_CLIENT_ID")
@@ -151,12 +173,20 @@ def validate_server_args(cfg: Any) -> None:
             or getattr(cfg, "expertplex_bootstrap_addr", None) is not None
             or getattr(cfg, "expertplex_client_id", None) is not None
             or getattr(cfg, "expertplex_role", "attention") != "attention"
+            or any(getattr(cfg, name, None) is not None for name in policy_options)
         ):
             raise ValueError("ExpertPlex options require --enable-expertplex")
         return
     role = getattr(cfg, "expertplex_role", "attention")
     if role not in ("attention", "expert"):
         raise ValueError("--expertplex-role must be attention or expert")
+    if role != "expert" and any(
+        getattr(cfg, name, None) is not None for name in policy_options
+    ):
+        raise ValueError(
+            "ExpertPlex SM policy options belong to --expertplex-role expert; "
+            "attention servers inherit the MoE pool configuration"
+        )
     if role == "expert":
         from .config import ModelSpec
 

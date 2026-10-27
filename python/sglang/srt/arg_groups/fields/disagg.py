@@ -52,6 +52,18 @@ class Disagg(msgspec.Struct):
     expertplex_expert_count: A[
         int, "Number of GPUs in the shared expert pool (expert role)."
     ] = 4
+    expertplex_decode_sm_budget: A[
+        Optional[int],
+        "Expected decode SM budget under contention (expert role; overrides JSON).",
+    ] = None
+    expertplex_expected_decode_tiles: A[
+        Optional[int],
+        "Expected per-E decode row-tile footprint for adaptive scaling (expert role; overrides JSON).",
+    ] = None
+    expertplex_max_decode_sm_fraction: A[
+        Optional[float],
+        "Maximum decode SM fraction under contention (expert role; overrides JSON).",
+    ] = None
     expertplex_startup_timeout: A[
         float, "Seconds to wait for the MoE bootstrap service."
     ] = 600.0

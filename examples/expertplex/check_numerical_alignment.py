@@ -20,7 +20,7 @@ from check_e2e import PROMPTS, generate
 from launch import wait_http
 
 
-def validate_reference(reference, model_path, tbo_enabled):
+def validate_reference(reference, model_path, tbo_enabled, steps=None):
     """Reject incomparable references before allocating GPU memory."""
     if not (reference / "scores.json").is_file():
         raise ValueError("Reference must contain native scores.json")
@@ -43,6 +43,38 @@ def validate_reference(reference, model_path, tbo_enabled):
     histories = json.loads((reference / "histories.json").read_text())
     if Path(histories["model_path"]).resolve() != model_path.resolve():
         raise ValueError("Reference model path differs")
+    if steps is not None:
+        cases = json.loads((reference / "scores.json").read_text()).get("cases", [])
+        if not cases or any(case.get("steps") != steps for case in cases):
+            raise ValueError("Reference score capture uses a different step count")
+
+
+def validate_workload(histories, steps, max_prefill_tokens, context_length):
+    """Reject truncated or oversized trajectories before starting GPU services."""
+    if not histories.get("outputs"):
+        raise ValueError("Reference requires nonempty trajectories")
+    for output in histories["outputs"]:
+        prompt = output.get("prompt")
+        if not isinstance(prompt, list) or not prompt:
+            raise ValueError("Each trajectory requires explicit prompt token IDs")
+        if len(prompt) > max_prefill_tokens or len(prompt) + steps >= context_length:
+            raise ValueError("Reference prompt exceeds prefill or context capacity")
+        continuation = output.get("meta_info", {}).get("output_token_logprobs", [])
+        if len(continuation) < steps:
+            raise ValueError("Reference continuation is shorter than requested steps")
+
+
+def boundary_prompts(tokenizer, lengths):
+    """Deterministic token prefixes crossing GEMM and attention tile boundaries."""
+    seed = tokenizer.encode(
+        "Explain how a hash table resolves collisions and give a Python example.\n",
+        add_special_tokens=False,
+    )
+    if not seed:
+        raise ValueError("Tokenizer returned an empty diagnostic seed")
+    return [
+        (seed * ((length + len(seed) - 1) // len(seed)))[:length] for length in lengths
+    ]
 
 
 def main():
@@ -54,11 +86,30 @@ def main():
     p.add_argument("--port-base", type=int, default=33000)
     p.add_argument("--startup-timeout", type=float, default=1800)
     p.add_argument("--disable-tbo", action="store_true")
+    p.add_argument("--steps", type=int, default=32)
+    p.add_argument("--max-prefill-tokens", type=int, default=512)
+    p.add_argument("--context-length", type=int, default=4096)
+    p.add_argument(
+        "--prompt-lengths",
+        type=int,
+        nargs="+",
+        help="Native reference only: explicit token lengths for boundary tests",
+    )
     a = p.parse_args()
     if a.variant == "expertplex" and not a.reference:
         p.error("ExpertPlex requires the native reference directory")
     if a.variant == "native" and a.reference:
         p.error("--reference applies to the ExpertPlex diagnostic")
+    if a.steps < 2 or not 0 < a.max_prefill_tokens < a.context_length:
+        p.error("Use steps >=2 and 0 < prefill capacity < context length")
+    if a.prompt_lengths is not None:
+        if a.variant != "native":
+            p.error("ExpertPlex replays the reference prompts; omit --prompt-lengths")
+        if len(set(a.prompt_lengths)) != len(a.prompt_lengths) or any(
+            n <= 0 or n > a.max_prefill_tokens or n + a.steps >= a.context_length
+            for n in a.prompt_lengths
+        ):
+            p.error("Prompt lengths must be distinct, positive and fit both capacities")
     if not 1024 <= a.port_base <= 63000:
         p.error("--port-base must leave space for bootstrap/NCCL ports up to +2001")
     if not 0 < a.startup_timeout < float("inf"):
@@ -67,7 +118,13 @@ def main():
     if a.reference:
         a.reference = a.reference.resolve()
         try:
-            validate_reference(a.reference, a.model_path, not a.disable_tbo)
+            validate_reference(a.reference, a.model_path, not a.disable_tbo, a.steps)
+            validate_workload(
+                json.loads((a.reference / "histories.json").read_text()),
+                a.steps,
+                a.max_prefill_tokens,
+                a.context_length,
+            )
         except (OSError, ValueError, KeyError) as exc:
             p.error(str(exc))
     a.output.mkdir(parents=True, exist_ok=False)
@@ -85,6 +142,10 @@ def main():
         "scope": __doc__,
         "variant": a.variant,
         "tbo_enabled": not a.disable_tbo,
+        "steps": a.steps,
+        "max_prefill_tokens": a.max_prefill_tokens,
+        "context_length": a.context_length,
+        "prompt_lengths": a.prompt_lengths,
         "status": "running",
         "commands": [],
     }
@@ -133,13 +194,13 @@ def main():
         "--sampling-backend",
         "flashinfer",
         "--context-length",
-        "4096",
+        str(a.context_length),
         "--max-prefill-tokens",
-        "512",
+        str(a.max_prefill_tokens),
         "--max-running-requests",
         "16",
         "--max-total-tokens",
-        "8192",
+        str(max(8192, a.context_length)),
         "--mem-fraction-static",
         ".95",
         "--cuda-graph-backend-prefill",
@@ -201,9 +262,22 @@ def main():
             from transformers import AutoTokenizer
 
             tokenizer = AutoTokenizer.from_pretrained(model, local_files_only=True)
+            prompts = (
+                boundary_prompts(tokenizer, a.prompt_lengths)
+                if a.prompt_lengths
+                else [tokenizer.encode(t) for t in PROMPTS]
+            )
+            if any(
+                len(tokens) > a.max_prefill_tokens
+                or len(tokens) + a.steps >= a.context_length
+                for tokens in prompts
+            ):
+                raise ValueError(
+                    "Diagnostic prompts exceed prefill or context capacity"
+                )
             outputs = [
-                generate(f"http://127.0.0.1:{a.port_base}", tokenizer.encode(t), 32)
-                for t in PROMPTS
+                generate(f"http://127.0.0.1:{a.port_base}", tokens, a.steps)
+                for tokens in prompts
             ]
             histories = a.output / "histories.json"
             histories.write_text(json.dumps({"model_path": model, "outputs": outputs}))
@@ -227,7 +301,7 @@ def main():
                     "--port",
                     str(a.port_base + 200),
                     "--max-prefill-tokens",
-                    "512",
+                    str(a.max_prefill_tokens),
                     "--max-running-requests",
                     "16",
                     "--expertplex-startup-timeout",
@@ -286,7 +360,7 @@ def main():
             "--output",
             str(a.output / "scores.json"),
             "--steps",
-            "32",
+            str(a.steps),
             "--top-k",
             "0",
             *direct,

@@ -196,6 +196,13 @@ python -m sglang.launch_server --model-path "$MODEL" --dtype bfloat16 \
   --max-prefill-tokens 24576 --max-running-requests 256 --enable-two-batch-overlap
 ```
 
+MoE 服务可直接通过 `--expertplex-decode-sm-budget`、
+`--expertplex-expected-decode-tiles` 和 `--expertplex-max-decode-sm-fraction`
+设置 Eq.4 的预期 decode 预算、每张 E 的预期 row-tile 数与竞争时占比上限。
+不传 JSON 时默认分别为 `96`、`8`、`0.875`；传 JSON 时默认沿用文件中的值，
+显式 CLI 参数覆盖对应字段。实际配置由 bootstrap 发布给 P/D，不能在 attention
+服务上重复设置。这些是可调参数，不表示该组合已经达到最优 goodput。
+
 Prefill attention（GPU 0）：
 
 ```bash
@@ -485,6 +492,12 @@ BF16 权重。工具默认使用 33000 附近端口，可用 `--port-base` 调�
 默认两端均开启 TBO；检查关闭 TBO 的路径时，两条命令都添加 `--disable-tbo`，
 并使用新的参考/输出目录。工具在启动 GPU 服务前拒绝 TBO 模式不同、模型路径不同
 或未成功结束的参考。改变 overlap 会改变原生执行形态，不能混用参考分数。
+
+边界回归可在 native 命令上增加 `--prompt-lengths 1 127 128 129 511 512 513 2047`，
+并在两条命令上都设置 `--max-prefill-tokens 2048 --steps 8`。提示使用确定性的 token
+序列，ExpertPlex 重放参考中的完整历史；两端采集前均清空 prefix cache。更长的测试可
+显式增加 `--context-length`。工具在启动前检查参考的分数步数、历史长度与容量，
+不会将不同长度的分数集合混作同一个对齐测试。
 
 ### 存储流水线诊断
 

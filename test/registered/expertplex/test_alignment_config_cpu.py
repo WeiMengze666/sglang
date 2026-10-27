@@ -9,7 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
-validate = importlib.import_module("check_numerical_alignment").validate_reference
+alignment = importlib.import_module("check_numerical_alignment")
+validate = alignment.validate_reference
 
 
 class AlignmentConfigurationTests(unittest.TestCase):
@@ -56,6 +57,45 @@ class AlignmentConfigurationTests(unittest.TestCase):
         del self.report["tbo_enabled"]
         with self.assertRaisesRegex(ValueError, "overlap configuration"):
             self.check()
+
+    def test_score_step_count_must_match_before_launch(self):
+        self.check()
+        (self.root / "scores.json").write_text(json.dumps({"cases": [{"steps": 32}]}))
+        validate(self.root, self.model, True, 32)
+        with self.assertRaisesRegex(ValueError, "step count"):
+            validate(self.root, self.model, True, 8)
+
+    def test_trajectory_capacity_and_continuation(self):
+        histories = {
+            "outputs": [
+                {
+                    "prompt": [1] * 129,
+                    "meta_info": {"output_token_logprobs": [[0.0, 2]] * 8},
+                }
+            ]
+        }
+        alignment.validate_workload(histories, 8, 256, 1024)
+        for steps, capacity, context in [(8, 128, 1024), (9, 256, 1024), (8, 256, 137)]:
+            with (
+                self.subTest(steps=steps, capacity=capacity, context=context),
+                self.assertRaises(ValueError),
+            ):
+                alignment.validate_workload(histories, steps, capacity, context)
+        with self.assertRaises(ValueError):
+            alignment.validate_workload({"outputs": []}, 8, 256, 1024)
+
+    def test_boundary_prompts_have_exact_lengths(self):
+        class Tokenizer:
+            def encode(self, text, add_special_tokens):
+                self.assert_no_special = not add_special_tokens
+                return [10, 20, 30]
+
+        tokenizer = Tokenizer()
+        lengths = [1, 127, 128, 129, 511, 512, 513, 2047]
+        prompts = alignment.boundary_prompts(tokenizer, lengths)
+        self.assertEqual([len(p) for p in prompts], lengths)
+        self.assertEqual(prompts[2], prompts[3][:128])
+        self.assertTrue(tokenizer.assert_no_special)
 
 
 if __name__ == "__main__":

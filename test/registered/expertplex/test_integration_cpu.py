@@ -314,6 +314,48 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot connect"):
             INTEGRATION.validate_server_args(args)
 
+    def test_native_expert_policy_overrides_and_inherited_defaults(self):
+        args = self.server_args(
+            expertplex_role="expert",
+            expertplex_client_id=None,
+            disaggregation_mode="null",
+            expertplex_decode_sm_budget=64,
+            expertplex_expected_decode_tiles=12,
+            expertplex_max_decode_sm_fraction=0.75,
+            enable_two_batch_overlap=False,
+        )
+        INTEGRATION.validate_server_args(args)
+        node = INTEGRATION.expert_node_config(args)
+        self.assertEqual(
+            (
+                node.decode_sm_budget,
+                node.expected_decode_tiles,
+                node.max_decode_sm_fraction,
+            ),
+            (64, 12, 0.75),
+        )
+        self.assertEqual(node.clients, self.config.clients)
+        args.expertplex_decode_sm_budget = None
+        self.assertEqual(
+            INTEGRATION.expert_node_config(args).decode_sm_budget,
+            self.config.decode_sm_budget,
+        )
+        args.expertplex_config = None
+        self.assertEqual(INTEGRATION.expert_node_config(args).decode_sm_budget, 96)
+        args.expertplex_expected_decode_tiles = 0
+        with self.assertRaisesRegex(ValueError, "expected_decode_tiles"):
+            INTEGRATION.validate_server_args(args)
+
+    def test_policy_flags_cannot_be_silently_ignored(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), self.assertRaises(ValueError):
+                INTEGRATION.validate_server_args(
+                    self.server_args(
+                        enable_expertplex=enabled,
+                        expertplex_decode_sm_budget=64,
+                    )
+                )
+
     def test_expert_role_does_not_silently_ignore_attention_or_precision_options(self):
         for invalid in (
             {"disaggregation_mode": "decode"},

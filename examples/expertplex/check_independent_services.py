@@ -33,6 +33,9 @@ def main():
         "--kv-tokens", default="2048", help="Token count, or auto for native sizing"
     )
     p.add_argument("--mem-fraction-static", type=float, default=0.6)
+    p.add_argument("--decode-sm-budget", type=int)
+    p.add_argument("--expected-decode-tiles", type=int)
+    p.add_argument("--max-decode-sm-fraction", type=float)
     args = p.parse_args()
     if args.startup_timeout <= 0 or not 0 < args.mem_fraction_static < 1:
         p.error("Use positive startup timeout and memory fraction in (0, 1)")
@@ -188,6 +191,20 @@ def main():
         return result
 
     try:
+        policy = {
+            name: getattr(args, name)
+            for name in (
+                "decode_sm_budget",
+                "expected_decode_tiles",
+                "max_decode_sm_fraction",
+            )
+            if getattr(args, name) is not None
+        }
+        policy_flags = [
+            value
+            for name, setting in policy.items()
+            for value in ("--expertplex-" + name.replace("_", "-"), str(setting))
+        ]
         start(
             "moe",
             prefix
@@ -202,9 +219,21 @@ def main():
                 "3",
                 "--expertplex-expert-count",
                 "4",
-            ],
+            ]
+            + policy_flags,
             base,
         )
+        node, _ = bootstrap.fetch_config(moe_url, args.startup_timeout)
+        if any(getattr(node, name) != value for name, value in policy.items()):
+            raise RuntimeError("MoE bootstrap did not publish the selected SM policy")
+        report["checks"]["moe_sm_policy"] = {
+            name: getattr(node, name)
+            for name in (
+                "decode_sm_budget",
+                "expected_decode_tiles",
+                "max_decode_sm_fraction",
+            )
+        }
         generation = bootstrap.request(moe_url, "/get_server_info")["run_id"]
         # D can join first: no central launcher or all-client startup barrier.
         for device in (1, 2, 3):
