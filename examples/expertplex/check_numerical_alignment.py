@@ -21,6 +21,58 @@ from _bootstrap import module
 from check_e2e import PROMPTS, generate
 from launch import wait_http
 
+DIAGNOSTIC_RESERVED_DECODE_TOKENS = 512
+
+
+def diagnostic_kv_capacity(prompt_lengths, steps, concurrency, context_length):
+    """Size the diagnostic pool for a complete wave, including native PD reserves.
+
+    PD admission reserves 512 additional tokens per active request. A fixed
+    8192-token pool can therefore serialize the last of 16 short trajectories.
+    Round each request's upper bound to 256 tokens for allocation headroom; this
+    is not a change to the server's attention page size or reservation policy.
+    Use the longest concurrent trajectories, without assuming prefix sharing.
+    """
+    if (
+        not prompt_lengths
+        or any(type(n) is not int or n <= 0 for n in prompt_lengths)
+        or type(steps) is not int
+        or steps < 2
+        or type(concurrency) is not int
+        or not 1 <= concurrency <= 16
+        or type(context_length) is not int
+        or any(n + steps >= context_length for n in prompt_lengths)
+    ):
+        raise ValueError("Invalid diagnostic KV workload")
+    per_request = [
+        ((n + steps + DIAGNOSTIC_RESERVED_DECODE_TOKENS + 255) // 256) * 256
+        for n in sorted(prompt_lengths, reverse=True)[:concurrency]
+    ]
+    return max(8192, context_length, sum(per_request))
+
+
+def warmup_capture_command(command, directory):
+    """Replay the same forced histories into separate, non-acceptance captures.
+
+    Top-1 is sufficient to initialize kernels and the P/D transport. Warmup is
+    never included in exact comparisons, batch coverage or TBO completion proof.
+    The real capture still flushes KV and retains all of its original gates.
+    """
+    command = list(command)
+    for flag, value in (
+        ("--capture-dir", directory / "capture"),
+        ("--output", directory / "scores.json"),
+        ("--require-decode-batch-size", 1),
+        ("--top-k", 1),
+    ):
+        command[command.index(flag) + 1] = str(value)
+    if "--reference" in command:
+        index = command.index("--reference")
+        del command[index : index + 2]
+    if "--require-exact-logprobs" in command:
+        command.remove("--require-exact-logprobs")
+    return command
+
 
 def validate_native_reference_topology(expert_count, buffer_type):
     """Check the installed DeepEP configuration before loading model weights."""
@@ -32,6 +84,16 @@ def validate_native_reference_topology(expert_count, buffer_type):
             f"Installed DeepEP has no default dispatch/combine configuration for "
             f"{expert_count} EP ranks; this matched native reference is unavailable"
         ) from exc
+
+
+def validate_native_capture_routing(reference, rank, expert_count):
+    """Keep native repeat controls identical; EP still uses its own P/D services."""
+    if rank is not None and (type(rank) is not int or not 0 <= rank < expert_count):
+        raise ValueError("Native capture rank must be within the attention DP group")
+    if reference is not None:
+        report = json.loads((reference / "report.json").read_text())
+        if report.get("native_dp_rank") != rank:
+            raise ValueError("Native reference capture routing differs")
 
 
 def validate_reference(
@@ -204,9 +266,22 @@ def main():
         help="Require this many completed nonempty two-child replays on all E ranks; diagnostic only",
     )
     p.add_argument("--expert-count", type=int, choices=range(1, 7), default=4)
+    p.add_argument(
+        "--native-dp-rank",
+        type=int,
+        help=(
+            "Native diagnostic capture on one attention DP rank, retaining all "
+            "EP ranks; never used for performance"
+        ),
+    )
     p.add_argument("--steps", type=int, default=32)
     p.add_argument("--concurrency", type=int, default=1)
     p.add_argument("--batched-request", action="store_true")
+    p.add_argument(
+        "--warmup-capture",
+        action="store_true",
+        help="Replay one unscored workload before the fresh strict capture; diagnostic only",
+    )
     p.add_argument("--require-decode-batch-size", type=int, default=1)
     p.add_argument("--max-prefill-tokens", type=int, default=512)
     p.add_argument("--context-length", type=int, default=4096)
@@ -223,6 +298,15 @@ def main():
         help="Explicit repeated boundary-test pattern for tokenizer-free debug checkpoints; requires --prompt-lengths",
     )
     a = p.parse_args()
+    if a.variant != "native" and a.native_dp_rank is not None:
+        p.error("--native-dp-rank applies only to the native reference or repeat")
+    if a.variant == "native":
+        try:
+            validate_native_capture_routing(
+                a.reference, a.native_dp_rank, a.expert_count
+            )
+        except (ValueError, OSError) as exc:
+            p.error(str(exc))
     if a.prefill_graph_backend != "disabled" and not a.disable_tbo:
         p.error("Prefill CUDA Graph requires --disable-tbo in the native SGLang runner")
     if not 1 <= a.require_decode_batch_size <= a.concurrency <= 16:
@@ -313,6 +397,20 @@ def main():
             )
         except ValueError as exc:
             p.error(str(exc))
+    capacity_prompts = prompts
+    if a.reference:
+        capacity_prompts = [
+            output["prompt"]
+            for output in json.loads((a.reference / "histories.json").read_text())[
+                "outputs"
+            ]
+        ]
+    kv_capacity = diagnostic_kv_capacity(
+        [len(tokens) for tokens in capacity_prompts],
+        a.steps,
+        a.concurrency,
+        a.context_length,
+    )
     env = dict(
         os.environ,
         SGLANG_MOONCAKE_CUSTOM_MEM_POOL="INTRA_NODE_NVLINK",
@@ -326,6 +424,7 @@ def main():
         "variant": a.variant,
         "concurrency": a.concurrency,
         "batched_request": a.batched_request,
+        "warmup_capture": a.warmup_capture,
         "prefill_graph_backend": a.prefill_graph_backend,
         "prefill_graph_max_tokens": (
             a.max_prefill_tokens if a.prefill_graph_backend != "disabled" else None
@@ -336,9 +435,12 @@ def main():
         "torch_compile_enabled": a.enable_torch_compile,
         "deterministic_inference": a.enable_deterministic_inference,
         "expert_count": a.expert_count,
+        "native_dp_rank": a.native_dp_rank,
         "steps": a.steps,
         "max_prefill_tokens": a.max_prefill_tokens,
         "context_length": a.context_length,
+        "diagnostic_kv_capacity": kv_capacity,
+        "num_reserved_decode_tokens": DIAGNOSTIC_RESERVED_DECODE_TOKENS,
         "prompt_lengths": a.prompt_lengths,
         "prompt_token_ids": a.prompt_token_ids,
         "status": "running",
@@ -395,7 +497,9 @@ def main():
         "--max-running-requests",
         "16",
         "--max-total-tokens",
-        str(max(8192, a.context_length)),
+        str(kv_capacity),
+        "--num-reserved-decode-tokens",
+        str(DIAGNOSTIC_RESERVED_DECODE_TOKENS),
         "--mem-fraction-static",
         ".95",
         "--cuda-graph-backend-prefill",
@@ -582,6 +686,24 @@ def main():
         ]
         if a.batched_request:
             command.append("--batched-request")
+        if a.native_dp_rank is not None:
+            command += ["--routed-dp-rank", str(a.native_dp_rank)]
+        if a.warmup_capture:
+            warmup_dir = a.output / "warmup"
+            warmup_dir.mkdir()
+            warmup_command = warmup_capture_command(command, warmup_dir)
+            report["commands"].append(warmup_command)
+            save()
+            with (warmup_dir / "capture.log").open("w") as log:
+                subprocess.run(
+                    warmup_command,
+                    env=env,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    check=True,
+                    timeout=1800,
+                )
+            report["warmup_completed"] = True
         report["commands"].append(command)
         save()
         with (a.output / "capture.log").open("w") as log:

@@ -68,6 +68,33 @@ class IncrementalTensorTests(unittest.TestCase):
             self.assertEqual(rows[0]["logprobs"], expected)
             self.assertEqual(rows[1]["logprobs"], expected)
 
+    def test_full_coder_vocabulary_binary_snapshot_is_exact_and_immutable(self):
+        import torch
+
+        with tempfile.TemporaryDirectory() as temp, processor_class() as processor:
+            root = Path(temp)
+            params = self.params(root)
+            params["vocab_size"] = 151936
+            logits = torch.linspace(-40, 40, params["vocab_size"]).reshape(1, -1)
+            expected = logits.log_softmax(-1)[0]
+            processor(logits.clone(), [params])
+            metadata = next(root.glob("*.json"))
+            record = json.loads(metadata.read_text())
+            self.assertNotIn("pre_forcing_logprobs", record)
+            sidecar = root / record["pre_forcing_scores"]["file"]
+            self.assertEqual(sidecar.stat().st_size, params["vocab_size"] * 4)
+            entries = incremental.captured_score_entries(
+                record, root, params["vocab_size"], 0
+            )
+            self.assertTrue(
+                torch.equal(torch.tensor([v for _, v in entries]), expected)
+            )
+            original, original_metadata = sidecar.read_bytes(), metadata.read_bytes()
+            with self.assertRaises(FileExistsError):
+                processor(logits + 1, [params])
+            self.assertEqual(sidecar.read_bytes(), original)
+            self.assertEqual(metadata.read_bytes(), original_metadata)
+
     def test_changed_history_retraction_and_nonfinite_logits_fail_before_capture(self):
         import torch
 

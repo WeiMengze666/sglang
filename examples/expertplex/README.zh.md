@@ -510,6 +510,11 @@ python examples/expertplex/check_incremental.py \
 
 捕获目录必须尚不存在，且服务进程与诊断进程共享该绝对路径。后续部署用相同
 `--histories`，再加 `--reference /path/to/incremental.json` 比较每步未强制的分布。
+`--top-k 0` 将完整 FP32 log-softmax 无损写入 `.f32` 文件，另用小型 JSON 保存
+历史、batch、TBO 信息及分数文件的格式、长度和 SHA256。计算与逐位门槛不变；
+读取阶段仍兼容旧版 JSON 分数。这样可避免在采样线程逐项编码完整词表导致
+同一 P batch 的后续请求长时间等待；诊断仍有 CPU 拷贝开销，不能用于性能测试。
+汇总 JSON 在每波请求结束后保存，不再每处理一条轨迹就重写整个累积词表。
 `--top-k 0` 保存完整词表；top-k 子集仍不等于全词表精度。所有采样 rank 的记录均保留，
 副本分布不一致、历史不一致或缺步均拒绝生成成功报告。返回的 HTTP logprob 已被
 强制采样改变，仅用于校验 token 轨迹，数值比较只使用独立保存的未强制分布。
@@ -580,6 +585,24 @@ decode 位置的实际 sampling batch 必须达到指定大小，否则测试失
 报告应保留。此选项不替代实际 decode batch 或 TBO 完成检查，也不用于性能测试。
 启动服务前，工具会拒绝参考与被测端的批量提交方式不一致；旧报告缺少该字段时
 视为逐请求提交，不能直接作为批量提交的参考。
+
+若 native 自重复在跨 DP 的混合 prefill/decode 调度下失败，可在新建 native 参考和
+native 自重复命令中都增加 `--native-dp-rank 0` 做隔离诊断。它通过原生 HTTP
+`routed_dp_rank` 将捕获请求交给同一个 attention rank，仍使用原来的全部 EP ranks。
+原生 DeepEP auto 根据全局 `is_extend_in_batch` 选择 normal/low-latency 算术路径，
+因此某一路 decode 可能受另一路 prefill 的调度影响；HTTP 批量提交不保证各 DP
+同轮接收完整批次。报告记录固定 rank，native 自重复拒绝与参考不同的 routing 设置。
+ExpertPlex 命令不加此参数，仍通过独立 P/D 服务重放同一历史。
+这一控制不改变全词表逐位门槛，也不替代无路由限制的失败记录、多路 D 检查或模型质量评估。
+性能实验必须使用正常负载分配，不能用固定单个 attention rank 的诊断充当原生基线。
+
+诊断 KV 池按最长的并发提示、生成步数及原生每请求 512-token decode 预留计算，
+不会再把 16 路请求硬限制在不足以同时准入的 8192 tokens。容量与预留量写入报告；
+这不改变生产服务的 KV 池自动配置。若首次运行的初始化使首个短轨迹独自结束，
+可显式使用 `--warmup-capture`，先用相同强制历史预热计算与 P/D 传输，再清空 KV
+开始正式捕获。预热只保存 top-1 到独立 `warmup/` 目录，不能作为全词表、batch
+或 TBO 验收证据；正式捕获保留原来的全部门槛，冷启动失败报告仍应保留。
+
 新建 native 参考时，工具会在启动服务前检查提示 token 是否落在模型词表内，以及
 提示和生成长度是否满足容量限制。随机小模型若复制了大模型 tokenizer，必须显式
 提供词表内的 `--prompt-token-ids`，不能依赖 tokenizer 自动产生有效的小模型 token。

@@ -16,6 +16,89 @@ validate = alignment.validate_reference
 
 
 class AlignmentConfigurationTests(unittest.TestCase):
+    def test_warmup_is_separate_and_cannot_weaken_real_capture(self):
+        command = [
+            "python",
+            "capture.py",
+            "--capture-dir",
+            "/strict/capture",
+            "--output",
+            "/strict/scores.json",
+            "--histories",
+            "/reference/histories.json",
+            "--reference",
+            "/reference/scores.json",
+            "--require-exact-logprobs",
+            "--require-decode-batch-size",
+            "2",
+            "--top-k",
+            "0",
+            "--concurrency",
+            "16",
+            "--steps",
+            "32",
+            "--batched-request",
+        ]
+        original = list(command)
+        warmup = alignment.warmup_capture_command(command, Path("/strict/warmup"))
+        self.assertEqual(command, original)
+        for flag, value in (
+            ("--capture-dir", "/strict/warmup/capture"),
+            ("--output", "/strict/warmup/scores.json"),
+            ("--require-decode-batch-size", "1"),
+            ("--top-k", "1"),
+            ("--histories", "/reference/histories.json"),
+            ("--concurrency", "16"),
+            ("--steps", "32"),
+        ):
+            self.assertEqual(warmup[warmup.index(flag) + 1], value)
+        self.assertNotIn("--reference", warmup)
+        self.assertNotIn("--require-exact-logprobs", warmup)
+        self.assertIn("--batched-request", warmup)
+
+    def test_kv_capacity_includes_concurrent_pd_reservations(self):
+        capacity = alignment.diagnostic_kv_capacity(list(range(31, 47)), 32, 16, 4096)
+        self.assertEqual(capacity, 12288)
+        # Worst-case admission includes every live trajectory plus its reserve,
+        # even with no prefix hits. The old 8192 cap could not admit the last one.
+        required = sum(n + 32 + 512 for n in range(31, 47))
+        self.assertLess(8192, required)
+        self.assertGreaterEqual(capacity, required)
+        self.assertEqual(alignment.diagnostic_kv_capacity([31, 46], 32, 1, 4096), 8192)
+        self.assertEqual(
+            alignment.diagnostic_kv_capacity([8191, 16385, 24575], 8, 1, 32768),
+            32768,
+        )
+        self.assertEqual(
+            alignment.diagnostic_kv_capacity([100, 15000, 20000], 8, 2, 32768),
+            36352,
+        )
+        for lengths, steps, concurrency, context in (
+            ([], 32, 16, 4096),
+            ([True], 32, 16, 4096),
+            ([31], 1, 16, 4096),
+            ([31], 32, 17, 4096),
+            ([4064], 32, 16, 4096),
+            ([31], 32, True, 4096),
+        ):
+            with self.subTest(lengths=lengths), self.assertRaises(ValueError):
+                alignment.diagnostic_kv_capacity(lengths, steps, concurrency, context)
+
+    def test_native_repeat_must_preserve_capture_routing(self):
+        path = self.root / "report.json"
+        path.write_text(json.dumps(self.report))
+        alignment.validate_native_capture_routing(self.root, None, 4)
+        with self.assertRaisesRegex(ValueError, "routing differs"):
+            alignment.validate_native_capture_routing(self.root, 0, 4)
+        self.report["native_dp_rank"] = 0
+        path.write_text(json.dumps(self.report))
+        alignment.validate_native_capture_routing(self.root, 0, 4)
+        with self.assertRaisesRegex(ValueError, "routing differs"):
+            alignment.validate_native_capture_routing(self.root, None, 4)
+        for rank in (-1, 4, True):
+            with self.subTest(rank=rank), self.assertRaises(ValueError):
+                alignment.validate_native_capture_routing(None, rank, 4)
+
     def test_tokenizer_vocabulary_mismatch_rejected_before_gpu_launch(self):
         alignment.validate_prompt_ids([[0, 1023]], 1024, 4, 16, 2)
         for prompts in ([[1024]], [[-1]], [[True]], [[0.0]], [[]], []):

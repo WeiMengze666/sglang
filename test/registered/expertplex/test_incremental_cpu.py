@@ -18,6 +18,109 @@ incremental = importlib.import_module("check_incremental")
 
 
 class IncrementalCaptureTests(unittest.TestCase):
+    def test_binary_full_vocab_is_lossless_and_rejects_corruption(self):
+        import hashlib
+        import struct
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = struct.pack("<4f", -0.0, -1e-45, -0.6931471805599453, -100.25)
+            path = root / "step-000000-pid-1.f32"
+            path.write_bytes(data)
+            manifest = {
+                "file": path.name,
+                "format": "float32-le",
+                "count": 4,
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+            record = {"pre_forcing_scores": manifest}
+            entries = incremental.captured_score_entries(record, root, 4, 0)
+            self.assertEqual([i for i, _ in entries], list(range(4)))
+            self.assertEqual(struct.pack("<4f", *(v for _, v in entries)), data)
+            for patch_manifest in (
+                {"file": "../escape.f32"},
+                {"count": 3},
+                {"count": True},
+                {"format": "float16-le"},
+                {"sha256": "0" * 64},
+            ):
+                with self.subTest(patch=patch_manifest), self.assertRaises(ValueError):
+                    incremental.captured_score_entries(
+                        {"pre_forcing_scores": manifest | patch_manifest}, root, 4, 0
+                    )
+            for invalid in ({}, record | {"pre_forcing_logprobs": entries}):
+                with self.assertRaises(ValueError):
+                    incremental.captured_score_entries(invalid, root, 4, 0)
+            with self.assertRaises(ValueError):
+                incremental.captured_score_entries(record, root, 4, 2)
+            for corrupt in (data[:-1], bytes([data[0] ^ 1]) + data[1:]):
+                path.write_bytes(corrupt)
+                with self.assertRaises(ValueError):
+                    incremental.captured_score_entries(record, root, 4, 0)
+
+    def test_binary_capture_preserves_full_trajectory_and_probability_checks(self):
+        import hashlib
+        import struct
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for step in range(2):
+                data = struct.pack("<3f", -1.0, -2.0, -3.0)
+                name = f"step-{step:06d}-pid-1.f32"
+                (root / name).write_bytes(data)
+                record = {
+                    "step": step,
+                    "history": [0] + [1, 2][:step],
+                    "forced_token": [1, 2][step],
+                    "vocab_size": 3,
+                    "retraction_count": 0,
+                    "sampling_batch_size": 2,
+                    "pre_forcing_scores": {
+                        "file": name,
+                        "format": "float32-le",
+                        "count": 3,
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                    },
+                }
+                (root / name).with_suffix(".json").write_text(json.dumps(record))
+            outputs = incremental.collect(root, [0], [1, 2], 3, 0)
+            self.assertEqual([o["logprobs"] for o in outputs], [[-1.0, -2.0, -3.0]] * 2)
+            self.assertEqual(incremental.decode_batch_summary(outputs, 2)["maximum"], 2)
+            for bad in (float("nan"), float("inf"), 0.1):
+                data = struct.pack("<3f", -1.0, bad, -3.0)
+                name = "step-000001-pid-1.f32"
+                (root / name).write_bytes(data)
+                path = (root / name).with_suffix(".json")
+                record = json.loads(path.read_text())
+                record["pre_forcing_scores"]["sha256"] = hashlib.sha256(
+                    data
+                ).hexdigest()
+                path.write_text(json.dumps(record))
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    incremental.collect(root, [0], [1, 2], 3, 0)
+
+    def test_native_batch_routing_is_scalar_and_does_not_modify_payload(self):
+        payload = {"input_ids": [[11, 12], [13, 14]]}
+        with patch.object(incremental, "post", return_value=[]) as post:
+            incremental.generate(
+                "http://native", payload, flush=False, routed_dp_rank=0
+            )
+        post.assert_called_once_with(
+            "http://native", "/generate", dict(payload, routed_dp_rank=0)
+        )
+        self.assertNotIn("routed_dp_rank", payload)
+
+    def test_native_routing_rejects_pd_and_invalid_rank_before_requests(self):
+        with patch.object(incremental, "post") as post:
+            for rank in (-1, True, 0.5):
+                with self.subTest(rank=rank), self.assertRaises(ValueError):
+                    incremental.generate("http://native", {}, routed_dp_rank=rank)
+            with self.assertRaises(ValueError):
+                incremental.generate(
+                    "http://decode", {}, prefill_url="http://prefill", routed_dp_rank=0
+                )
+        post.assert_not_called()
+
     def test_concurrent_capture_flushes_once_and_keeps_reference_order(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()

@@ -27,6 +27,7 @@ def make_processor():
     # without requiring this example module on their Python import path.
     class CaptureAndForce(CustomLogitProcessor):
         def __call__(self, logits, custom_param_list):
+            import hashlib
             import json
             import os
             from pathlib import Path
@@ -87,14 +88,11 @@ def make_processor():
                 if count:
                     values, ids = scores.topk(count)
                     entries = list(zip(ids.cpu().tolist(), values.cpu().tolist()))
-                else:
-                    entries = list(enumerate(scores.cpu().tolist()))
                 record = {
                     "step": step,
                     "history": prompt + generated,
                     "forced_token": forced[step],
                     "vocab_size": params["vocab_size"],
-                    "pre_forcing_logprobs": entries,
                     "pid": os.getpid(),
                     "retraction_count": req.retraction_count,
                     "sampling_batch_size": logits.shape[0],
@@ -105,6 +103,25 @@ def make_processor():
                 # or silently select the most convenient rank.
                 directory = Path(params["capture_dir"])
                 target = directory / f"step-{step:06d}-pid-{os.getpid()}.json"
+                if count:
+                    record["pre_forcing_logprobs"] = entries
+                else:
+                    # Lossless float32 storage avoids serializing hundreds of
+                    # thousands of Python (token, float) pairs on the serving
+                    # thread. That delay can let an early D request finish
+                    # before the rest of a P batch is allowed to transfer KV.
+                    # Do not change the logits/log_softmax arithmetic or omit
+                    # vocabulary entries; JSON expansion happens after capture.
+                    data = scores.cpu().numpy().astype("<f4", copy=False).tobytes()
+                    score_path = target.with_suffix(".f32")
+                    with score_path.open("xb") as stream:
+                        stream.write(data)
+                    record["pre_forcing_scores"] = {
+                        "file": score_path.name,
+                        "format": "float32-le",
+                        "count": params["vocab_size"],
+                        "sha256": hashlib.sha256(data).hexdigest(),
+                    }
                 with target.open("x") as stream:
                     json.dump(record, stream, allow_nan=False)
                 logits[row].fill_(-float("inf"))
@@ -134,6 +151,43 @@ def trajectories(source, vocab, max_steps):
     return cases
 
 
+def captured_score_entries(record, directory, vocab, top_k):
+    """Read either legacy JSON pairs or complete lossless FP32 sidecars."""
+    import array
+    import sys
+
+    has_pairs = "pre_forcing_logprobs" in record
+    has_binary = "pre_forcing_scores" in record
+    if has_pairs == has_binary:
+        raise ValueError("Need exactly one capture score representation")
+    if has_pairs:
+        return record["pre_forcing_logprobs"]
+    manifest = record["pre_forcing_scores"]
+    name = manifest.get("file")
+    if (
+        top_k != 0
+        or not isinstance(name, str)
+        or Path(name).name != name
+        or Path(name).suffix != ".f32"
+        or manifest.get("format") != "float32-le"
+        or type(manifest.get("count")) is not int
+        or manifest["count"] != vocab
+    ):
+        raise ValueError("Invalid full-vocabulary FP32 capture manifest")
+    data = (directory / name).read_bytes()
+    if len(data) != 4 * vocab or hashlib.sha256(data).hexdigest() != manifest.get(
+        "sha256"
+    ):
+        raise ValueError("FP32 capture size or checksum differs")
+    values = array.array("f")
+    if values.itemsize != 4:
+        raise ValueError("Host does not support float32 capture decoding")
+    values.frombytes(data)
+    if sys.byteorder != "little":
+        values.byteswap()
+    return list(enumerate(values))
+
+
 def collect(directory, prompt, forced, vocab, top_k):
     by_step = {}
     batch_sizes = {}
@@ -149,7 +203,7 @@ def collect(directory, prompt, forced, vocab, top_k):
             or record["retraction_count"] != 0
         ):
             raise ValueError("Captured history/token/vocabulary mismatch")
-        entries = record["pre_forcing_logprobs"]
+        entries = captured_score_entries(record, directory, vocab, top_k)
         scores = dict(entries)
         if (
             len(entries) != len(scores)
@@ -190,7 +244,24 @@ def post(base_url, endpoint, payload=None):
         return json.loads(data) if payload is not None else None
 
 
-def generate(base_url, payload, *, prefill_url=None, bootstrap_port=None, flush=True):
+def generate(
+    base_url,
+    payload,
+    *,
+    prefill_url=None,
+    bootstrap_port=None,
+    flush=True,
+    routed_dp_rank=None,
+):
+    if routed_dp_rank is not None:
+        if type(routed_dp_rank) is not int or routed_dp_rank < 0 or prefill_url:
+            raise ValueError(
+                "Fixed DP routing requires a nonnegative rank and no PD endpoint"
+            )
+        # This is a scalar HTTP routing field, including for a batched payload.
+        # Routing an entire diagnostic wave to one attention rank avoids native
+        # auto DeepEP switching decode to normal math for another rank's extend.
+        payload = dict(payload, routed_dp_rank=routed_dp_rank)
     if prefill_url is None:
         if flush:
             post(base_url, "/flush_cache")
@@ -243,6 +314,14 @@ def main():
         "--prefill-url", help="Direct TP1 P/D diagnostic: base-url is the D worker"
     )
     parser.add_argument("--bootstrap-port", type=int)
+    parser.add_argument(
+        "--routed-dp-rank",
+        type=int,
+        help=(
+            "Diagnostic single-endpoint capture on one native attention rank; "
+            "not a performance setting"
+        ),
+    )
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--histories", type=Path, required=True)
     parser.add_argument("--reference", type=Path)
@@ -271,6 +350,10 @@ def main():
         parser.error("Exact logprob acceptance requires --reference and --top-k 0")
     if (args.prefill_url is None) != (args.bootstrap_port is None):
         parser.error("Direct P/D requires both prefill-url and bootstrap-port")
+    if args.routed_dp_rank is not None and (
+        args.routed_dp_rank < 0 or args.prefill_url is not None
+    ):
+        parser.error("Fixed DP routing requires a nonnegative rank and no PD endpoint")
     if args.bootstrap_port is not None and not 1 <= args.bootstrap_port <= 65535:
         parser.error("Invalid bootstrap port")
     vocab = json.loads((args.model_path / "config.json").read_text())["vocab_size"]
@@ -288,6 +371,9 @@ def main():
         "model_path": str(args.model_path.resolve()),
         "vocab_size": vocab,
         "requested_top_k": args.top_k,
+        "capture_storage": "float32-le sidecar"
+        if not args.top_k
+        else "JSON top-k pairs",
         "probability_scope": "top-k subset" if args.top_k else "full vocabulary",
         "history_file_sha256": hashlib.sha256(args.histories.read_bytes()).hexdigest(),
         "capture_dir": str(args.capture_dir),
@@ -298,6 +384,7 @@ def main():
         "cases": [],
         "status": "running",
         "transport": "direct-pd" if args.prefill_url else "single-endpoint",
+        "routed_dp_rank": args.routed_dp_rank,
         "require_exact_logprobs": args.require_exact_logprobs,
         "concurrency": args.concurrency,
         "batched_request": args.batched_request,
@@ -357,6 +444,7 @@ def main():
             prefill_url=args.prefill_url,
             bootstrap_port=args.bootstrap_port,
             flush=args.concurrency == 1,
+            routed_dp_rank=args.routed_dp_rank,
         )
         return finish_case(index, result)
 
@@ -377,6 +465,7 @@ def main():
                         prefill_url=args.prefill_url,
                         bootstrap_port=args.bootstrap_port,
                         flush=args.concurrency == 1,
+                        routed_dp_rank=args.routed_dp_rank,
                     )
                     if not isinstance(results, list) or len(results) != len(indices):
                         raise ValueError("Native batch response count differs")
@@ -386,7 +475,10 @@ def main():
                 for summary, outputs in captured:
                     report["cases"].append(summary)
                     report["outputs"].extend(outputs)
-                    save()
+                # Each raw step is already durable. Checkpoint one completed
+                # wave instead of rewriting a growing full-vocabulary report
+                # once per request (quadratic serialization and disk traffic).
+                save()
         if args.reference:
             report["comparisons"] = compare_distributions(read(args.reference), report)
             exact = all(
