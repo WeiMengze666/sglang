@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
+from _bootstrap import module
 from check_e2e import PROMPTS, generate
 from launch import wait_http
 
@@ -280,7 +281,9 @@ def main():
             p.error(str(exc))
     a.output.mkdir(parents=True, exist_ok=False)
     model = str(a.model_path.resolve())
-    config = json.loads((a.model_path / "config.json").read_text())
+    config = module("config").normalize_model_config(
+        json.loads((a.model_path / "config.json").read_text())
+    )
     if a.prompt_token_ids is not None and any(
         not 0 <= token < config["vocab_size"] for token in a.prompt_token_ids
     ):

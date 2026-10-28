@@ -13,6 +13,10 @@ import hashlib
 import json
 from pathlib import Path
 
+from _bootstrap import module
+
+normalize_model_config = module("config").normalize_model_config
+
 
 def summarize_counts(records, *, layers, experts, top_k):
     """Consume CPU integer counts [pass, layer, logical expert]."""
@@ -95,7 +99,7 @@ def main():
     ):
         p.error("P and D must use separate recorder dumps")
     config_path = args.model_path / "config.json"
-    config = json.loads(config_path.read_text())
+    config = normalize_model_config(json.loads(config_path.read_text()))
     geometry = {
         "layers": config["num_hidden_layers"],
         "experts": config["num_experts"],

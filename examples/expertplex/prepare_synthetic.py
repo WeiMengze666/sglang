@@ -4,6 +4,10 @@ import argparse
 import json
 from pathlib import Path
 
+from _bootstrap import module
+
+normalize_model_config = module("config").normalize_model_config
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -13,7 +17,7 @@ def main():
         "--geometry", choices=("tiny", "tiny-deepep", "30b", "480b"), default="tiny"
     )
     args = parser.parse_args()
-    data = json.loads(args.source_config.read_text())
+    data = normalize_model_config(json.loads(args.source_config.read_text()))
     if args.geometry in ("tiny", "tiny-deepep"):
         data.update(
             hidden_size=256,

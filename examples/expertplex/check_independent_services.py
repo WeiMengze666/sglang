@@ -434,7 +434,9 @@ def main():
                     print(f"ROUTING {index + 1}/{len(workload)}", flush=True)
             for name in list(recording):
                 dump_routing(name)
-            model = json.loads((args.model_path / "config.json").read_text())
+            model = module("config").normalize_model_config(
+                json.loads((args.model_path / "config.json").read_text())
+            )
             report["checks"]["native_routing_recorder"] = {
                 phase: summarize_files(
                     paths,

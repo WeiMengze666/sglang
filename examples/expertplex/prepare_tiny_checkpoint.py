@@ -4,6 +4,10 @@ import argparse
 import json
 from pathlib import Path
 
+from _bootstrap import module
+
+normalize_model_config = module("config").normalize_model_config
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -13,7 +17,9 @@ def main():
     import torch
     from safetensors.torch import save_file
 
-    data = json.loads((args.metadata / "config.json").read_text())
+    data = normalize_model_config(
+        json.loads((args.metadata / "config.json").read_text())
+    )
     if data.get("expertplex_synthetic_geometry") not in ("tiny", "tiny-deepep"):
         p.error("Only the tiny test geometry may be materialized by this script")
     args.output.mkdir(parents=True, exist_ok=False)

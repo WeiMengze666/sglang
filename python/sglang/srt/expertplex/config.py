@@ -23,6 +23,28 @@ def _positive_integer(name: str, value: Any, *, allow_zero: bool = False) -> int
     return value
 
 
+def normalize_model_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Return model metadata with one unambiguous global expert-count field.
+
+    Transformers 5 can serialize Qwen3's num_experts alias as
+    num_local_experts; it still denotes the global checkpoint count. Remove
+    the alias before derived test geometries override num_experts, otherwise
+    those configurations can retain a conflicting original model count.
+    """
+    data = dict(data)
+    for name in ("num_experts", "num_local_experts"):
+        if name in data:
+            _positive_integer(name, data[name])
+    if "num_local_experts" in data:
+        count = data.pop("num_local_experts")
+        if "num_experts" in data and data["num_experts"] != count:
+            raise ValueError("conflicting num_experts and num_local_experts")
+        data["num_experts"] = count
+    if "num_experts" not in data:
+        raise ValueError("model metadata requires num_experts or num_local_experts")
+    return data
+
+
 @dataclass(frozen=True)
 class ClientConfig:
     """One independent SGLang attention process; its ID is its mailbox slot."""
@@ -82,17 +104,7 @@ class ModelSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ModelSpec:
-        # Transformers 5 serializes Qwen3MoeConfig's num_experts alias as
-        # num_local_experts. This still denotes the global model expert count,
-        # before SGLang's EP partition, despite the historical field name.
-        data = dict(data)
-        if "num_local_experts" in data:
-            if (
-                "num_experts" in data
-                and data["num_experts"] != data["num_local_experts"]
-            ):
-                raise ValueError("conflicting num_experts and num_local_experts")
-            data["num_experts"] = data["num_local_experts"]
+        data = normalize_model_config(data)
         if data.get("model_type") != "qwen3_moe":
             raise ValueError("model_type must be qwen3_moe")
         if data.get("quantization_config") is not None:
