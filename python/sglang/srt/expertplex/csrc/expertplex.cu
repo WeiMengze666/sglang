@@ -1664,6 +1664,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("publish_pair", &publish_pair);
   m.def("combine", &combine, py::call_guard<py::gil_scoped_release>());
   m.def("benchmark_views", &benchmark_views);
-  m.def("benchmark_publish", &benchmark_publish);
+  m.def("benchmark_publish", &benchmark_publish, py::arg("owner"),
+        py::arg("attention_device"), py::arg("run_p"), py::arg("run_d"),
+        py::arg("delay_us"), py::arg("iterations") = 0);
   m.def("benchmark_echo", &benchmark_echo);
 }

@@ -75,8 +75,9 @@ static py::dict benchmark_views(std::shared_ptr<OwnedBuffers> owner, int slot) {
   return result;
 }
 
-__global__ void benchmark_publish_kernel(U64 *p, U64 *d, U64 delay_ns,
-                                         bool run_p, bool run_d, U64 *stamps) {
+__device__ bool benchmark_publish_once(U64 *p, U64 *d, U64 delay_ns,
+                                      bool run_p, bool run_d, U64 *stamps,
+                                      U64 *published_epochs = nullptr) {
   U64 *controls[2] = {p, d};
   bool enabled[2] = {run_p, run_d};
   U64 epochs[2] = {0, 0};
@@ -88,12 +89,14 @@ __global__ void benchmark_publish_kernel(U64 *p, U64 *d, U64 delay_ns,
     if (system_load(c + DONE) != pending || system_load(c + ERROR) ||
         pending == kMaxEpoch) {
       stamps[4 + phase] = 1;
-      return;
+      return false;
     }
     c[LAYER] = 0;
     c[PHASE] = phase;
     c[START_NS] = c[FINISH_NS] = 0;
     epochs[phase] = pending + 1;
+    if (published_epochs)
+      published_epochs[phase] = epochs[phase];
     system_store(c + PENDING, epochs[phase]);
   }
   __threadfence_system();
@@ -115,15 +118,39 @@ __global__ void benchmark_publish_kernel(U64 *p, U64 *d, U64 delay_ns,
       }
     }
   }
+  for (int phase = 0; phase < 2; ++phase)
+    if (!finished[phase])
+      stamps[4 + phase] = TIMEOUT;
+  return finished[0] && finished[1] && !stamps[4] && !stamps[5];
+}
+
+__global__ void benchmark_publish_kernel(U64 *p, U64 *d, U64 delay_ns,
+                                         bool run_p, bool run_d, U64 *stamps) {
+  benchmark_publish_once(p, d, delay_ns, run_p, run_d, stamps);
+}
+
+// One attention thread repeatedly publishes fully retired generations. This
+// diagnostic removes per-sample CPU synchronization/launch gaps from profiler
+// ranges; it is not the serving arrival process or a transport benchmark.
+__global__ void benchmark_publish_batch_kernel(U64 *p, U64 *d, U64 delay_ns,
+                                               bool run_p, bool run_d,
+                                               U64 *stamps, int iterations) {
+  for (int i = 0; i < iterations; ++i) {
+    U64 *row = stamps + static_cast<size_t>(i) * 8;
+    if (!benchmark_publish_once(p, d, delay_ns, run_p, run_d, row, row + 6))
+      return; // Never overwrite a failed or timed-out generation.
+  }
 }
 
 static torch::Tensor benchmark_publish(std::shared_ptr<OwnedBuffers> owner,
                                        int attention_device, bool run_p,
-                                       bool run_d, int delay_us) {
+                                       bool run_d, int delay_us,
+                                       int iterations = 0) {
   TORCH_CHECK(owner->active && owner->b.slots >= 2,
               "Diagnostic publication requires a live executor with at least two slots");
   TORCH_CHECK(attention_device != owner->device && delay_us >= 0 &&
-                  delay_us <= 1000000 && (run_p || run_d),
+                  delay_us <= 1000000 && (run_p || run_d) &&
+                  iterations >= 0 && iterations <= 100000,
               "Invalid diagnostic publication arguments");
   c10::cuda::CUDAGuard guard(attention_device);
   int accessible = 0, atomics = 0;
@@ -136,12 +163,21 @@ static torch::Tensor benchmark_publish(std::shared_ptr<OwnedBuffers> owner,
     cudaGetLastError();
   else
     C10_CUDA_CHECK(status);
-  auto stamps = torch::zeros({6}, torch::TensorOptions().dtype(torch::kInt64)
-                                     .device(torch::kCUDA, attention_device));
-  benchmark_publish_kernel<<<1, 1, 0, at::cuda::getCurrentCUDAStream(attention_device)>>>(
-      owner->b.control, owner->b.control + kControlWords,
-      static_cast<U64>(delay_us) * 1000, run_p, run_d,
-      reinterpret_cast<U64 *>(stamps.data_ptr<int64_t>()));
+  auto options = torch::TensorOptions().dtype(torch::kInt64)
+                     .device(torch::kCUDA, attention_device);
+  auto stamps = iterations ? torch::zeros({iterations, 8}, options)
+                           : torch::zeros({6}, options);
+  auto stream = at::cuda::getCurrentCUDAStream(attention_device);
+  if (iterations)
+    benchmark_publish_batch_kernel<<<1, 1, 0, stream>>>(
+        owner->b.control, owner->b.control + kControlWords,
+        static_cast<U64>(delay_us) * 1000, run_p, run_d,
+        reinterpret_cast<U64 *>(stamps.data_ptr<int64_t>()), iterations);
+  else
+    benchmark_publish_kernel<<<1, 1, 0, stream>>>(
+        owner->b.control, owner->b.control + kControlWords,
+        static_cast<U64>(delay_us) * 1000, run_p, run_d,
+        reinterpret_cast<U64 *>(stamps.data_ptr<int64_t>()));
   C10_CUDA_CHECK(cudaGetLastError());
   return stamps;
 }

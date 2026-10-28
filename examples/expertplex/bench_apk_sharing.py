@@ -16,6 +16,59 @@ from _bootstrap import module
 from bench_sharing import WORKLOAD_IDENTITY, weights, workload
 
 
+def publication_samples(rows, enabled, count, *, require_epochs=False):
+    """Validate completed publications, including every GPU-burst generation."""
+    if len(rows) != count or count <= 0 or not any(enabled):
+        raise ValueError("Incomplete publication samples or no enabled phase")
+    result = []
+    previous_finish = 0
+    previous_epochs = None
+    for row in rows:
+        if (
+            len(row) != (8 if require_epochs else 6)
+            or any(type(value) is not int or value < 0 for value in row)
+            or row[0] <= 0
+            or row[1] < row[0]
+            or any(row[4:6])
+            or row[0] < previous_finish
+        ):
+            raise ValueError("Invalid, overlapping, or failed publication")
+        for phase in range(2):
+            if enabled[phase]:
+                if row[2 + phase] <= row[phase]:
+                    raise ValueError("Missing publication completion")
+            elif row[2 + phase] != 0:
+                raise ValueError("Inactive phase has a completion")
+            if require_epochs:
+                epoch = row[6 + phase]
+                if enabled[phase]:
+                    if epoch <= 0 or (
+                        previous_epochs is not None
+                        and epoch != previous_epochs[phase] + 1
+                    ):
+                        raise ValueError("Publication epochs did not advance once")
+                elif epoch:
+                    raise ValueError("Inactive phase advanced its epoch")
+        finish = max(row[2:4])
+        result.append(
+            {
+                "release_gap_us": (row[1] - row[0]) / 1000,
+                "response_upper_bound_us": [
+                    (row[i + 2] - row[i]) / 1000 if enabled[i] else None
+                    for i in range(2)
+                ],
+                "publication_ns": row[:2],
+                "acknowledgement_ns": row[2:4],
+                "inter_sample_gap_us": (row[0] - previous_finish) / 1000
+                if previous_finish else None,
+                "epochs": row[6:] if require_epochs else None,
+            }
+        )
+        previous_finish = finish
+        previous_epochs = row[6:] if require_epochs else None
+    return result
+
+
 @contextmanager
 def profile_executor_range(torch, device, enabled):
     """Include the persistent launch and stop in one application-replay range.
@@ -87,8 +140,15 @@ def main():
         action="store_true",
         help="Mark the complete E executor lifetime for ncu app-range; not a performance run",
     )
+    p.add_argument(
+        "--gpu-burst",
+        action="store_true",
+        help="Publish each sample block in one GPU loop, without per-sample host gaps; diagnostic only",
+    )
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
+    if args.gpu_burst and args.iterations > 100000:
+        p.error("GPU burst is limited to 100000 iterations")
     if not 1 <= args.decode_expert_rows <= args.decode_rows or (
         args.decode_expert_rows != 1 and args.decode_active_experts is None
     ):
@@ -198,34 +258,30 @@ def main():
                 "executor": executor.describe(),
             }
 
-            def measure(enabled=(True, True), owner=buffers._impl):
-                stamps = extension.benchmark_publish(
-                    owner, args.control_device, *enabled, args.delay_us
+            def measure(enabled=(True, True), count=1, owner=buffers._impl):
+                if args.gpu_burst:
+                    values = extension.benchmark_publish(
+                        owner, args.control_device, *enabled, args.delay_us, count
+                    ).cpu().tolist()
+                else:
+                    values = [
+                        extension.benchmark_publish(
+                            owner, args.control_device, *enabled, args.delay_us
+                        ).cpu().tolist()
+                        for _ in range(count)
+                    ]
+                return publication_samples(
+                    values, enabled, count, require_epochs=args.gpu_burst
                 )
-                values = stamps.cpu().tolist()
-                if any(values[4:]) or any(
-                    enabled[i] and values[i + 2] <= values[i] for i in range(2)
-                ):
-                    raise RuntimeError(f"APK publication/ack error: {values}")
-                return {
-                    "release_gap_us": (values[1] - values[0]) / 1000,
-                    "response_upper_bound_us": [
-                        (values[i + 2] - values[i]) / 1000 if enabled[i] else None
-                        for i in range(2)
-                    ],
-                }
 
             try:
                 for _ in range(3):
                     measure()
                 isolated = [
-                    [
-                        measure(tuple(i == phase for i in range(2)))
-                        for _ in range(args.iterations)
-                    ]
+                    measure(tuple(i == phase for i in range(2)), args.iterations)
                     for phase in range(2)
                 ]
-                samples = [measure() for _ in range(args.iterations)]
+                samples = measure(count=args.iterations)
                 row.update(
                     samples=samples,
                     isolated=isolated,

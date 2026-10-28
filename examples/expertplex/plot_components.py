@@ -40,6 +40,8 @@ def validate_sharing_reports(native, apk, mps):
     reports = (native, apk, mps)
     if any(r["settings"].get("profile_range", False) for r in reports):
         raise ValueError("Profiler-instrumented timings cannot form a sharing comparison")
+    if any(r["settings"].get("gpu_burst", False) for r in reports):
+        raise ValueError("GPU-burst diagnostics cannot form a sharing comparison")
     identities = {r.get("workload_identity") for r in reports}
     if None in identities or len(identities) != 1:
         raise ValueError("Workload initialization algorithms differ or are missing")

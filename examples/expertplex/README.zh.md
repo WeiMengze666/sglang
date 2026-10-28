@@ -461,6 +461,11 @@ decode 专家的行数，配合 `--decode-active-experts` 检查部分 tile 和�
 避免普通 kernel replay 打断它与 attention publisher 的并发依赖。该区间包含
 预热、空闲和 isolated/concurrent 工作，不是纯计算时延；绘图工具拒绝把其计时
 放入正常 sharing 对照。
+诊断时可加 `--gpu-burst`：每组 `--iterations` 由 attention GPU 的一个线程连续
+发布，等待两个已启用 phase 的 DONE 后才推进下一代，CPU 在整组结束后取回时间戳。
+报告保留逐次发布、完成时间、epoch 和相邻样本间隔，并拒绝超时、缺失或重复代次。
+这可减少 profiler 区间中的 CPU 往返空隙，但仍是固定权重、预置输入的连续负载；
+不能与默认发布模式混作公平性能对照，也不能替代真实通信或 Poisson 到达的 goodput。
 `bench_communication.py --cuda-graph` 用 GPU 同步隔离 dispatch 与 combine，
 支持单独构建的固定 DeepEP v1。
 原生 normal 模式可添加 `--deepep-num-sms N`，在分配通信缓冲区前使用

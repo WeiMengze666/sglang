@@ -54,6 +54,12 @@ class SharingComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Profiler-instrumented"):
             validate(*reports)
 
+    def test_rejects_gpu_burst_even_without_profiler(self):
+        reports = self.fixture()
+        reports[1]["settings"]["gpu_burst"] = True
+        with self.assertRaisesRegex(ValueError, "GPU-burst"):
+            validate(*reports)
+
     def test_rejects_same_expert_counts_but_different_workload(self):
         for field, value in [
             ("hidden", 1024),
