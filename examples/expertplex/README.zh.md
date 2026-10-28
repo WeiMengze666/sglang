@@ -603,6 +603,23 @@ ExpertPlex 命令不加此参数，仍通过独立 P/D 服务重放同一历史�
 开始正式捕获。预热只保存 top-1 到独立 `warmup/` 目录，不能作为全词表、batch
 或 TBO 验收证据；正式捕获保留原来的全部门槛，冷启动失败报告仍应保留。
 
+默认 `1P+3D+4E` 的三路同时活动检查可复用已经通过的 ExpertPlex 单路数值报告：
+
+```bash
+python examples/expertplex/check_all_decode_alignment.py \
+  --source-run /path/to/passed-expertplex-run \
+  --output /path/to/new-three-decode-run
+```
+
+源报告须为 16 路批量请求、确定性模式、全词表精确比较和至少两次非空 TBO 重放
+都通过的结果，并保留 native 历史与分数文件。工具从源报告读取端口，使用当前 checkout
+和 Python 环境独立启动 P、三路 D、E 服务；开始前须确保源服务已经退出，端口可用。
+每个 D 完成请求构造后才释放共同屏障，避免模块初始化错位；所有 warmup 完成后统一
+清空 KV。每路仍须通过全词表、每请求 batch 和全部 E 完成检查，且共同 decode 区间内
+每路至少完成两次非空双子批重放。报告区分 PID/client 并保留失败，退出时仅清理本次
+启动的进程。三路重放相同的 16 条历史，不等于 48 条独立提示，也不证明 kernel 时间
+重叠或 goodput；此工具不能用于性能计时。
+
 新建 native 参考时，工具会在启动服务前检查提示 token 是否落在模型词表内，以及
 提示和生成长度是否满足容量限制。随机小模型若复制了大模型 tokenizer，必须显式
 提供词表内的 `--prompt-token-ids`，不能依赖 tokenizer 自动产生有效的小模型 token。
