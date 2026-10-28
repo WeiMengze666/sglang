@@ -98,6 +98,51 @@ def evaluate_holdout(fit, training, holdout):
     }
 
 
+def footprint_ambiguity(samples):
+    """Lower bound on error for any predictor using only this exact footprint.
+
+    All observations at a given x receive one prediction. For positive extrema
+    lo, hi, the best possible worst relative error is (hi-lo)/(hi+lo), attained
+    at 2*lo*hi/(lo+hi). This is a training-data diagnostic, not a new fit or an
+    error tolerance. Noise and omitted operation footprints can both cause it.
+    In particular raw-P ACT/scatter/gather need not share GEMM's tile height.
+    """
+    grouped = {}
+    for sample in samples:
+        x, latency = sample["x"], sample["latency_s"]
+        if (
+            not math.isfinite(x)
+            or x < 0
+            or not math.isfinite(latency)
+            or latency <= 0
+        ):
+            raise ValueError(
+                "Ambiguity requires finite nonnegative footprints and positive times"
+            )
+        grouped.setdefault(x, []).append(latency)
+    if not grouped:
+        raise ValueError("Need observations for footprint ambiguity")
+    rows = []
+    for x, times in sorted(grouped.items()):
+        lo, hi = min(times), max(times)
+        rows.append(
+            {
+                "x": x,
+                "observations": len(times),
+                "min_latency_s": lo,
+                "max_latency_s": hi,
+                "minimum_worst_relative_error": (hi - lo) / (hi + lo),
+            }
+        )
+    return {
+        "scope": "Training observations only; a lower bound for any single-valued footprint model, not a validated latency model",
+        "minimum_worst_relative_error": max(
+            row["minimum_worst_relative_error"] for row in rows
+        ),
+        "groups": rows,
+    }
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--sms", nargs="+", type=int, default=[32, 64, 84, 116])
@@ -221,6 +266,7 @@ def main():
                     for phase, values in samples.items():
                         fit = fit_line([(s["x"], s["latency_s"]) for s in values])
                         fit["measurements"] = values
+                        fit["footprint_ambiguity"] = footprint_ambiguity(values)
                         report["fits"][f"{phase}:{sms}"] = fit
                 else:
                     for phase, values in samples.items():

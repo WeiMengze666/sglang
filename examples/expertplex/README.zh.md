@@ -421,6 +421,10 @@ python examples/expertplex/profile_full_moe.py \
 ```
 
 结果保留实际 per-expert 行数、整数 tile footprint、重复测量及拟合残差。
+训练拟合还报告 `footprint_ambiguity`：同一 GEMM footprint 的测量若有不同延迟，
+任何仅依赖此 footprint 的模型都有无法消除的相对误差下界。该下界不调整验收阈值，
+也不利用留出样本；它用于发现噪声或遗漏的工作量维度。raw-P 的 ACT、Scatter/Gather
+与 GEMM tile 高度不同，必要时应按论文 Eq.2 的各组件分别建模，再合成关键路径。
 这是单 E rank 的合成 BF16 权重和随机 top-k 负载，不能当作主模型的实测路由概率。
 拟合包含完整 E 层操作仍不代表端到端模型已校准；需再检查留出点和并发服务误差。
 可同时传入 `--holdout-prefill-rows 64 256 1024 4096 16384` 和

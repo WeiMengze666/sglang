@@ -15,6 +15,29 @@ collect = profile.collect_samples
 
 
 class FullMoEProfileTests(unittest.TestCase):
+    def test_same_gemm_footprint_can_hide_different_operation_work(self):
+        samples = [
+            {"x": 40, "tokens": 128, "latency_s": 0.0025},
+            {"x": 40, "tokens": 2048, "latency_s": 0.004},
+            {"x": 155, "tokens": 8192, "latency_s": 0.014},
+        ]
+        before = copy.deepcopy(samples)
+        result = profile.footprint_ambiguity(samples)
+        self.assertEqual(samples, before)
+        self.assertAlmostEqual(result["minimum_worst_relative_error"], 3 / 13)
+        # No polynomial in the same x can meet a 10% tolerance on both values:
+        # their permitted prediction intervals do not intersect.
+        self.assertGreater(0.004 * 0.9, 0.0025 * 1.1)
+        self.assertEqual(result["groups"][1]["minimum_worst_relative_error"], 0)
+        for rows in (
+            [],
+            [{"x": -1, "latency_s": 1}],
+            [{"x": 1, "latency_s": 0}],
+            [{"x": 1, "latency_s": float("nan")}],
+        ):
+            with self.assertRaises(ValueError):
+                profile.footprint_ambiguity(rows)
+
     def test_cli_measures_both_grids_and_preserves_training_fit(self):
         calls = []
 
@@ -84,6 +107,9 @@ class FullMoEProfileTests(unittest.TestCase):
             self.assertAlmostEqual(fit["alpha"], 0.001)
             self.assertAlmostEqual(fit["beta"], 0.001)
             self.assertAlmostEqual(fit["holdout"]["max_relative_error"], 0.5)
+            self.assertEqual(
+                fit["footprint_ambiguity"]["minimum_worst_relative_error"], 0
+            )
 
     def test_holdout_does_not_refit_or_hide_extrapolation(self):
         fit = {"alpha": 0.001, "beta": 0.001}
