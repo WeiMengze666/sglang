@@ -121,6 +121,10 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
                     executor.read_progress_trace(),
                     Path(settings["trace_path"]).with_suffix(".progress.pt"),
                 )
+                torch.save(
+                    executor.read_warp_trace(),
+                    Path(settings["trace_path"]).with_suffix(".warps.pt"),
+                )
                 Path(settings["trace_path"]).with_suffix(".metadata.json").write_text(
                     json.dumps(executor.describe(), indent=2) + "\n"
                 )

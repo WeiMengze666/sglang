@@ -601,6 +601,12 @@ decode 位置的实际 sampling batch 必须达到指定大小，否则测试失
 （GEMM 完成的上界）与输出提交时刻，并与最终退役关联。非 GEMM 操作不填写
 accumulator 时刻；数据计算、异步 store 和未退役输出分开计数，不能用 pending store
 数量直接推断未完成 GEMM 数量。这些 E 侧证据仍不包含完整 A→E 传播上界。
+`*.trace.warps.pt` 记录 producer、leader math warp 和每个 CTA 的 epilogue warp
+接收 Task 的时间；未参与流水线的 warp 为零。检查器要求所有参与 warp 的记录
+完整且有序。报告把 A 时钟上的 publication→admission-ack 往返时长，与 E 时钟上
+admission→warp 接收的时长相加，得到保守上界，避免跨 GPU 时间戳直接相减。
+结果只覆盖实际收到 D 工作的 cluster，并列出未覆盖者；含返回确认和轮询开销，
+仍不能当作所有 cluster 的普遍传播上界或“至多一个 tile”的完整证明。
 trace 会扰动时序，不应拿启用 trace 的延迟当作正常服务性能。
 `--check-single-pending-compute` 要求每次已观察到的 phase 决策处，每 CTA 未完成的
 GEMM 与未提交的数据/激活 tile 合计不超过一；没有发生切换也不能通过此检查。

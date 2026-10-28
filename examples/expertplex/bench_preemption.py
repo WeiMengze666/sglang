@@ -248,6 +248,122 @@ def validate_decision_trace(records, decisions, cluster_size, truncated_ctas=0):
     return {"decisions": len(seen), "phase_switches": switches}
 
 
+def validate_warp_propagation(
+    records, decisions, warps, cases, cluster_size, truncated_ctas=0
+):
+    """Validate warp receipt and conservatively bridge A/E clock domains.
+
+    A's publication-to-admission-ack interval bounds publication to admission.
+    Add E's admission-to-warp interval, never an A timestamp minus an E one.
+    This includes return polling delay and tracing overhead. It measures only
+    clusters receiving D work, not a universal one-tile latency guarantee.
+    """
+    import math
+
+    checks = validate_decision_trace(records, decisions, cluster_size, truncated_ctas)
+    if cluster_size not in (1, 2):
+        raise ValueError("Unsupported warp topology")
+    indexed = {(r["cta"], r["sequence"]): r for r in records}
+    if len(indexed) != len(records):
+        raise ValueError("Duplicate tile key")
+    received = {}
+    for sample in warps:
+        key = (sample["cta"], sample["sequence"])
+        values = sample["observed_ns"]
+        if key in received or key not in indexed or len(values) != 8:
+            raise ValueError("Duplicate, unknown or malformed warp receipt")
+        row = indexed[key]
+        active = {0, 4, 5, 6, 7}
+        if sample["cta"] % cluster_size == 0:
+            active.add(1)
+        for warp, timestamp in enumerate(values):
+            if type(timestamp) is not int:
+                raise ValueError("Warp timestamp must be an integer")
+            if warp in active:
+                if not row["begin_ns"] <= timestamp <= row["finish_ns"]:
+                    raise ValueError("Missing or unordered participating warp")
+                if timestamp < values[0]:
+                    raise ValueError("Consumer observed Task before producer")
+            elif timestamp != 0:
+                raise ValueError("Nonparticipating warp has a receipt")
+        received[key] = max(values)
+    if set(received) != set(indexed):
+        raise ValueError("Missing tile warp receipts")
+    switches = []
+    by_handoff = {(d["cta"] // cluster_size, d["claim_sequence"]): d for d in decisions}
+    for switch in checks["phase_switches"]:
+        cluster = switch["cluster"]
+        decision = by_handoff[cluster, switch["claim_sequence"]]
+        end = max(
+            received[cta, decision["handoff_sequence"]]
+            for cta in range(cluster * cluster_size, (cluster + 1) * cluster_size)
+        )
+        switches.append(
+            {
+                "cluster": cluster,
+                "claim_sequence": switch["claim_sequence"],
+                "selected_phase": switch["selected_phase"],
+                "decision_to_all_warps_us": (end - decision["observed_ns"]) / 1000,
+            }
+        )
+    arrivals = []
+    all_clusters = {r["cta"] // cluster_size for r in records}
+    epochs = set()
+    for case in cases:
+        decode = case["decode"]
+        epoch, admission = decode["epoch"], decode["start_ns"]
+        rtt = case["admission_roundtrip_upper_bound_us"]["decode"]
+        if epoch in epochs or admission <= 0 or not math.isfinite(rtt) or rtt <= 0:
+            raise ValueError("Invalid or duplicate publication/admission evidence")
+        epochs.add(epoch)
+        first = {}
+        for row in records:
+            if row["phase"] == 1 and row["slot"] == 1 and row["epoch"] == epoch:
+                if row["ready_seen_ns"] != admission:
+                    raise ValueError("Admission epoch does not match warp trace")
+                cluster = row["cta"] // cluster_size
+                first[cluster] = min(
+                    first.get(cluster, row["sequence"]), row["sequence"]
+                )
+        if not first:
+            raise ValueError("Publication has no decode warp receipt")
+        bounds = []
+        for cluster, sequence in sorted(first.items()):
+            end = max(
+                received[cta, sequence]
+                for cta in range(cluster * cluster_size, (cluster + 1) * cluster_size)
+            )
+            if end < admission:
+                raise ValueError("Decode warp receipt precedes admission")
+            bounds.append(
+                {
+                    "cluster": cluster,
+                    "first_sequence": sequence,
+                    "admission_to_all_warps_us": (end - admission) / 1000,
+                    "publication_to_all_warps_upper_bound_us": rtt
+                    + (end - admission) / 1000,
+                }
+            )
+        arrivals.append(
+            {
+                "decode_epoch": epoch,
+                "clusters": bounds,
+                "clusters_without_decode_work": sorted(all_clusters - set(first)),
+            }
+        )
+    if not arrivals:
+        raise ValueError("Need publication/admission evidence")
+    return {
+        "tiles": len(received),
+        "phase_switches": switches,
+        "arrivals": arrivals,
+        "scope": "Participating warp receipt with conservative publication-to-convergence bounds. "
+        "A-clock roundtrip plus E-clock interval; no cross-device timestamp subtraction. "
+        "Only clusters receiving decode work; tracing perturbs timing. "
+        "Not a universal propagation or one-tile bound proof.",
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -556,6 +672,25 @@ def main():
             records,
             decisions,
             progress,
+            report["executor"]["cluster_size"],
+            report["trace_truncated_ctas"],
+        )
+        warp_path = trace_path.with_suffix(".warps.pt")
+        warp_tensor = torch.load(warp_path, weights_only=True)
+        if tuple(warp_tensor.shape) != (*trace.shape[:2], 8):
+            raise ValueError("Warp trace shape differs from tile trace")
+        warps = [
+            {"cta": cta, "sequence": seq, "observed_ns": values}
+            for cta, row in enumerate(warp_tensor.tolist())
+            for seq, values in enumerate(row)
+            if any(values)
+        ]
+        report["warp_trace_file"] = str(warp_path)
+        report["warp_propagation_checks"] = validate_warp_propagation(
+            records,
+            decisions,
+            warps,
+            report["cases"],
             report["executor"]["cluster_size"],
             report["trace_truncated_ctas"],
         )

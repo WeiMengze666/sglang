@@ -251,6 +251,10 @@ class PersistentExecutor:
         """Epilogue observations of accumulator readiness and output submission."""
         return self._impl.read_progress_trace()
 
+    def read_warp_trace(self):
+        """Per-warp Task handoff times; zero denotes a nonparticipating warp."""
+        return self._impl.read_warp_trace()
+
     def check_error(self) -> list[int]:
         errors = list(self._impl.check_error())
         if any(errors):

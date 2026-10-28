@@ -88,6 +88,12 @@ struct DecisionRecord {
 struct ProgressRecord {
   U64 accumulator_ready_ns, output_submitted_ns;
 };
+// One lane records each participating warp after its Task handoff. Unused
+// warps (2/3 and the peer CTA's math warp) remain zero. Diagnostic-only;
+// timestamps are read after stop, never polled by another GPU or scheduler.
+struct WarpRecord {
+  U64 observed_ns[Threads / 32];
+};
 constexpr int QueueShards = 8;
 struct alignas(128) QueueHead {
   U64 word;
@@ -100,6 +106,7 @@ struct Context {
   TraceRecord *trace = nullptr;
   DecisionRecord *decision_trace = nullptr;
   ProgressRecord *progress_trace = nullptr;
+  WarpRecord *warp_trace = nullptr;
   U64 *trace_sequence_counts = nullptr;
   int trace_capacity = 0;
   Maps *maps;
@@ -174,6 +181,10 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
     result.progress_trace =
         static_cast<ProgressRecord *>(owner.allocate(progress_bytes));
     C10_CUDA_CHECK(cudaMemset(result.progress_trace, 0, progress_bytes));
+    const size_t warp_bytes =
+        static_cast<size_t>(ctas) * trace_capacity * sizeof(WarpRecord);
+    result.warp_trace = static_cast<WarpRecord *>(owner.allocate(warp_bytes));
+    C10_CUDA_CHECK(cudaMemset(result.warp_trace, 0, warp_bytes));
     result.trace_sequence_counts =
         static_cast<U64 *>(owner.allocate(ctas * sizeof(U64)));
     C10_CUDA_CHECK(cudaMemset(result.trace_sequence_counts, 0,
@@ -788,6 +799,10 @@ __global__ __launch_bounds__(Threads, 1) void executor(
                   static_cast<U64>(task.stage)};
       }
       s.task[index] = task;
+      if (task.slot >= 0 && context.warp_trace && sequence < context.trace_capacity)
+        context.warp_trace[static_cast<size_t>(blockIdx.x) *
+                               context.trace_capacity + sequence]
+            .observed_ns[0] = now_ns();
       s.task_full[index].arrive();
       if (task.slot == -2)
         break;
@@ -872,6 +887,11 @@ __global__ __launch_bounds__(Threads, 1) void executor(
                 parity = (sequence / OutputStages) & 1;
       s.task_full[index].wait(parity);
       Task task = s.task[index];
+      if (lane == 0 && task.slot >= 0 && context.warp_trace &&
+          sequence < context.trace_capacity)
+        context.warp_trace[static_cast<size_t>(blockIdx.x) *
+                               context.trace_capacity + sequence]
+            .observed_ns[warp] = now_ns();
       if (task.slot == -2)
         break;
       s.accum_empty[index].wait(parity ^ 1);
@@ -964,6 +984,11 @@ __global__ __launch_bounds__(Threads, 1) void executor(
                 parity = (sequence / OutputStages) & 1;
       s.task_full[index].wait(parity);
       Task task = s.task[index];
+      if (lane == 0 && task.slot >= 0 && context.warp_trace &&
+          sequence < context.trace_capacity)
+        context.warp_trace[static_cast<size_t>(blockIdx.x) *
+                               context.trace_capacity + sequence]
+            .observed_ns[warp] = now_ns();
       if (task.slot == -2) {
         drain_pending();
         break;
