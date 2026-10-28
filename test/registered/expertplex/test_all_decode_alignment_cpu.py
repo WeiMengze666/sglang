@@ -107,6 +107,38 @@ def progress():
 
 
 class AllDecodeTests(unittest.TestCase):
+    def test_cleanup_failure_cannot_publish_passed_report(self):
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp)
+            (out / "report.json").write_text('{"status":"running"}')
+            result = {"status": "passed", "results": [{"returncode": 0}]}
+            with self.assertRaisesRegex(RuntimeError, "cleanup incomplete"):
+                check.finish_report(result, out, [12345])
+            saved = json.loads((out / "report.json").read_text())
+            self.assertEqual(saved["status"], "failed")
+            self.assertEqual(saved["remaining_owned_pids"], [12345])
+            self.assertEqual(saved["results"], [{"returncode": 0}])
+            self.assertFalse((out / "report.json.tmp").exists())
+
+    def test_cleanup_failure_preserves_original_validation_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = {"status": "failed", "error": "Strict capture failed"}
+            with self.assertRaises(RuntimeError):
+                check.finish_report(result, Path(temp), [12345])
+            saved = json.loads((Path(temp) / "report.json").read_text())
+            self.assertEqual(saved["error"], "Strict capture failed")
+            self.assertEqual(saved["cleanup_error"], "Own process cleanup incomplete")
+            self.assertEqual(saved["status"], "failed")
+
+    def test_clean_teardown_preserves_validation_outcome(self):
+        for status in ("passed", "failed"):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as temp:
+                check.finish_report({"status": status}, Path(temp), [])
+                saved = json.loads((Path(temp) / "report.json").read_text())
+                self.assertEqual(saved["status"], status)
+                self.assertEqual(saved["remaining_owned_pids"], [])
+                self.assertNotIn("cleanup_error", saved)
+
     def test_plan_preserves_source_and_derives_nondefault_ports(self):
         source = source_report()
         saved = copy.deepcopy(source)

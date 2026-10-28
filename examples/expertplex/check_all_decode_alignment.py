@@ -201,6 +201,19 @@ def worker():
     capture.main()
 
 
+def finish_report(result, out, remaining):
+    """Persist cleanup failure before raising, preserving earlier diagnostics."""
+    result["remaining_owned_pids"] = list(remaining)
+    if remaining:
+        result["status"] = "failed"
+        result["cleanup_error"] = "Own process cleanup incomplete"
+    temp = out / "report.json.tmp"
+    temp.write_text(json.dumps(result, indent=2) + "\n")
+    temp.replace(out / "report.json")
+    if remaining:
+        raise RuntimeError(result["cleanup_error"])
+
+
 def run_case(source, out):
     import psutil
     from check_incremental import post
@@ -428,12 +441,9 @@ def run_case(source, out):
                     remaining.append(proc.pid)
             except psutil.NoSuchProcess:
                 pass
-        result["remaining_owned_pids"] = remaining
         for log in logs:
             log.close()
-        save()
-        if result["remaining_owned_pids"]:
-            raise RuntimeError("Own process cleanup incomplete")
+        finish_report(result, out, remaining)
 
 
 def main():
