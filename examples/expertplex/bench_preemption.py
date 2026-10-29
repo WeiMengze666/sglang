@@ -249,7 +249,7 @@ def validate_decision_trace(records, decisions, cluster_size, truncated_ctas=0):
 
 
 def validate_warp_propagation(
-    records, decisions, warps, cases, cluster_size, truncated_ctas=0
+    records, decisions, warps, cases, cluster_size, truncated_ctas=0, *, ctas
 ):
     """Validate warp receipt and conservatively bridge A/E clock domains.
 
@@ -260,9 +260,13 @@ def validate_warp_propagation(
     """
     import math
 
-    checks = validate_decision_trace(records, decisions, cluster_size, truncated_ctas)
-    if cluster_size not in (1, 2):
+    if type(cluster_size) is not int or cluster_size not in (1, 2):
         raise ValueError("Unsupported warp topology")
+    if type(ctas) is not int or ctas <= 0 or ctas % cluster_size:
+        raise ValueError("Need a complete configured CTA/cluster inventory")
+    if any(type(r["cta"]) is not int or not 0 <= r["cta"] < ctas for r in records):
+        raise ValueError("Trace CTA is outside the configured launch")
+    checks = validate_decision_trace(records, decisions, cluster_size, truncated_ctas)
     indexed = {(r["cta"], r["sequence"]): r for r in records}
     if len(indexed) != len(records):
         raise ValueError("Duplicate tile key")
@@ -307,7 +311,8 @@ def validate_warp_propagation(
             }
         )
     arrivals = []
-    all_clusters = {r["cta"] // cluster_size for r in records}
+    all_clusters = set(range(ctas // cluster_size))
+    observed_clusters = {r["cta"] // cluster_size for r in records}
     epochs = set()
     for case in cases:
         decode = case["decode"]
@@ -355,6 +360,9 @@ def validate_warp_propagation(
         raise ValueError("Need publication/admission evidence")
     return {
         "tiles": len(received),
+        "configured_ctas": ctas,
+        "configured_clusters": len(all_clusters),
+        "clusters_without_any_tile": sorted(all_clusters - observed_clusters),
         "phase_switches": switches,
         "arrivals": arrivals,
         "scope": "Participating warp receipt with conservative publication-to-convergence bounds. "
@@ -631,6 +639,8 @@ def main():
     report["trace_record_count"] = len(records)
     try:
         metadata = json.loads(trace_path.with_suffix(".metadata.json").read_text())
+        if trace.shape[0] != report["executor"]["ctas"]:
+            raise ValueError("Trace CTA dimension differs from the executor launch")
         report["trace_sequence_counts"] = metadata["trace_sequence_counts"]
         report["trace_truncated_ctas"] = trace_overflow_ctas(
             metadata, trace.shape[0], args.trace_capacity
@@ -693,6 +703,7 @@ def main():
             report["cases"],
             report["executor"]["cluster_size"],
             report["trace_truncated_ctas"],
+            ctas=report["executor"]["ctas"],
         )
         if args.check_single_pending_compute:
             report["pending_compute_checks"] = validate_single_pending_compute(

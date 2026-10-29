@@ -738,6 +738,9 @@ accumulator 时刻；数据计算、异步 store 和未退役输出分开计数�
 接收 Task 的时间；未参与流水线的 warp 为零。检查器要求所有参与 warp 的记录
 完整且有序。报告把 A 时钟上的 publication→admission-ack 往返时长，与 E 时钟上
 admission→warp 接收的时长相加，得到保守上界，避免跨 GPU 时间戳直接相减。
+检查器按 executor 实际启动的 CTA 数建立完整 cluster 清单，拒绝越界 CTA 或
+不完整的 trace CTA 维度；`clusters_without_any_tile` 保留完全空闲的 cluster，
+逐次到达的 `clusters_without_decode_work` 也包含它们。
 结果只覆盖实际收到 D 工作的 cluster，并列出未覆盖者；含返回确认和轮询开销，
 仍不能当作所有 cluster 的普遍传播上界或“至多一个 tile”的完整证明。
 trace 会扰动时序，不应拿启用 trace 的延迟当作正常服务性能。
