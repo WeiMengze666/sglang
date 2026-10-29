@@ -658,7 +658,8 @@ class IntegrationTests(unittest.TestCase):
             def __init__(self, *args, **kwargs):
                 self.output_format = kwargs["output_format"]
 
-            def __call__(self, hidden, logits):
+            def __call__(self, hidden, logits, **kwargs):
+                self.routing_kwargs = kwargs
                 return types.SimpleNamespace(topk_ids="ids", topk_weights="weights")
 
             def empty_topk_output(self, device):
@@ -732,7 +733,13 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(block.get_moe_weights(), [])
             self.assertEqual(block.topk.output_format, "standard")
             hidden = Tensor()
-            result = block.forward(hidden, types.SimpleNamespace(forward_mode="extend"))
+            result = block.forward(
+                hidden,
+                types.SimpleNamespace(
+                    forward_mode="extend", moe_num_token_non_padded=lambda: 1
+                ),
+            )
+            self.assertEqual(block.topk.routing_kwargs, {"num_token_non_padded": 1})
             self.assertIs(result, output)
             self.assertEqual(calls, ["gate", (3, hidden, "ids", "weights")])
             empty = Tensor(0)
