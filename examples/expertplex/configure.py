@@ -16,6 +16,8 @@ def main():
     parser.add_argument("--prefill", type=int, default=1)
     parser.add_argument("--decode", type=int, default=3)
     parser.add_argument("--experts", type=int, default=4)
+    parser.add_argument("--prefill-tp-size", type=int, default=1)
+    parser.add_argument("--decode-tp-size", type=int, default=1)
     parser.add_argument("--max-prefill-tokens", type=int, default=2048)
     parser.add_argument(
         "--prefill-mailbox-tokens",
@@ -45,23 +47,13 @@ def main():
         help="Explicit random weights for geometry/capacity testing only",
     )
     args = parser.parse_args()
-    if min(args.prefill, args.decode, args.experts) < 1:
-        parser.error("Each role needs at least one GPU")
-    if args.prefill + args.decode + args.experts > 8:
-        parser.error("prefill + decode + experts must not exceed 8")
-    attention = args.prefill + args.decode
-    node = config.NodeConfig(
+    node = config.default_config(
         model_path=str(Path(args.model_path).expanduser().resolve()),
-        clients=tuple(
-            config.ClientConfig(
-                id=i,
-                phase="prefill" if i < args.prefill else "decode",
-                device=i,
-                port=30000 + i,
-            )
-            for i in range(attention)
-        ),
-        expert_devices=tuple(range(attention, attention + args.experts)),
+        prefill_count=args.prefill,
+        decode_count=args.decode,
+        expert_count=args.experts,
+        prefill_tp_size=args.prefill_tp_size,
+        decode_tp_size=args.decode_tp_size,
         max_prefill_tokens=args.max_prefill_tokens,
         prefill_mailbox_tokens=args.prefill_mailbox_tokens,
         max_decode_tokens=args.max_decode_tokens,
@@ -98,7 +90,7 @@ def main():
             "expert_mailboxes_gib_per_gpu": buffers / 2**30,
             "attention_weights_gib_per_gpu": spec.attention_weight_bytes / 2**30,
             "kv_bytes_per_token": spec.kv_bytes_per_token,
-            "note": "Weight/mailbox estimate; KV pool, CUDA context and scratch are additional.",
+            "note": "Weight/mailbox estimate; attention weights and KV bytes are conservative TP1 upper bounds per GPU. KV pool, CUDA context and scratch are additional.",
         }
         if (
             memory["expert_weights_gib_per_gpu"]

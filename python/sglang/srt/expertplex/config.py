@@ -47,17 +47,19 @@ def normalize_model_config(data: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class ClientConfig:
-    """One independent SGLang attention process; its ID is its mailbox slot."""
+    """One native attention TP group; rank zero owns its transport mailbox."""
 
     id: int
     phase: str
     device: int
     port: int
+    tp_size: int = 1
 
     def __post_init__(self) -> None:
         _positive_integer("client id", self.id, allow_zero=True)
         _positive_integer("client device", self.device, allow_zero=True)
         _positive_integer("client port", self.port)
+        _positive_integer("client tp_size", self.tp_size)
         if self.port > 65535:
             raise ValueError("client port must be at most 65535")
         if self.phase not in ("prefill", "decode"):
@@ -252,7 +254,11 @@ class NodeConfig:
             )
         if {client.phase for client in self.clients} != {"prefill", "decode"}:
             raise ValueError("at least one prefill and one decode client are required")
-        devices = [client.device for client in self.clients] + list(self.expert_devices)
+        devices = [
+            device
+            for client in self.clients
+            for device in range(client.device, client.device + client.tp_size)
+        ] + list(self.expert_devices)
         for device in devices:
             _positive_integer("device", device, allow_zero=True)
         if len(set(devices)) != len(devices) or any(
@@ -312,6 +318,16 @@ class NodeConfig:
                 "the number of expert ranks must divide the model expert count"
             )
 
+        if model_spec is not None:
+            for client in self.clients:
+                if model_spec.num_attention_heads % client.tp_size:
+                    raise ValueError("attention TP width must divide query head count")
+                kv_heads = model_spec.num_key_value_heads
+                if kv_heads % client.tp_size and client.tp_size % kv_heads:
+                    raise ValueError(
+                        "attention TP and KV head counts must divide one another"
+                    )
+
     def client(self, client_id: int) -> ClientConfig:
         for client in self.clients:
             if client.id == client_id:
@@ -364,6 +380,8 @@ def default_config(
     prefill_count: int = 1,
     decode_count: int = 3,
     expert_count: int = 4,
+    prefill_tp_size: int = 1,
+    decode_tp_size: int = 1,
     **overrides: Any,
 ) -> NodeConfig:
     """Create a contiguous placement (the default is the paper's 1P3D4E)."""
@@ -371,20 +389,30 @@ def default_config(
         ("prefill_count", prefill_count),
         ("decode_count", decode_count),
         ("expert_count", expert_count),
+        ("prefill_tp_size", prefill_tp_size),
+        ("decode_tp_size", decode_tp_size),
     ):
         _positive_integer(name, count)
     attention_count = prefill_count + decode_count
-    if attention_count + expert_count > 8:
-        raise ValueError(
-            "prefill_count + decode_count + expert_count must not exceed 8"
-        )
+    attention_gpus = prefill_count * prefill_tp_size + decode_count * decode_tp_size
+    if attention_gpus + expert_count > 8:
+        raise ValueError("attention TP groups plus expert_count must not exceed 8 GPUs")
     values: dict[str, Any] = {
         "model_path": model_path,
         "clients": tuple(
-            ClientConfig(i, "prefill" if i < prefill_count else "decode", i, 30000 + i)
+            ClientConfig(
+                i,
+                "prefill" if i < prefill_count else "decode",
+                i * prefill_tp_size
+                if i < prefill_count
+                else prefill_count * prefill_tp_size
+                + (i - prefill_count) * decode_tp_size,
+                30000 + i,
+                prefill_tp_size if i < prefill_count else decode_tp_size,
+            )
             for i in range(attention_count)
         ),
-        "expert_devices": tuple(range(attention_count, attention_count + expert_count)),
+        "expert_devices": tuple(range(attention_gpus, attention_gpus + expert_count)),
     }
     values.update(overrides)
     return NodeConfig(**values)

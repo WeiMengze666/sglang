@@ -80,6 +80,62 @@ def profiles_dict(model):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_attention_tp_placement_reserves_every_rank(self):
+        node = config.default_config(
+            "/model",
+            prefill_count=1,
+            decode_count=1,
+            expert_count=4,
+            prefill_tp_size=2,
+            decode_tp_size=2,
+        )
+        self.assertEqual(
+            [(c.id, c.device, c.tp_size) for c in node.clients], [(0, 0, 2), (1, 2, 2)]
+        )
+        self.assertEqual(node.expert_devices, (4, 5, 6, 7))
+        self.assertEqual(config.NodeConfig.from_dict(node.to_dict()), node)
+        self.assertEqual(node.slot_count, 2)
+        mixed = config.default_config(
+            "/model",
+            prefill_count=1,
+            decode_count=2,
+            expert_count=4,
+            prefill_tp_size=2,
+        )
+        self.assertEqual([c.device for c in mixed.clients], [0, 2, 3])
+        data = node.to_dict()
+        data["clients"][1]["device"] = 1
+        with self.assertRaises(ValueError):
+            config.NodeConfig.from_dict(data)
+        for width in (0, True, 3):
+            with self.assertRaises(ValueError):
+                config.default_config("/model", prefill_tp_size=width)
+
+    def test_attention_tp_model_query_and_kv_head_contracts(self):
+        node = config.default_config(
+            "/model",
+            prefill_count=1,
+            decode_count=1,
+            expert_count=4,
+            prefill_tp_size=2,
+            decode_tp_size=2,
+        )
+        base = model_config(coder=True)
+        for kv in (1, 2, 8):
+            node.validate(
+                config.ModelSpec.from_dict(base | {"num_key_value_heads": kv})
+            )
+        for key, value, error in (
+            ("num_attention_heads", 95, "query head"),
+            ("num_key_value_heads", 3, "KV head"),
+        ):
+            with self.assertRaisesRegex(ValueError, error):
+                node.validate(
+                    config.ModelSpec.from_dict(
+                        base | {"num_key_value_heads": 1} | {key: value}
+                    )
+                )
+
     def test_compact_prefill_capacity_preserves_batch_and_decode_bounds(self):
         node = config.default_config(
             "/models/coder",

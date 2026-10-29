@@ -3,6 +3,7 @@
 import importlib
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import types
@@ -37,6 +38,33 @@ def processor_class():
 
 @unittest.skipUnless(AVAILABLE, "Requires CPU torch, dill and orjson")
 class IncrementalTensorTests(unittest.TestCase):
+    def test_tp_follower_capture_observes_without_creating_a_client(self):
+        import torch
+
+        fake_modules = {
+            "sglang.srt.batch_overlap.two_batch_overlap": types.SimpleNamespace(
+                TboCudaGraphRunnerPlugin=types.SimpleNamespace(last_debug_replay=None)
+            ),
+            "sglang.srt.expertplex.integration": types.SimpleNamespace(
+                expertplex_enabled=lambda: True
+            ),
+            "sglang.srt.runtime_context": types.SimpleNamespace(
+                get_resources=lambda: types.SimpleNamespace(buffers={})
+            ),
+            "sglang.srt.expertplex.client": types.SimpleNamespace(),
+        }
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch.dict(sys.modules, fake_modules),
+            patch.dict(os.environ, {"SGLANG_TBO_DEBUG": "1"}),
+            processor_class() as processor,
+        ):
+            params = self.params(Path(temp))
+            processor(torch.tensor([[3.0, 1.0, 2.0]]), [params])
+            record = json.loads(next(Path(temp).glob("*.json")).read_text())
+            self.assertNotIn("mailbox_timings", record["tbo_debug"])
+            self.assertIn("capture_ns", record["tbo_debug"])
+
     def params(self, directory):
         return {
             "__req__": types.SimpleNamespace(

@@ -123,7 +123,7 @@ def commands(node, args):
             "--load-format",
             "dummy" if node.weight_mode == "synthetic" else "safetensors",
             "--tp-size",
-            "1",
+            str(client.tp_size),
             "--ep-size",
             "1",
             "--pp-size",

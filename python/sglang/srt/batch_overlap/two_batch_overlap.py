@@ -725,10 +725,7 @@ class TboForwardBatchPreparer:
                 batch.kv_loc_cols, slice(start_token_index, end_token_index)
             )
 
-        attention_tp_size = get_parallel().attn_tp_size
-        _tbo_padded_len = (
-            (end_token_index - start_token_index - 1) // attention_tp_size + 1
-        ) * attention_tp_size
+        _tbo_padded_len = _tbo_padded_token_count(end_token_index - start_token_index)
         output_dict["tbo_padded_len"] = _tbo_padded_len
 
         for key in [
@@ -942,6 +939,18 @@ class TboForwardBatchPreparer:
             extend_seq_lens=batch.extend_seq_lens_cpu,
             token_num_per_seq=token_num_per_seq,
         )
+
+
+def _tbo_padded_token_count(num_tokens: int) -> int:
+    from sglang.srt.expertplex.integration import expertplex_enabled
+
+    # Remote MoE keeps attention rows replicated across its TP group; only the
+    # leader dispatches and followers contribute zeros. Unlike native DeepEP,
+    # no child rows are split over TP. Padding just the compute tensors would
+    # disagree with the real KV locations and attention metadata. ExpertPlex
+    # rejects sequence-parallel FFN/attention-DP/CP configurations at startup.
+    alignment = 1 if expertplex_enabled() else get_parallel().attn_tp_size
+    return (num_tokens + alignment - 1) // alignment * alignment
 
 
 def _compute_extend_num_tokens(input_ids, forward_mode: ForwardMode):

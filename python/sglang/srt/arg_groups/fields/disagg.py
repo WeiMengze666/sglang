@@ -44,11 +44,17 @@ class Disagg(msgspec.Struct):
         "HTTP address of the independently started ExpertPlex MoE server.",
     ] = None
     expertplex_prefill_count: A[
-        int, "Number of reserved prefill attention GPUs (expert role)."
+        int, "Number of independent prefill attention servers (expert role)."
     ] = 1
     expertplex_decode_count: A[
-        int, "Number of reserved decode attention GPUs (expert role)."
+        int, "Number of independent decode attention servers (expert role)."
     ] = 3
+    expertplex_prefill_tp_size: A[
+        Optional[int], "GPUs per prefill attention TP group (expert role; default 1)."
+    ] = None
+    expertplex_decode_tp_size: A[
+        Optional[int], "GPUs per decode attention TP group (expert role; default 1)."
+    ] = None
     expertplex_expert_count: A[
         int, "Number of GPUs in the shared expert pool (expert role)."
     ] = 4

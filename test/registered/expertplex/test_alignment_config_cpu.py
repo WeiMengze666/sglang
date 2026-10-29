@@ -16,6 +16,16 @@ validate = alignment.validate_reference
 
 
 class AlignmentConfigurationTests(unittest.TestCase):
+    def test_attention_tp_reference_width_and_physical_layout_match(self):
+        self.assertEqual(alignment.attention_tp_layout(4, 1), (4, 3))
+        self.assertEqual(alignment.attention_tp_layout(4, 2), (2, 1))
+        for experts, tp in ((4, 0), (4, True), (4, 3), (4, 4), (6, 2)):
+            with self.assertRaises(ValueError):
+                alignment.attention_tp_layout(experts, tp)
+        (self.root / "report.json").write_text(json.dumps(self.report))
+        with self.assertRaisesRegex(ValueError, "attention TP width differs"):
+            validate(self.root, self.model, False, attention_tp_size=2)
+
     def test_warmup_is_separate_and_cannot_weaken_real_capture(self):
         command = [
             "python",

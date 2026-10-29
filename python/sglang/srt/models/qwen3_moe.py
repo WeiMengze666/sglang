@@ -937,7 +937,20 @@ class Qwen3MoeDecoderLayer(nn.Module):
 
         hidden_states = self.mlp(hidden_states, forward_batch)
         hidden_states = self.ffn_boundary.finish(hidden_states, forward_batch)
+        hidden_states = self._finish_remote_tp_residual(hidden_states, forward_batch)
 
+        return hidden_states
+
+    def _finish_remote_tp_residual(self, hidden_states, forward_batch):
+        # Native DeepEP writes the terminal FFN output into its BF16 residual
+        # before gathering attention-TP slices for the final norm. Remote MoE
+        # has replicated rows, but must retain that arithmetic boundary.
+        if (
+            self.mlp._expertplex
+            and self.ffn_boundary.plan.terminal
+            and get_parallel().attn_tp_size > 1
+        ):
+            return residual_batch.fold(hidden_states, forward_batch)
         return hidden_states
 
     def op_comm_prepare_attn(
@@ -971,6 +984,7 @@ class Qwen3MoeDecoderLayer(nn.Module):
         hidden_states = self.ffn_boundary.complete_now(
             state.pop("hidden_states_mlp_output"), state.forward_batch
         )
+        hidden_states = self._finish_remote_tp_residual(hidden_states, state.forward_batch)
 
         output = dict(
             positions=state.positions,

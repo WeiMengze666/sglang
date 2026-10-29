@@ -18,7 +18,7 @@ COMM stream 协议。功能、有限轨迹数值检查和性能验收需分别�
 - 论文：[ExpertPlex, arXiv:2607.18002v2](https://arxiv.org/html/2607.18002v2)
 - 平台：Linux，单节点 8 张 NVIDIA B300 / SM103，完整 NVLink peer access 和 peer atomics
 - 权重：本地、不可变、未量化的 Qwen3 MoE BF16 checkpoint
-- attention 进程：每进程 TP=EP=PP=DP=1，独占一张 GPU
+- attention 服务：默认每组 TP=1、EP=PP=DP=1；可用原生 TP 扩展一组 attention，组内连续放置
 - expert 进程：每张 E 卡一个长期运行的 CUDA executor，P/D 共享一份专家权重
 
 论文原实验使用 H800/SM90 与 FP8；本适配使用 B300/SM103 的 BF16 TMA/TCGEN05。
@@ -186,8 +186,9 @@ export SGLANG_MOONCAKE_CUSTOM_MEM_POOL=INTRA_NODE_NVLINK
 export MC_INTRANODE_NVLINK=true
 ```
 
-MoE 服务：三个 count 分别是 P GPU 数、D GPU 数、E GPU 数；默认是 1/3/4。
-默认按 P→D→E 连续放置，合计可以小于八卡。这里 E ranks 使用 GPU 4–7。
+MoE 服务：三个 count 分别是 P attention 组数、D attention 组数、E GPU 数；默认是 1/3/4。
+attention 默认 TP=1，所以默认组数等于 GPU 数。按 P→D→E 连续放置，合计可以小于八卡。
+这里 E ranks 使用 GPU 4–7。
 
 ```bash
 python -m sglang.launch_server --model-path "$MODEL" --dtype bfloat16 \
@@ -262,7 +263,34 @@ KV pool 默认沿用 SGLang 显存 profiling；以上命令不限制总 KV token
 仅用于显式的控制实验。原生 scheduler overlap、decode CUDA Graph、FlashInfer
 attention/sampling/autotune 和 Mooncake KV 移交继续使用。缓存行为遵循原生 PD 默认值
 （例如 decode radix cache 默认关闭），可以在已支持的原生选项范围内调整。
-`torch.compile`、SBO、attention TP>1 等尚未适配的组合仍会明确拒绝。
+`torch.compile`、SBO 等尚未通过对应验收的组合仍会明确拒绝。
+
+### Attention TP 组
+
+默认 1P+3D+4E 使用四个 TP1 attention 组。若要使用 TP2，可在上面的独立服务命令中
+进行以下调整，得到 **1P(TP2)+1D(TP2)+4E**，仍占八张卡：
+
+- E：改为 `--expertplex-prefill-count 1 --expertplex-decode-count 1`，保留
+  `--expertplex-expert-count 4`，增加 `--expertplex-prefill-tp-size 2 --expertplex-decode-tp-size 2`。
+- P：增加 `--tp-size 2`，保留 `--base-gpu-id 0`，占 GPU 0–1。
+- D：只启动一个服务，增加 `--tp-size 2`，改为 `--base-gpu-id 2`，占 GPU 2–3。
+  HTTP/NCCL/bootstrap 端口仍各自独立；router 只登记这一个 D 的 HTTP 地址。
+
+E 位于 GPU 4–7。物理 GPU 数为 `P_count*P_tp + D_count*D_tp + E_count`，不得超过八卡。
+P/D 的 `--tp-size` 必须匹配 bootstrap 中的组宽；每组只有 TP rank 0 持有远端 mailbox，
+followers 通过原生 MoE 输出归约接收结果。终层保留原生 BF16 residual 写回边界，TBO
+子批次使用实际 token 行数，与 KV 位置一致；原生 attention、归约和 KV store 路径继续使用。
+
+文件式配置使用每个 `clients` 项的 `tp_size`；不要同时给 E 的 `--expertplex-config`
+和两个 `--expertplex-*-tp-size` 参数。`configure.py` 对应参数是
+`--prefill-tp-size` / `--decode-tp-size`。EP/PP/DP、attention-DP、CP 仍为 1；
+sequence-parallel FFN 的 token 分片组合尚不支持。不同组的 GPU 区间不得重叠。
+
+TP2 已在确定性模式下检查小模型 512 个位置和 Coder BF16 256 个位置的逐 token
+全词表对齐，覆盖无 TBO 的 P breakable graph，以及 P eager / D full graph 的 TBO
+路径；每个位置保留两个 TP rank 的相同采样分布，并要求实际批处理和非空 TBO 重放。
+这些有限轨迹不证明其他 TP 宽度、编译模式、模型质量或 goodput。默认三路 D 的
+并发验收与 TP2 单路 D 的检查是不同部署，不能互相替代。
 
 不使用 TBO 时，P 服务可复用原生 breakable prefill CUDA Graph：从 MoE、P、D
 命令中都移除 `--enable-two-batch-overlap`，只给 P 设置

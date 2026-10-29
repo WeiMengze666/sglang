@@ -30,9 +30,20 @@ class ExpertPlexCombineInput:
         return CombineInputFormat.EXPERTPLEX
 
 
+@dataclass
+class FollowerContribution:
+    """Zero partial result; native MOE_OUTPUT reduction supplies the leader sum."""
+
+    output: Any
+    finished: bool = False
+
+
 class ExpertPlexDispatcher(BaseDispatcher):
     def __init__(self, layer_id: int):
         super().__init__()
+        from sglang.srt.runtime_context import get_parallel
+
+        self._transport_owner = get_parallel().tp_rank == 0
         self.layer_id = layer_id
         self._dispatching = {}
         self._combining = {}
@@ -44,6 +55,14 @@ class ExpertPlexDispatcher(BaseDispatcher):
 
         if not TopKOutputChecker.format_is_standard(topk_output):
             raise ValueError("ExpertPlex requires standard TopK IDs and weights")
+        if not self._transport_owner:
+            import torch
+
+            # The native FFN boundary still owes MOE_OUTPUT's TP sum. Return
+            # one complete routed contribution on rank zero, zero on followers;
+            # never publish or acquire the owner's exclusive mailbox lease here.
+            pending = FollowerContribution(torch.zeros_like(hidden_states))
+            return ExpertPlexDispatchOutput(hidden_states, pending)
         pending = get_client().begin(
             self.layer_id,
             hidden_states,
@@ -56,7 +75,15 @@ class ExpertPlexDispatcher(BaseDispatcher):
     def combine(self, combine_input):
         from sglang.srt.expertplex.client import get_client
 
-        return get_client().finish(combine_input.pending)
+        pending = combine_input.pending
+        if isinstance(pending, FollowerContribution):
+            if self._transport_owner or pending.finished:
+                raise RuntimeError("Invalid or already consumed follower contribution")
+            pending.finished = True
+            return pending.output
+        if not self._transport_owner:
+            raise RuntimeError("Only the TP leader can consume a remote result")
+        return get_client().finish(pending)
 
     def dispatch_a(self, hidden_states, topk_output, tbo_subbatch_index=None):
         slot = tbo_subbatch_index or 0

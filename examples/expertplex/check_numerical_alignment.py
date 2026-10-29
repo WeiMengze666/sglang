@@ -96,6 +96,18 @@ def validate_native_capture_routing(reference, rank, expert_count):
             raise ValueError("Native reference capture routing differs")
 
 
+def attention_tp_layout(expert_count, attention_tp_size):
+    """Keep native attention arithmetic and physical ExpertPlex placement matched."""
+    if type(attention_tp_size) is not int or attention_tp_size < 1:
+        raise ValueError("Attention TP width must be a positive integer")
+    if expert_count % attention_tp_size:
+        raise ValueError("Matched native TP width must divide the expert rank count")
+    decode_count = (8 - expert_count - attention_tp_size) // attention_tp_size
+    if decode_count < 1:
+        raise ValueError("Need physical GPUs for both P and D attention TP groups")
+    return expert_count // attention_tp_size, decode_count
+
+
 def validate_reference(
     reference,
     model_path,
@@ -108,6 +120,7 @@ def validate_reference(
     batched_request=False,
     prefill_graph_backend="disabled",
     prefill_graph_max_tokens=None,
+    attention_tp_size=1,
 ):
     """Reject incomparable references before allocating GPU memory."""
     if not (reference / "scores.json").is_file():
@@ -115,6 +128,8 @@ def validate_reference(
     report = json.loads((reference / "report.json").read_text())
     if report.get("variant") != "native" or report.get("status") != "passed":
         raise ValueError("Reference must be a successful native diagnostic")
+    if report.get("attention_tp_size", 1) != attention_tp_size:
+        raise ValueError("Reference attention TP width differs")
     if report.get("deterministic_inference", False) != deterministic:
         raise ValueError("Reference deterministic inference mode differs")
     if report.get("prefill_graph_backend", "disabled") != prefill_graph_backend:
@@ -266,6 +281,7 @@ def main():
         help="Require this many completed nonempty two-child replays on all E ranks; diagnostic only",
     )
     p.add_argument("--expert-count", type=int, choices=range(1, 7), default=4)
+    p.add_argument("--attention-tp-size", type=int, default=1)
     p.add_argument(
         "--native-dp-rank",
         type=int,
@@ -298,12 +314,18 @@ def main():
         help="Explicit repeated boundary-test pattern for tokenizer-free debug checkpoints; requires --prompt-lengths",
     )
     a = p.parse_args()
+    try:
+        native_dp_size, decode_count = attention_tp_layout(
+            a.expert_count, a.attention_tp_size
+        )
+    except ValueError as exc:
+        p.error(str(exc))
     if a.variant != "native" and a.native_dp_rank is not None:
         p.error("--native-dp-rank applies only to the native reference or repeat")
     if a.variant == "native":
         try:
             validate_native_capture_routing(
-                a.reference, a.native_dp_rank, a.expert_count
+                a.reference, a.native_dp_rank, native_dp_size
             )
         except (ValueError, OSError) as exc:
             p.error(str(exc))
@@ -354,6 +376,7 @@ def main():
                 a.batched_request,
                 a.prefill_graph_backend,
                 a.max_prefill_tokens if a.prefill_graph_backend != "disabled" else None,
+                a.attention_tp_size,
             )
             validate_workload(
                 json.loads((a.reference / "histories.json").read_text()),
@@ -435,6 +458,7 @@ def main():
         "torch_compile_enabled": a.enable_torch_compile,
         "deterministic_inference": a.enable_deterministic_inference,
         "expert_count": a.expert_count,
+        "attention_tp_size": a.attention_tp_size,
         "native_dp_rank": a.native_dp_rank,
         "steps": a.steps,
         "max_prefill_tokens": a.max_prefill_tokens,
@@ -550,7 +574,7 @@ def main():
                     "--ep-size",
                     str(a.expert_count),
                     "--attn-dp-size",
-                    str(a.expert_count),
+                    str(native_dp_size),
                     "--enable-dp-lm-head",
                     "--init-expert-location",
                     str(path),
@@ -597,7 +621,11 @@ def main():
                     "--expertplex-prefill-count",
                     "1",
                     "--expertplex-decode-count",
-                    str(7 - a.expert_count),
+                    str(decode_count),
+                    "--expertplex-prefill-tp-size",
+                    str(a.attention_tp_size),
+                    "--expertplex-decode-tp-size",
+                    str(a.attention_tp_size),
                     "--expertplex-expert-count",
                     str(a.expert_count),
                     "--host",
@@ -614,8 +642,11 @@ def main():
                 ],
                 a.port_base + 200,
             )
-            for device, phase in [(0, "prefill"), (1, "decode")]:
+            for index, phase in enumerate(("prefill", "decode")):
+                device = index * a.attention_tp_size
                 command = prefix + [
+                    "--tp-size",
+                    str(a.attention_tp_size),
                     "--enable-expertplex",
                     "--expertplex-bootstrap-addr",
                     f"http://127.0.0.1:{a.port_base + 200}",
@@ -624,11 +655,11 @@ def main():
                     "--base-gpu-id",
                     str(device),
                     "--port",
-                    str(a.port_base + device),
+                    str(a.port_base + index),
                     "--nccl-port",
-                    str(a.port_base + 1000 + device),
+                    str(a.port_base + 1000 + index),
                     "--disaggregation-bootstrap-port",
-                    str(a.port_base + 2000 + device),
+                    str(a.port_base + 2000 + index),
                     "--chunked-prefill-size",
                     "-1" if phase == "prefill" else "16",
                 ]
@@ -646,7 +677,7 @@ def main():
                     command[command.index("--cuda-graph-backend-prefill") + 1] = (
                         "disabled"
                     )
-                start(phase, command, a.port_base + device)
+                start(phase, command, a.port_base + index)
             histories = a.reference / "histories.json"
             url = f"http://127.0.0.1:{a.port_base + 1}"
             direct = [

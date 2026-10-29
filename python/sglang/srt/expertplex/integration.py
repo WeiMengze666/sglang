@@ -83,6 +83,13 @@ def expert_node_config(cfg):
         if getattr(cfg, "expertplex_" + name, None) is not None
     }
     if cfg.expertplex_config:
+        if any(
+            getattr(cfg, "expertplex_" + phase + "_tp_size", None) is not None
+            for phase in ("prefill", "decode")
+        ):
+            raise ValueError(
+                "Set client tp_size inside the topology JSON when using --expertplex-config"
+            )
         node = load_config(cfg.expertplex_config)
         return replace(node, **policy)
     return default_config(
@@ -90,6 +97,16 @@ def expert_node_config(cfg):
         prefill_count=getattr(cfg, "expertplex_prefill_count", 1),
         decode_count=getattr(cfg, "expertplex_decode_count", 3),
         expert_count=getattr(cfg, "expertplex_expert_count", 4),
+        prefill_tp_size=(
+            1
+            if getattr(cfg, "expertplex_prefill_tp_size", None) is None
+            else cfg.expertplex_prefill_tp_size
+        ),
+        decode_tp_size=(
+            1
+            if getattr(cfg, "expertplex_decode_tp_size", None) is None
+            else cfg.expertplex_decode_tp_size
+        ),
         max_prefill_tokens=cfg.max_prefill_tokens or 24576,
         max_decode_tokens=cfg.max_running_requests or 256,
         startup_timeout_s=getattr(cfg, "expertplex_startup_timeout", 600.0),
@@ -167,19 +184,29 @@ def validate_server_args(cfg: Any) -> None:
             "unset SGLANG_EXPERTPLEX_CONFIG/SGLANG_EXPERTPLEX_CLIENT_ID and use "
             "--enable-expertplex --expertplex-config --expertplex-client-id"
         )
+    topology_options = ("expertplex_prefill_tp_size", "expertplex_decode_tp_size")
     if not expertplex_enabled(cfg):
         if (
             getattr(cfg, "expertplex_config", None) is not None
             or getattr(cfg, "expertplex_bootstrap_addr", None) is not None
             or getattr(cfg, "expertplex_client_id", None) is not None
             or getattr(cfg, "expertplex_role", "attention") != "attention"
-            or any(getattr(cfg, name, None) is not None for name in policy_options)
+            or any(
+                getattr(cfg, name, None) is not None
+                for name in policy_options + topology_options
+            )
         ):
             raise ValueError("ExpertPlex options require --enable-expertplex")
         return
     role = getattr(cfg, "expertplex_role", "attention")
     if role not in ("attention", "expert"):
         raise ValueError("--expertplex-role must be attention or expert")
+    if role != "expert" and any(
+        getattr(cfg, name, None) is not None for name in topology_options
+    ):
+        raise ValueError(
+            "Attention TP pool sizes belong to the expert role; use --tp-size on attention servers"
+        )
     if role != "expert" and any(
         getattr(cfg, name, None) is not None for name in policy_options
     ):
@@ -254,8 +281,17 @@ def validate_server_args(cfg: Any) -> None:
         )
     config, client = attention_config(cfg)
     errors = []
+    if getattr(cfg, "tp_size", 1) != client.tp_size:
+        errors.append(
+            f"--tp-size must match attention client TP width {client.tp_size}"
+        )
+    if getattr(cfg, "gpu_id_step", 1) != 1:
+        errors.append("--gpu-id-step must be 1 for contiguous attention TP groups")
+    if client.tp_size > 1 and getattr(cfg, "enable_layernorm_sp", False):
+        errors.append(
+            "sequence-parallel FFN rows require an explicit ExpertPlex gather contract"
+        )
     for name in (
-        "tp_size",
         "pp_size",
         "ep_size",
         "dp_size",

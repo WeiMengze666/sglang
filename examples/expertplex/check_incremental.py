@@ -50,18 +50,21 @@ def make_processor():
                     "replay": TboCudaGraphRunnerPlugin.last_debug_replay,
                 }
                 if expertplex_enabled():
-                    from sglang.srt.expertplex.client import get_client
+                    from sglang.srt.runtime_context import get_resources
 
-                    client = get_client()
-                    tbo_debug["phase"] = client.client.phase
-                    tbo_debug["client_id"] = client.client.id
-                    tbo_debug["mailbox_timings"] = [
-                        [
-                            client.native.read_timing(peer).cpu().tolist()
-                            for peer in peers
+                    # Sampling runs on every TP rank. Only observe an existing
+                    # transport: a follower must never acquire the leader lease.
+                    client = get_resources().buffers.get("expertplex_client")
+                    if client is not None:
+                        tbo_debug["phase"] = client.client.phase
+                        tbo_debug["client_id"] = client.client.id
+                        tbo_debug["mailbox_timings"] = [
+                            [
+                                client.native.read_timing(peer).cpu().tolist()
+                                for peer in peers
+                            ]
+                            for peers in client.mailboxes
                         ]
-                        for peers in client.mailboxes
-                    ]
             for row, params in enumerate(custom_param_list):
                 req = params["__req__"]
                 if req.retraction_count:

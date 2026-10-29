@@ -37,6 +37,10 @@ class DispatcherTests(unittest.TestCase):
         sys.modules["sglang.srt.layers.moe.topk"] = types.SimpleNamespace(
             TopKOutputChecker=checker
         )
+        self.parallel = types.SimpleNamespace(tp_rank=0, tp_size=1)
+        sys.modules["sglang.srt.runtime_context"] = types.SimpleNamespace(
+            get_parallel=lambda: self.parallel
+        )
         self.dispatch = load(
             "sglang.srt.layers.moe.token_dispatcher.expertplex",
             ROOT / "layers/moe/token_dispatcher/expertplex.py",
@@ -66,6 +70,49 @@ class DispatcherTests(unittest.TestCase):
             format="standard", topk_ids=None, topk_weights=None
         )
         self.base = base
+
+    def test_tp_follower_never_acquires_remote_client_and_returns_zero_partial(self):
+        self.parallel.tp_rank = 1
+        self.parallel.tp_size = 2
+        with patch.object(
+            sys.modules["sglang.srt.expertplex.client"],
+            "get_client",
+            side_effect=AssertionError("Follower touched transport"),
+        ):
+            dispatcher = self.dispatch.ExpertPlexDispatcher(layer_id=3)
+            hidden = torch.randn(5, 8)
+            pending = dispatcher.dispatch(hidden, self.topk).pending
+            output = dispatcher.combine(self.dispatch.ExpertPlexCombineInput(pending))
+            self.assertTrue(torch.equal(output, torch.zeros_like(hidden)))
+            self.assertEqual(output.dtype, hidden.dtype)
+            with self.assertRaisesRegex(RuntimeError, "consumed"):
+                dispatcher.combine(self.dispatch.ExpertPlexCombineInput(pending))
+
+    def test_tp_follower_tbo_preserves_distinct_pending_identity(self):
+        self.parallel.tp_rank = 1
+        self.parallel.tp_size = 2
+        with patch.object(
+            sys.modules["sglang.srt.expertplex.client"],
+            "get_client",
+            side_effect=AssertionError("Follower touched transport"),
+        ):
+            dispatcher = self.dispatch.ExpertPlexDispatcher(layer_id=3)
+            for slot, rows in ((0, 5), (1, 0)):
+                dispatcher.dispatch_a(torch.randn(rows, 8), self.topk, slot)
+            first = dispatcher.dispatch_b(0)
+            second = dispatcher.dispatch_b(1)
+            with self.assertRaisesRegex(RuntimeError, "own"):
+                dispatcher.combine_a(
+                    self.dispatch.ExpertPlexCombineInput(second.pending), 0
+                )
+            for slot, result in ((1, second), (0, first)):
+                dispatcher.combine_a(
+                    self.dispatch.ExpertPlexCombineInput(result.pending), slot
+                )
+                out = dispatcher.combine_b(slot)
+                self.assertEqual(out.shape, result.hidden_states.shape)
+                self.assertTrue(torch.equal(out, torch.zeros_like(out)))
+            self.assertEqual(dispatcher._active, {})
 
     def test_client_belongs_to_runtime_and_closes_once(self):
         sys.modules["sglang.srt.expertplex.config"] = types.SimpleNamespace(

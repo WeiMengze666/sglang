@@ -202,6 +202,58 @@ class IntegrationTests(unittest.TestCase):
         INTEGRATION.validate_attention_model(hf)
         self.assertEqual(INTEGRATION.attention_config()[1].phase, "decode")
 
+    def test_attention_tp_requires_matching_group_and_row_contract(self):
+        node = CONFIG.default_config(
+            str(self.model_path),
+            prefill_count=1,
+            decode_count=1,
+            expert_count=4,
+            prefill_tp_size=2,
+            decode_tp_size=2,
+        )
+        node.write_json(self.config_path)
+        INTEGRATION._load_attention_config.cache_clear()
+        INTEGRATION.validate_server_args(self.server_args(tp_size=2, base_gpu_id=2))
+        for fields, message in (
+            ({"tp_size": 1}, "--tp-size"),
+            ({"base_gpu_id": 3}, "base-gpu-id"),
+            ({"gpu_id_step": 2}, "--gpu-id-step"),
+            ({"enable_layernorm_sp": True}, "sequence-parallel"),
+        ):
+            with self.assertRaisesRegex(ValueError, message):
+                INTEGRATION.validate_server_args(
+                    self.server_args(**({"tp_size": 2, "base_gpu_id": 2} | fields))
+                )
+
+    def test_expert_pool_native_tp_options_are_not_silently_ignored(self):
+        args = self.server_args(
+            expertplex_role="expert",
+            expertplex_client_id=None,
+            expertplex_config=None,
+            disaggregation_mode="null",
+            expertplex_prefill_count=1,
+            expertplex_decode_count=1,
+            expertplex_expert_count=4,
+            expertplex_prefill_tp_size=2,
+            enable_two_batch_overlap=False,
+            expertplex_decode_tp_size=2,
+        )
+        INTEGRATION.validate_server_args(args)
+        node = INTEGRATION.expert_node_config(args)
+        self.assertEqual([c.tp_size for c in node.clients], [2, 2])
+        self.assertEqual(node.expert_devices, (4, 5, 6, 7))
+        args.expertplex_config = str(self.config_path)
+        with self.assertRaisesRegex(ValueError, "inside the topology JSON"):
+            INTEGRATION.validate_server_args(args)
+        for enabled in (False, True):
+            with self.assertRaises(ValueError):
+                INTEGRATION.validate_server_args(
+                    self.server_args(
+                        enable_expertplex=enabled,
+                        expertplex_prefill_tp_size=2,
+                    )
+                )
+
     def test_native_graph_backend_names_and_prefill_overlap_guard(self):
         for decode in ("disabled", "full", "breakable"):
             INTEGRATION.validate_server_args(

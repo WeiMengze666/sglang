@@ -3,7 +3,9 @@
 import importlib
 import io
 import json
+import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from dataclasses import replace
@@ -17,6 +19,39 @@ launch = importlib.import_module("launch")
 
 
 class LaunchPlanTests(unittest.TestCase):
+    def test_configure_cli_reserves_tp_groups(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "node.json"
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "examples/expertplex/configure.py"),
+                    "--model-path",
+                    str(Path(temp) / "absent-model"),
+                    "--output",
+                    str(target),
+                    "--rendezvous-dir",
+                    temp,
+                    "--prefill",
+                    "1",
+                    "--decode",
+                    "1",
+                    "--experts",
+                    "4",
+                    "--prefill-tp-size",
+                    "2",
+                    "--decode-tp-size",
+                    "2",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            node = launch.config.load_config(target)
+            self.assertEqual(
+                [(c.device, c.tp_size) for c in node.clients], [(0, 2), (2, 2)]
+            )
+            self.assertEqual(node.expert_devices, (4, 5, 6, 7))
+
     def test_prefill_graph_capacity_and_native_flag_names(self):
         for backend, limit in (
             ("disabled", 128),
@@ -86,17 +121,25 @@ class LaunchPlanTests(unittest.TestCase):
             host="127.0.0.1",
             port=31000,
         )
-        for prefill, decode, policy in [(3, 1, "round_robin"), (1, 3, "power_of_two")]:
+        for prefill, decode, policy, tp in [
+            (3, 1, "round_robin", 1),
+            (1, 3, "power_of_two", 1),
+            (1, 1, "round_robin", 2),
+        ]:
             node = launch.config.default_config(
                 "/checkpoint",
                 prefill_count=prefill,
                 decode_count=decode,
                 expert_count=4,
+                prefill_tp_size=tp,
+                decode_tp_size=tp,
                 overlap="tbo",
                 prefill_mailbox_tokens=1024,
             )
             _, servers, router = launch.commands(node, args)
             for _, command in servers:
+                self.assertEqual(command.count("--tp-size"), 1)
+                self.assertEqual(command[command.index("--tp-size") + 1], str(tp))
                 self.assertIn("--enable-expertplex", command)
                 self.assertIn("--expertplex-bootstrap-addr", command)
                 self.assertNotIn("--expertplex-config", command)
