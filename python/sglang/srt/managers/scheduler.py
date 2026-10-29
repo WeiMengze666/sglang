@@ -1910,6 +1910,9 @@ class Scheduler(
         return result_dict
 
     def release_host_resources(self) -> None:
+        from sglang.srt.expertplex.client import close_client
+
+        close_client()
         # Release pinned host buffers in userspace on graceful shutdown; see
         # HostKVCache.destroy. Called from run_scheduler_process's finally.
         if self.hisparse_coordinator is not None:

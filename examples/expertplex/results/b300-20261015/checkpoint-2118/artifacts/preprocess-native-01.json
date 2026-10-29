@@ -1,0 +1,86 @@
+{
+  "scope": "Validate persistent E-side scatter/gather against native BF16 DeepGEMM.\n\nTwo expert GPUs test modulo expert placement and the normal-mode per-rank BF16\nEP gather boundary. Dynamic routing, all/partial padding, mixed P/D mailboxes,\nfixed-address CUDA Graph replay, and every persistent operation are exercised.\nThis is operator validation, not full-model accuracy or serving performance.\n",
+  "started_at_utc": "2026-10-14T21:05:01.540622+00:00",
+  "settings": {
+    "hidden": 6144,
+    "intermediate": 2560,
+    "capacity": 512,
+    "experts": 4,
+    "world": 2,
+    "graph_replays": 20,
+    "output": "/home/alayadb/mengze/expertplex-b300/artifacts/preprocess-native-01.json"
+  },
+  "native_source_sha256": "bb2e44c28e50d2d52ed7574f550e9c63acd5ba4ea06eb12aff121f6aed349a3c",
+  "cases": [
+    {
+      "label": "eager-1",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "eager-31",
+      "phase": 0,
+      "max_absolute_error": 0.0,
+      "relative_l2_error": 0.0,
+      "passed": true,
+      "exact_fraction": 1.0
+    },
+    {
+      "label": "eager-128",
+      "phase": 0,
+      "max_absolute_error": 1.203125,
+      "relative_l2_error": 1.0,
+      "passed": false,
+      "exact_fraction": 0.14880497753620148
+    }
+  ],
+  "status": "failed",
+  "tolerances": {
+    "atol": 0.005,
+    "rtol": 0.02,
+    "relative_l2": 0.002
+  },
+  "executors": [
+    {
+      "trace_capacity_per_cta": 8192,
+      "backend": "sm100",
+      "benchmark_stage": 0,
+      "ctas": 148,
+      "cluster_size": 2,
+      "operation_templates": "gate_up,activation,down",
+      "loading_stages": 9,
+      "threads_per_cta": 256,
+      "registers_per_thread": 92,
+      "local_bytes_per_thread": 0,
+      "dynamic_shared_bytes_per_cta": 232448,
+      "static_shared_bytes_per_cta": 0,
+      "hidden": 6144,
+      "intermediate": 2560,
+      "prefill_tile_rows": 128,
+      "decode_tile_rows": 128
+    },
+    {
+      "trace_capacity_per_cta": 8192,
+      "backend": "sm100",
+      "benchmark_stage": 0,
+      "ctas": 148,
+      "cluster_size": 2,
+      "operation_templates": "gate_up,activation,down",
+      "loading_stages": 9,
+      "threads_per_cta": 256,
+      "registers_per_thread": 92,
+      "local_bytes_per_thread": 0,
+      "dynamic_shared_bytes_per_cta": 232448,
+      "static_shared_bytes_per_cta": 0,
+      "hidden": 6144,
+      "intermediate": 2560,
+      "prefill_tile_rows": 128,
+      "decode_tile_rows": 128
+    }
+  ],
+  "error": "AssertionError({'label': 'eager-128', 'phase': 0, 'max_absolute_error': 1.203125, 'relative_l2_error': 1.0, 'passed': False, 'exact_fraction': 0.14880497753620148})",
+  "finished_at_utc": "2026-10-14T21:05:48.210801+00:00"
+}

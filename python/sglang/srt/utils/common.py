@@ -4150,8 +4150,15 @@ def require_gathered_buffer():
 
 
 def require_mlp_sync():
-
-    return get_parallel().attn_dp_enabled or require_gathered_buffer()
+    # TBO also needs the local split/mode metadata prepared by the MLP-sync
+    # adapter. ExpertPlex has independent TP1 attention workers and no A2A
+    # backend, so neither of the distributed conditions implies this path.
+    # DP1 finalizes metadata locally without introducing a collective.
+    return (
+        get_parallel().attn_dp_enabled
+        or require_gathered_buffer()
+        or get_exec().overlap.enable_two_batch_overlap
+    )
 
 
 def get_cuda_graph_batch_size_alignment(

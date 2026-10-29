@@ -1,0 +1,26 @@
+{
+  "scope": "Synthetic full-geometry BF16 Coder-480B; incomplete LooGLE PDD sweep, not trained-model acceptance",
+  "status": "failed",
+  "failure": "CUDA OOM in DeepGEMM GateUp temporary allocation at 0.25 requests/s",
+  "failed_rate": 0.25,
+  "requested_temporary_gib": 1.09,
+  "available_mib": 969,
+  "prefill_kv_tokens_per_rank": 49152,
+  "decode_kv_tokens_per_rank": 49152,
+  "decode_aggregate_kv_tokens": 196608,
+  "sequence_cap": 24576,
+  "completed_points": [
+    {
+      "request_rate": 0.1,
+      "attempted_requests": 32,
+      "completed_requests": 32,
+      "joint_slo_met_requests": 30,
+      "joint_slo_attainment": 0.9375,
+      "observed_slo_goodput_rps": 0.11813402867430703,
+      "unscorable_one_token_responses": 0,
+      "meets_p90_joint_slo": true
+    }
+  ],
+  "source_file_sha256": "5c477cae9763e6f6f7e6a004247b8ae51963596729a190c4bacf09e185a59599",
+  "retry_change": "P-only KV=max(sequence_cap,max_prefill_tokens); disable P decode graphs; D capacity and common sample cap retained"
+}

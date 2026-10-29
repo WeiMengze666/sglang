@@ -1,0 +1,49 @@
+{
+  "label": "expertplex",
+  "model_path": "/home/alayadb/mengze/expertplex-b300/synthetic-480b",
+  "tokenizer_path": "/home/alayadb/mengze/expertplex-b300/coder-tokenizer-fixed",
+  "weight_mode": "synthetic",
+  "sequence_cap": 24576,
+  "dataset": "custom",
+  "dataset_path": "/home/alayadb/mengze/expertplex-b300/datasets-fixed/sharegpt-24576.jsonl",
+  "seed": 42,
+  "ttft_slo_ms": 1000.0,
+  "tpot_slo_ms": 50.0,
+  "p90_goodput_max_tested_arrival_rps": 1.0,
+  "note": "Maximum among tested arrival rates only; extend/refine the sweep and repeat with multiple seeds.",
+  "results": [
+    {
+      "request_rate": 1.0,
+      "attempted_requests": 64,
+      "completed_requests": 64,
+      "joint_slo_met_requests": 61,
+      "joint_slo_attainment": 0.953125,
+      "observed_slo_goodput_rps": 0.5955199772626126,
+      "unscorable_one_token_responses": 0,
+      "meets_p90_joint_slo": true,
+      "details_file": "/home/alayadb/mengze/expertplex-b300/artifacts/full480-expertplex-group-q96x8-pilot-01/sweep/rate-0-1.jsonl"
+    },
+    {
+      "request_rate": 2.0,
+      "attempted_requests": 64,
+      "completed_requests": 64,
+      "joint_slo_met_requests": 17,
+      "joint_slo_attainment": 0.265625,
+      "observed_slo_goodput_rps": 0.22195899277777012,
+      "unscorable_one_token_responses": 0,
+      "meets_p90_joint_slo": false,
+      "details_file": "/home/alayadb/mengze/expertplex-b300/artifacts/full480-expertplex-group-q96x8-pilot-01/sweep/rate-1-2.jsonl"
+    },
+    {
+      "request_rate": 3.0,
+      "attempted_requests": 64,
+      "completed_requests": 64,
+      "joint_slo_met_requests": 13,
+      "joint_slo_attainment": 0.203125,
+      "observed_slo_goodput_rps": 0.18770272525743487,
+      "unscorable_one_token_responses": 0,
+      "meets_p90_joint_slo": false,
+      "details_file": "/home/alayadb/mengze/expertplex-b300/artifacts/full480-expertplex-group-q96x8-pilot-01/sweep/rate-2-3.jsonl"
+    }
+  ]
+}

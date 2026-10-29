@@ -9,7 +9,6 @@ from typing import (
 )
 
 import msgspec
-
 from sglang.srt.arg_groups.arg_utils import (
     A,
     Arg,
@@ -22,6 +21,58 @@ class Disagg(msgspec.Struct):
     """Namespace ``disagg``."""
 
     _NS_PATH = "disagg"
+
+    enable_expertplex: A[
+        bool, "Enable the experimental ExpertPlex shared-expert serving backend."
+    ] = False
+    expertplex_config: A[
+        Optional[str], "Path to the ExpertPlex node topology and capacity JSON."
+    ] = None
+    expertplex_role: A[
+        str,
+        Arg(
+            help="Run an attention server or the shared expert worker pool.",
+            choices=["attention", "expert"],
+        ),
+    ] = "attention"
+    expertplex_client_id: A[
+        Optional[int],
+        "Attention client ID in --expertplex-config (attention role only).",
+    ] = None
+    expertplex_bootstrap_addr: A[
+        Optional[str],
+        "HTTP address of the independently started ExpertPlex MoE server.",
+    ] = None
+    expertplex_prefill_count: A[
+        int, "Number of independent prefill attention servers (expert role)."
+    ] = 1
+    expertplex_decode_count: A[
+        int, "Number of independent decode attention servers (expert role)."
+    ] = 3
+    expertplex_prefill_tp_size: A[
+        Optional[int], "GPUs per prefill attention TP group (expert role; default 1)."
+    ] = None
+    expertplex_decode_tp_size: A[
+        Optional[int], "GPUs per decode attention TP group (expert role; default 1)."
+    ] = None
+    expertplex_expert_count: A[
+        int, "Number of GPUs in the shared expert pool (expert role)."
+    ] = 4
+    expertplex_decode_sm_budget: A[
+        Optional[int],
+        "Expected decode SM budget under contention (expert role; overrides JSON).",
+    ] = None
+    expertplex_expected_decode_tiles: A[
+        Optional[int],
+        "Expected per-E decode row-tile footprint for adaptive scaling (expert role; overrides JSON).",
+    ] = None
+    expertplex_max_decode_sm_fraction: A[
+        Optional[float],
+        "Maximum decode SM fraction under contention (expert role; overrides JSON).",
+    ] = None
+    expertplex_startup_timeout: A[
+        float, "Seconds to wait for the MoE bootstrap service."
+    ] = 600.0
 
     # Decoupled speculative decoding: draft and verify run as
     # separate engines, currently connected by a ZMQ IPC mesh.

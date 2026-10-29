@@ -1,0 +1,179 @@
+{
+  "sources_sha256": {
+    "examples/expertplex/results/b300-20261015/checkpoint-2220/artifacts/sharing-cpu-gateup-01.json": "bd393e4fe46f65fe116708a6af585369fe0a2abeedcc9af6a0136bbb6f2f3c53",
+    "examples/expertplex/results/b300-20261015/checkpoint-2220/artifacts/sharing-stores0-gateup-01.json": "d4d6f3b9102b02230d5952e2d57cf175c75d13b2a18c89b4757f302b5695ff73",
+    "examples/expertplex/results/b300-20261015/checkpoint-2220/artifacts/mps-cpu-gateup-01.json": "0f3bce658e60b5b479a4c749c75acafb68f50b924ec0fc2c52cbef5ef92839e6"
+  },
+  "points": [
+    {
+      "method": "exclusive",
+      "prefill_us": 1045.44,
+      "decode_us": 1442.08,
+      "policy": "[148, 148]",
+      "slowdown_vs_native_isolated": [
+        1.0013946573893855,
+        3.4732177263969164
+      ]
+    },
+    {
+      "method": "priority",
+      "prefill_us": 1050.496,
+      "decode_us": 1422.88,
+      "policy": "[148, 148]",
+      "slowdown_vs_native_isolated": [
+        1.0062376434887892,
+        3.426974951830443
+      ]
+    },
+    {
+      "method": "green",
+      "prefill_us": 1499.28,
+      "decode_us": 1340.4,
+      "policy": "[112, 32]",
+      "slowdown_vs_native_isolated": [
+        1.4361139634323898,
+        3.2283236994219653
+      ]
+    },
+    {
+      "method": "green",
+      "prefill_us": 1716.048,
+      "decode_us": 961.856,
+      "policy": "[96, 48]",
+      "slowdown_vs_native_isolated": [
+        1.6437493294916399,
+        2.3166088631984585
+      ]
+    },
+    {
+      "method": "green",
+      "prefill_us": 1948.24,
+      "decode_us": 736.704,
+      "policy": "[80, 64]",
+      "slowdown_vs_native_isolated": [
+        1.866158868335147,
+        1.7743352601156066
+      ]
+    },
+    {
+      "method": "green",
+      "prefill_us": 2363.968,
+      "decode_us": 566.976,
+      "policy": "[64, 80]",
+      "slowdown_vs_native_isolated": [
+        2.2643718677680886,
+        1.3655491329479768
+      ]
+    },
+    {
+      "method": "green",
+      "prefill_us": 4724.864,
+      "decode_us": 486.896,
+      "policy": "[32, 112]",
+      "slowdown_vs_native_isolated": [
+        4.525801161703628,
+        1.1726782273603082
+      ]
+    },
+    {
+      "method": "APK",
+      "prefill_us": 2091.376,
+      "decode_us": 2481.824,
+      "policy": "q=8",
+      "slowdown_vs_native_isolated": [
+        2.0032644178454846,
+        5.977418111753371
+      ]
+    },
+    {
+      "method": "APK",
+      "prefill_us": 2205.776,
+      "decode_us": 2469.648,
+      "policy": "q=16",
+      "slowdown_vs_native_isolated": [
+        2.1128446412971846,
+        5.948092485549132
+      ]
+    },
+    {
+      "method": "APK",
+      "prefill_us": 2465.968,
+      "decode_us": 2358.256,
+      "policy": "q=32",
+      "slowdown_vs_native_isolated": [
+        2.362074514551947,
+        5.679807321772639
+      ]
+    },
+    {
+      "method": "APK",
+      "prefill_us": 2472.864,
+      "decode_us": 1628.784,
+      "policy": "q=48",
+      "slowdown_vs_native_isolated": [
+        2.368679979769805,
+        3.9228901734104045
+      ]
+    },
+    {
+      "method": "APK",
+      "prefill_us": 2452.992,
+      "decode_us": 1245.1680000000001,
+      "policy": "q=64",
+      "slowdown_vs_native_isolated": [
+        2.349645205290503,
+        2.9989595375722544
+      ]
+    },
+    {
+      "method": "APK",
+      "prefill_us": 2422.5119999999997,
+      "decode_us": 859.9200000000001,
+      "policy": "q=96",
+      "slowdown_vs_native_isolated": [
+        2.3204493555456787,
+        2.071098265895954
+      ]
+    },
+    {
+      "method": "MPS",
+      "prefill_us": 1247.312,
+      "decode_us": 1634.432,
+      "policy": "[100, 100]%",
+      "slowdown_vs_native_isolated": [
+        1.1947616055418473,
+        3.936493256262042
+      ]
+    },
+    {
+      "method": "MPS",
+      "prefill_us": 1597.568,
+      "decode_us": 2615.904,
+      "policy": "[75, 25]%",
+      "slowdown_vs_native_isolated": [
+        1.530261000168585,
+        6.3003468208092475
+      ]
+    },
+    {
+      "method": "MPS",
+      "prefill_us": 2246.8959999999997,
+      "decode_us": 1717.44,
+      "policy": "[50, 50]%",
+      "slowdown_vs_native_isolated": [
+        2.1522322181182854,
+        4.136416184971098
+      ]
+    },
+    {
+      "method": "MPS",
+      "prefill_us": 4418.032,
+      "decode_us": 664.0,
+      "policy": "[25, 75]%",
+      "slowdown_vs_native_isolated": [
+        4.231896274272403,
+        1.5992292870905587
+      ]
+    }
+  ]
+}

@@ -1158,6 +1158,11 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, BaseFusedOp):
     # (pre-existing behavior); under torch.compile the dedicated
     # fused_moe_forward_native is installed instead via this hook.
     def _torch_compile_forward(self, num_tokens: int) -> Optional[Callable]:
+        # DeepEP dispatch returns packed/masked expert inputs, not the standard
+        # token + TopK layout consumed by fused_moe_forward_native. Keep the
+        # selected runner even for bs=1, including during decode graph capture.
+        if get_moe_a2a_backend().is_deepep():
+            return None
         # torch.compile on this layer only pays off at bs=1; keep the
         # optimized dispatch otherwise.
         if num_tokens == 1:

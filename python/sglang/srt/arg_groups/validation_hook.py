@@ -173,6 +173,10 @@ def check_server_args(server_args: Any):
 
     cfg = resolving_view(server_args)
 
+    from sglang.srt.expertplex.integration import validate_server_args
+
+    validate_server_args(cfg)
+
     # Check parallel size constraints
     if cfg.ep_join_mode != "scale":
         assert (cfg.tp_size * cfg.pp_size) % cfg.nnodes == 0, (
@@ -694,6 +698,13 @@ def check_two_batch_overlap(server_args: Any):
     # the other ubatch's compute), which requires DP attention. Enabling it
     # there needs no extra opt-in env flag.
     cfg = resolving_view(server_args)
+
+    from sglang.srt.expertplex.integration import expertplex_enabled
+
+    if expertplex_enabled(cfg):
+        # ExpertPlex has its own one-sided M-to-N dispatcher and separate
+        # subbatch mailboxes; validate_server_args checks the overlap config.
+        return
 
     if (
         cfg.enable_two_batch_overlap

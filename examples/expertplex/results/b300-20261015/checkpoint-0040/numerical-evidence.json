@@ -1,0 +1,49 @@
+{
+  "scope": "Export numerical experiment evidence without request/output or log payloads.\n\nRaw reports remain in the local archive. This allowlist deliberately excludes\ntext, token histories, logprobs, IPC handles, host paths, environment and logs.\nIt includes source-file hashes so an authorized local reviewer can match them.\n",
+  "records": [
+    {
+      "name": "joint-slo.json",
+      "source_file_sha256": "c3da1ce738d3aad99071c8a5256917e355ebf07b350ee29d83e523af11fee6f0",
+      "failure_recorded": false,
+      "metrics": {
+        "sequence_cap": 24576,
+        "seed": 42,
+        "ttft_slo_ms": 10000.0,
+        "tpot_slo_ms": 100.0,
+        "p90_goodput_max_tested_arrival_rps": 0.25,
+        "results": [
+          {
+            "request_rate": 0.1,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 32,
+            "joint_slo_attainment": 1.0,
+            "observed_slo_goodput_rps": 0.1259667181407756,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": true
+          },
+          {
+            "request_rate": 0.25,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 32,
+            "joint_slo_attainment": 1.0,
+            "observed_slo_goodput_rps": 0.309923499332144,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": true
+          },
+          {
+            "request_rate": 0.5,
+            "attempted_requests": 32,
+            "completed_requests": 32,
+            "joint_slo_met_requests": 26,
+            "joint_slo_attainment": 0.8125,
+            "observed_slo_goodput_rps": 0.48997503359435224,
+            "unscorable_one_token_responses": 0,
+            "meets_p90_joint_slo": false
+          }
+        ]
+      }
+    }
+  ]
+}

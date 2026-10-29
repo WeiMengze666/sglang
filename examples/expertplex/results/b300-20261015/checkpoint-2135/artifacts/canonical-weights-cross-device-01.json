@@ -1,0 +1,88 @@
+{
+  "algorithm": "qwen3-canonical-bf16-normal-fanin-v1",
+  "seed": 1234,
+  "status": "passed",
+  "cases": [
+    {
+      "name": "model.layers.0.mlp.experts.0.gate_proj.weight",
+      "shape": [
+        2560,
+        6144
+      ],
+      "exact_equal": true,
+      "sample_sha256": "802cdfe652c0803e17c81f823805586f83cbb326a9981de084e77f7d207d4a3c"
+    },
+    {
+      "name": "model.layers.0.mlp.experts.0.up_proj.weight",
+      "shape": [
+        2560,
+        6144
+      ],
+      "exact_equal": true,
+      "sample_sha256": "1ce774b80e767babb1babc28eae6576b3e68d9864bff06662815244ed11c9a35"
+    },
+    {
+      "name": "model.layers.0.mlp.experts.0.down_proj.weight",
+      "shape": [
+        6144,
+        2560
+      ],
+      "exact_equal": true,
+      "sample_sha256": "678e8c1c04560cbab3b518396a08e2f90b6194624a0968758a22a517830c682c"
+    },
+    {
+      "name": "model.layers.0.mlp.experts.159.gate_proj.weight",
+      "shape": [
+        2560,
+        6144
+      ],
+      "exact_equal": true,
+      "sample_sha256": "f3ae93840171fc63566aad5f2a7ba141fa20e5ffa133aea52e68692927e68dd6"
+    },
+    {
+      "name": "model.layers.0.mlp.experts.159.up_proj.weight",
+      "shape": [
+        2560,
+        6144
+      ],
+      "exact_equal": true,
+      "sample_sha256": "ae3bd374a7b5b2ed9063c408c84a2512855e6a32e276c8a25ea9b30601222cce"
+    },
+    {
+      "name": "model.layers.0.mlp.experts.159.down_proj.weight",
+      "shape": [
+        6144,
+        2560
+      ],
+      "exact_equal": true,
+      "sample_sha256": "756a6da2e23d5be7384b99f44d98cf2a1d5acf2e2d5ccde52c3661791b5969d6"
+    },
+    {
+      "name": "model.layers.61.mlp.experts.159.gate_proj.weight",
+      "shape": [
+        2560,
+        6144
+      ],
+      "exact_equal": true,
+      "sample_sha256": "b064fdc2787196fea9e1ddfb8f0fb2c11d93a137f57bf7b675537272194d9e14"
+    },
+    {
+      "name": "model.layers.61.mlp.experts.159.up_proj.weight",
+      "shape": [
+        2560,
+        6144
+      ],
+      "exact_equal": true,
+      "sample_sha256": "83ce0fafc38813140045446cb3a180359b79ba7b94d4719874b3a61c797d99c4"
+    },
+    {
+      "name": "model.layers.61.mlp.experts.159.down_proj.weight",
+      "shape": [
+        6144,
+        2560
+      ],
+      "exact_equal": true,
+      "sample_sha256": "907d91ec8161331a62b0444fc0fe452aa104cfec683cf5ebaf44b7ebd38493e1"
+    }
+  ]
+}

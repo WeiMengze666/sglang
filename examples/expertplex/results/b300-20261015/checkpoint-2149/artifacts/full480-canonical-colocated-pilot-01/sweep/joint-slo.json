@@ -1,0 +1,60 @@
+{
+  "label": "colocated",
+  "model_path": "/home/alayadb/mengze/expertplex-b300/synthetic-480b",
+  "tokenizer_path": "/home/alayadb/mengze/expertplex-b300/coder-tokenizer-fixed",
+  "weight_mode": "synthetic",
+  "sequence_cap": 24576,
+  "dataset": "custom",
+  "dataset_path": "/home/alayadb/mengze/expertplex-b300/datasets-fixed/sharegpt-24576.jsonl",
+  "seed": 42,
+  "ttft_slo_ms": 1000.0,
+  "tpot_slo_ms": 50.0,
+  "p90_goodput_max_tested_arrival_rps": 0.5,
+  "note": "Maximum among tested arrival rates only; extend/refine the sweep and repeat with multiple seeds.",
+  "results": [
+    {
+      "request_rate": 0.5,
+      "attempted_requests": 64,
+      "completed_requests": 64,
+      "joint_slo_met_requests": 64,
+      "joint_slo_attainment": 1.0,
+      "observed_slo_goodput_rps": 0.39131984933559677,
+      "unscorable_one_token_responses": 0,
+      "meets_p90_joint_slo": true,
+      "details_file": "/home/alayadb/mengze/expertplex-b300/artifacts/full480-canonical-colocated-pilot-01/sweep/rate-0-0.5.jsonl"
+    },
+    {
+      "request_rate": 1.0,
+      "attempted_requests": 64,
+      "completed_requests": 64,
+      "joint_slo_met_requests": 54,
+      "joint_slo_attainment": 0.84375,
+      "observed_slo_goodput_rps": 0.49566907045383674,
+      "unscorable_one_token_responses": 0,
+      "meets_p90_joint_slo": false,
+      "details_file": "/home/alayadb/mengze/expertplex-b300/artifacts/full480-canonical-colocated-pilot-01/sweep/rate-1-1.jsonl"
+    },
+    {
+      "request_rate": 1.5,
+      "attempted_requests": 64,
+      "completed_requests": 64,
+      "joint_slo_met_requests": 17,
+      "joint_slo_attainment": 0.265625,
+      "observed_slo_goodput_rps": 0.18660521158096002,
+      "unscorable_one_token_responses": 0,
+      "meets_p90_joint_slo": false,
+      "details_file": "/home/alayadb/mengze/expertplex-b300/artifacts/full480-canonical-colocated-pilot-01/sweep/rate-2-1.5.jsonl"
+    },
+    {
+      "request_rate": 2.0,
+      "attempted_requests": 64,
+      "completed_requests": 64,
+      "joint_slo_met_requests": 21,
+      "joint_slo_attainment": 0.328125,
+      "observed_slo_goodput_rps": 0.2545418124809931,
+      "unscorable_one_token_responses": 0,
+      "meets_p90_joint_slo": false,
+      "details_file": "/home/alayadb/mengze/expertplex-b300/artifacts/full480-canonical-colocated-pilot-01/sweep/rate-3-2.jsonl"
+    }
+  ]
+}

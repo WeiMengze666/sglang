@@ -1,0 +1,8 @@
+{
+  "repository": "bigai-nlco/LooGLE",
+  "revision": "4b50b4cb9333b48b3f7ddfd307c1d13369be5d1e",
+  "file": "data/longdep_qa.jsonl",
+  "sha256": "6c047bc6e904e5fd632e44a2f2624d75e85fe0f871c6b74bcfffa918bf2f3624",
+  "bytes": 134979019,
+  "download_mirror": "hf-mirror.com"
+}

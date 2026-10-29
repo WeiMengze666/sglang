@@ -1,0 +1,118 @@
+{
+  "scope": "all-layer MoE deployment and capacity only; no attention, no pretrained model accuracy",
+  "config": {
+    "model_path": "/home/alayadb/mengze/expertplex-b300/synthetic-tiny",
+    "clients": [
+      {
+        "id": 0,
+        "phase": "prefill",
+        "device": 0,
+        "port": 30000
+      },
+      {
+        "id": 1,
+        "phase": "decode",
+        "device": 1,
+        "port": 30001
+      },
+      {
+        "id": 2,
+        "phase": "decode",
+        "device": 2,
+        "port": 30002
+      },
+      {
+        "id": 3,
+        "phase": "decode",
+        "device": 3,
+        "port": 30003
+      }
+    ],
+    "expert_devices": [
+      4,
+      5,
+      6,
+      7
+    ],
+    "max_prefill_tokens": 512,
+    "max_decode_tokens": 32,
+    "decode_sm_budget": 32,
+    "expected_decode_tiles": 128,
+    "max_decode_sm_fraction": 0.75,
+    "startup_timeout_s": 600.0,
+    "operation_timeout_s": 120.0,
+    "rendezvous_dir": "/home/alayadb/mengze/expertplex-b300/tiny-group-strict.json-ipc",
+    "node_gpu_count": 8,
+    "cta_count": 0,
+    "gpu_memory_gib": 268.0,
+    "weight_mode": "synthetic",
+    "synthetic_seed": 1234,
+    "overlap": "tbo",
+    "kernel": "sm100",
+    "prefill_preprocess": false
+  },
+  "results": [
+    {
+      "slot": 1,
+      "phase": "decode",
+      "rows": 8,
+      "layers": 2,
+      "full_moe_pass_ms": [
+        509.24715600558557,
+        1.8399980035610497,
+        1.6622270049992949
+      ],
+      "exact_overlap_comparisons": 12,
+      "exact_graph_comparisons": 20,
+      "group_vs_peer_reference": true,
+      "status": "passed"
+    },
+    {
+      "slot": 2,
+      "phase": "decode",
+      "rows": 8,
+      "layers": 2,
+      "full_moe_pass_ms": [
+        519.5748289988842,
+        1.8360599933657795,
+        1.4749499969184399
+      ],
+      "exact_overlap_comparisons": 12,
+      "exact_graph_comparisons": 20,
+      "group_vs_peer_reference": true,
+      "status": "passed"
+    },
+    {
+      "slot": 3,
+      "phase": "decode",
+      "rows": 8,
+      "layers": 2,
+      "full_moe_pass_ms": [
+        557.4012279976159,
+        1.705024013062939,
+        1.44024399924092
+      ],
+      "exact_overlap_comparisons": 12,
+      "exact_graph_comparisons": 20,
+      "group_vs_peer_reference": true,
+      "status": "passed"
+    },
+    {
+      "slot": 0,
+      "phase": "prefill",
+      "rows": 128,
+      "layers": 2,
+      "full_moe_pass_ms": [
+        574.5586910052225,
+        1.9898030150216073,
+        1.762084022630006
+      ],
+      "exact_overlap_comparisons": 12,
+      "exact_graph_comparisons": 20,
+      "group_vs_peer_reference": true,
+      "status": "passed"
+    }
+  ],
+  "resident_memory": "index, memory.used [MiB], memory.total [MiB]\n0, 4 MiB, 275040 MiB\n1, 4 MiB, 275040 MiB\n2, 4 MiB, 275040 MiB\n3, 4 MiB, 275040 MiB\n4, 642 MiB, 275040 MiB\n5, 642 MiB, 275040 MiB\n6, 642 MiB, 275040 MiB\n7, 642 MiB, 275040 MiB\n",
+  "status": "passed"
+}

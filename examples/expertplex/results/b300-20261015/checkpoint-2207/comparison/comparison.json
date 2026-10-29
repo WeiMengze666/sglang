@@ -1,0 +1,395 @@
+{
+  "scope": "Compare explicitly selected serving experiments with provenance checks.\n\nOutputs raw-derived JSON/CSV and publication-friendly PDF/SVG figures. Synthetic\nweights remain labeled on every figure. Maximum feasible tested rate is reported\nwithout interpolating the boundary or treating it as trained-model acceptance.\n",
+  "common_conditions": {
+    "model_path": "/home/alayadb/mengze/expertplex-b300/synthetic-480b",
+    "tokenizer_path": "/home/alayadb/mengze/expertplex-b300/coder-tokenizer-fixed",
+    "weight_mode": "synthetic",
+    "dataset_path": "/home/alayadb/mengze/expertplex-b300/datasets-fixed/sharegpt-24576.jsonl",
+    "requests": 64,
+    "seed": 42,
+    "sequence_cap": 24576,
+    "decode_kv_tokens": 98304,
+    "attention_backend": "triton",
+    "ttft_slo_ms": 1000.0,
+    "tpot_slo_ms": 50.0,
+    "canonical_seed": "1234"
+  },
+  "ordered_input_lengths_sha256": "74dbfa7f7f4b88394c0b104f3daa5355dc6521045d65400678cc3ada65ab6f89",
+  "runs": [
+    {
+      "path": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-colocated-pilot-01",
+      "variant": "colocated",
+      "maximum_feasible_tested_rps": 0.5,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "17fe45633aad0a95612090f5487deeeecc64ed20bd71204f622e10f15e6c999d",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "64573d969e3b4f546e57322e09740bd98d77e8ccc848d3f6431fa85c84e15ee2",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "3b44048d0d26a500450f26a99b23fb952023254b42a3f9d63391a3712e24b6d5",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "cab5e36b7cea292fd88977fdf0f19f956533d297c152a7d49949962d4885423b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "e7be6909bfb0bbb1f5002bddbaccf06a6604a30168e0fcd064719b747067101e",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "248cec6abd937642b8f44ad37b4705372f303157122aeb2731987d44cf744ad2",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "8b9df5613ed3644b346e9b800295d1e1f614b97cd3f417ea3f3f912b1ba8cf93",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "8257406126fb6ec5139043e53d1098573ad3d18408eda8b0a45305b87ec75be7",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "790f0c441ee88ec64084d8698f04ddadf1299bc850d785d74a7c7d48843ced8e",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "c1425a9f814990dd8678b52d978ea250b19b488d40878e4f0446db15af33bf0e"
+      },
+      "input_artifact_sha256": null,
+      "environment": {
+        "DG_JIT_CACHE_DIR": "/home/alayadb/mengze/expertplex-b300/cache/deep-gemm:/home/alayadb/.dj",
+        "NVSHMEM_HCA_LIST": "mlx5_0:1,mlx5_6:1,mlx5_8:1,mlx5_10:1,mlx5_12:1,mlx5_13:1,mlx5_14:1,mlx5_15:1,mlx5_16:1,mlx5_20:1",
+        "NVSHMEM_ENABLE_NIC_PE_MAPPING": "1",
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": "1234"
+      }
+    },
+    {
+      "path": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-expertplex-pilot-01",
+      "variant": "expertplex",
+      "maximum_feasible_tested_rps": 1.0,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "17fe45633aad0a95612090f5487deeeecc64ed20bd71204f622e10f15e6c999d",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "64573d969e3b4f546e57322e09740bd98d77e8ccc848d3f6431fa85c84e15ee2",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "3b44048d0d26a500450f26a99b23fb952023254b42a3f9d63391a3712e24b6d5",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "cab5e36b7cea292fd88977fdf0f19f956533d297c152a7d49949962d4885423b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "e7be6909bfb0bbb1f5002bddbaccf06a6604a30168e0fcd064719b747067101e",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "248cec6abd937642b8f44ad37b4705372f303157122aeb2731987d44cf744ad2",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "8b9df5613ed3644b346e9b800295d1e1f614b97cd3f417ea3f3f912b1ba8cf93",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "8257406126fb6ec5139043e53d1098573ad3d18408eda8b0a45305b87ec75be7",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "790f0c441ee88ec64084d8698f04ddadf1299bc850d785d74a7c7d48843ced8e",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "c1425a9f814990dd8678b52d978ea250b19b488d40878e4f0446db15af33bf0e"
+      },
+      "input_artifact_sha256": null,
+      "environment": {
+        "DG_JIT_CACHE_DIR": "/home/alayadb/mengze/expertplex-b300/cache/deep-gemm:/home/alayadb/.dj",
+        "NVSHMEM_HCA_LIST": "mlx5_0:1,mlx5_6:1,mlx5_8:1,mlx5_10:1,mlx5_12:1,mlx5_13:1,mlx5_14:1,mlx5_15:1,mlx5_16:1,mlx5_20:1",
+        "NVSHMEM_ENABLE_NIC_PE_MAPPING": "1",
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": "1234"
+      }
+    },
+    {
+      "path": "examples/expertplex/results/b300-20261015/checkpoint-2207/artifacts/full480-canonical-chunked-pilot-01",
+      "variant": "chunked",
+      "maximum_feasible_tested_rps": null,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "17fe45633aad0a95612090f5487deeeecc64ed20bd71204f622e10f15e6c999d",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "64573d969e3b4f546e57322e09740bd98d77e8ccc848d3f6431fa85c84e15ee2",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "3b44048d0d26a500450f26a99b23fb952023254b42a3f9d63391a3712e24b6d5",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "cab5e36b7cea292fd88977fdf0f19f956533d297c152a7d49949962d4885423b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "e7be6909bfb0bbb1f5002bddbaccf06a6604a30168e0fcd064719b747067101e",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "248cec6abd937642b8f44ad37b4705372f303157122aeb2731987d44cf744ad2",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "8b9df5613ed3644b346e9b800295d1e1f614b97cd3f417ea3f3f912b1ba8cf93",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "8257406126fb6ec5139043e53d1098573ad3d18408eda8b0a45305b87ec75be7",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "790f0c441ee88ec64084d8698f04ddadf1299bc850d785d74a7c7d48843ced8e",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "c1425a9f814990dd8678b52d978ea250b19b488d40878e4f0446db15af33bf0e"
+      },
+      "input_artifact_sha256": null,
+      "environment": {
+        "DG_JIT_CACHE_DIR": "/home/alayadb/mengze/expertplex-b300/cache/deep-gemm:/home/alayadb/.dj",
+        "NVSHMEM_HCA_LIST": "mlx5_0:1,mlx5_6:1,mlx5_8:1,mlx5_10:1,mlx5_12:1,mlx5_13:1,mlx5_14:1,mlx5_15:1,mlx5_16:1,mlx5_20:1",
+        "NVSHMEM_ENABLE_NIC_PE_MAPPING": "1",
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": "1234"
+      }
+    },
+    {
+      "path": "examples/expertplex/results/b300-20261015/checkpoint-2207/artifacts/full480-canonical-pdd-pilot-01",
+      "variant": "pdd",
+      "maximum_feasible_tested_rps": 1.0,
+      "source_files_sha256": {
+        "python/sglang/srt/expertplex/._config.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/worker.py": "8cfaff36102b1f77564389cb8d121bfd0faba1dbfdfe39ab5c36dc7e20262f3e",
+        "python/sglang/srt/expertplex/rendezvous.py": "17fe45633aad0a95612090f5487deeeecc64ed20bd71204f622e10f15e6c999d",
+        "python/sglang/srt/expertplex/synthetic_weights.py": "64573d969e3b4f546e57322e09740bd98d77e8ccc848d3f6431fa85c84e15ee2",
+        "python/sglang/srt/expertplex/._client.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/integration.py": "e226d62392352407e791502b7aa55ca22b0629151a9eaf0bacd33c002e7c07ec",
+        "python/sglang/srt/expertplex/config.py": "722e50e1b3a48046d502059309ee353676c8b03525ee0939a5938ed88700860f",
+        "python/sglang/srt/expertplex/client.py": "ee158f4882a5efe8ba63ffb0d796eeadd21cb66b908b126b79911b3ab3f1b6b9",
+        "python/sglang/srt/expertplex/.___init__.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._native.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/native.py": "3b44048d0d26a500450f26a99b23fb952023254b42a3f9d63391a3712e24b6d5",
+        "python/sglang/srt/expertplex/._optimizer.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/optimizer.py": "cab5e36b7cea292fd88977fdf0f19f956533d297c152a7d49949962d4885423b",
+        "python/sglang/srt/expertplex/._integration.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/__init__.py": "46a9d957e923209b6de9f2b52bb2bd2a16eed9afb00be55432b085605f5af16c",
+        "python/sglang/srt/expertplex/._rendezvous.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/._worker.py": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/expertplex/csrc/benchmark.cuh": "e7be6909bfb0bbb1f5002bddbaccf06a6604a30168e0fcd064719b747067101e",
+        "python/sglang/srt/expertplex/csrc/expertplex.cu": "248cec6abd937642b8f44ad37b4705372f303157122aeb2731987d44cf744ad2",
+        "python/sglang/srt/expertplex/csrc/preprocessing.cuh": "8b9df5613ed3644b346e9b800295d1e1f614b97cd3f417ea3f3f912b1ba8cf93",
+        "python/sglang/srt/expertplex/csrc/group_communication.cuh": "8257406126fb6ec5139043e53d1098573ad3d18408eda8b0a45305b87ec75be7",
+        "python/sglang/srt/expertplex/csrc/sm100_pipeline.cuh": "790f0c441ee88ec64084d8698f04ddadf1299bc850d785d74a7c7d48843ced8e",
+        "python/sglang/srt/expertplex/csrc/._expertplex.cu": "0202fffb033ecb6704e111732954154470473aff187deffeaa14468c2792ccf0",
+        "python/sglang/srt/models/qwen3_moe.py": "5d923c013ce58a611012cf4d08d90aaf33d66d1b41efb841045e8f7bcb22ab28",
+        "python/sglang/srt/model_loader/loader.py": "a2eadecdd0899f1a01101e9030e37d199cb614e057bfb00c63c29912f5d33441",
+        "examples/expertplex/launch.py": "d68e21b6242abee933313a3bf044b9c785f56e4d0695c664f2ecb2747c59c0fc",
+        "examples/expertplex/launch_baseline.py": "e45912e91abea3fd9d432a3dc64ea13c3ce761696f26206df64ebe2d24d06186",
+        "examples/expertplex/run_serving_experiment.py": "c1425a9f814990dd8678b52d978ea250b19b488d40878e4f0446db15af33bf0e"
+      },
+      "input_artifact_sha256": null,
+      "environment": {
+        "DG_JIT_CACHE_DIR": "/home/alayadb/mengze/expertplex-b300/cache/deep-gemm:/home/alayadb/.dj",
+        "NVSHMEM_HCA_LIST": "mlx5_0:1,mlx5_6:1,mlx5_8:1,mlx5_10:1,mlx5_12:1,mlx5_13:1,mlx5_14:1,mlx5_15:1,mlx5_16:1,mlx5_20:1",
+        "NVSHMEM_ENABLE_NIC_PE_MAPPING": "1",
+        "SGLANG_EXPERTPLEX_SYNTHETIC_SEED": "1234"
+      }
+    }
+  ],
+  "rows": [
+    {
+      "variant": "colocated",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-colocated-pilot-01",
+      "request_rate": 0.5,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 64,
+      "joint_attainment": 1.0,
+      "joint_wilson95": [
+        0.9433759402071974,
+        0.9999999999999999
+      ],
+      "p90_ttft_ms_completed": 312.5061429076595,
+      "p90_tpot_ms_completed": 45.69640465068601,
+      "output_tokens_per_second": 108.59737256327398,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "colocated",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-colocated-pilot-01",
+      "request_rate": 1.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 54,
+      "joint_attainment": 0.84375,
+      "joint_wilson95": [
+        0.7357193822745156,
+        0.9128515766179328
+      ],
+      "p90_ttft_ms_completed": 255.1384384947596,
+      "p90_tpot_ms_completed": 51.08563823237214,
+      "output_tokens_per_second": 163.02922889501102,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "colocated",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-colocated-pilot-01",
+      "request_rate": 1.5,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 17,
+      "joint_attainment": 0.265625,
+      "joint_wilson95": [
+        0.17296379074222828,
+        0.38482873728564787
+      ],
+      "p90_ttft_ms_completed": 267.03945620683953,
+      "p90_tpot_ms_completed": 59.65967914959126,
+      "output_tokens_per_second": 194.95853899349595,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "colocated",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-colocated-pilot-01",
+      "request_rate": 2.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 21,
+      "joint_attainment": 0.328125,
+      "joint_wilson95": [
+        0.22570557904469424,
+        0.45000894150908155
+      ],
+      "p90_ttft_ms_completed": 287.3453417909332,
+      "p90_tpot_ms_completed": 65.34387567022956,
+      "output_tokens_per_second": 215.28176816547233,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "expertplex",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-expertplex-pilot-01",
+      "request_rate": 0.5,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 64,
+      "joint_attainment": 1.0,
+      "joint_wilson95": [
+        0.9433759402071974,
+        0.9999999999999999
+      ],
+      "p90_ttft_ms_completed": 280.66307250119286,
+      "p90_tpot_ms_completed": 35.71974320811868,
+      "output_tokens_per_second": 112.00456076406724,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "expertplex",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-expertplex-pilot-01",
+      "request_rate": 1.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 61,
+      "joint_attainment": 0.953125,
+      "joint_wilson95": [
+        0.8710034625990662,
+        0.9839309832137065
+      ],
+      "p90_ttft_ms_completed": 309.5426140993368,
+      "p90_tpot_ms_completed": 48.733356057052106,
+      "output_tokens_per_second": 180.99315982811498,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "expertplex",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-expertplex-pilot-01",
+      "request_rate": 1.5,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 33,
+      "joint_attainment": 0.515625,
+      "joint_wilson95": [
+        0.3958160147858043,
+        0.6336644833456706
+      ],
+      "p90_ttft_ms_completed": 376.78029801172676,
+      "p90_tpot_ms_completed": 58.519235114637404,
+      "output_tokens_per_second": 215.47452003820632,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "expertplex",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2149/artifacts/full480-canonical-expertplex-pilot-01",
+      "request_rate": 2.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 22,
+      "joint_attainment": 0.34375,
+      "joint_wilson95": [
+        0.23923142078443607,
+        0.46596359790081476
+      ],
+      "p90_ttft_ms_completed": 442.799852200551,
+      "p90_tpot_ms_completed": 67.34606872457124,
+      "output_tokens_per_second": 221.98545608623718,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "chunked",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2207/artifacts/full480-canonical-chunked-pilot-01",
+      "request_rate": 1.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 27,
+      "joint_attainment": 0.421875,
+      "joint_wilson95": [
+        0.3086978247434577,
+        0.5438996845991676
+      ],
+      "p90_ttft_ms_completed": 628.9713945967379,
+      "p90_tpot_ms_completed": 56.678209701597034,
+      "output_tokens_per_second": 162.49302722563385,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "chunked",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2207/artifacts/full480-canonical-chunked-pilot-01",
+      "request_rate": 2.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 10,
+      "joint_attainment": 0.15625,
+      "joint_wilson95": [
+        0.08714842338206727,
+        0.2642806177254844
+      ],
+      "p90_ttft_ms_completed": 541.0077129112325,
+      "p90_tpot_ms_completed": 69.73613735037888,
+      "output_tokens_per_second": 211.67402633179313,
+      "meets_p90_joint_slo": false
+    },
+    {
+      "variant": "pdd",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2207/artifacts/full480-canonical-pdd-pilot-01",
+      "request_rate": 1.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 58,
+      "joint_attainment": 0.90625,
+      "joint_wilson95": [
+        0.8101712040035474,
+        0.9563217474148007
+      ],
+      "p90_ttft_ms_completed": 821.0823950968917,
+      "p90_tpot_ms_completed": 48.90238349184404,
+      "output_tokens_per_second": 168.44151312200182,
+      "meets_p90_joint_slo": true
+    },
+    {
+      "variant": "pdd",
+      "experiment": "examples/expertplex/results/b300-20261015/checkpoint-2207/artifacts/full480-canonical-pdd-pilot-01",
+      "request_rate": 2.0,
+      "attempted": 64,
+      "completed": 64,
+      "joint_met": 19,
+      "joint_attainment": 0.296875,
+      "joint_wilson95": [
+        0.19905151325540021,
+        0.41770201103542576
+      ],
+      "p90_ttft_ms_completed": 737.3408988089069,
+      "p90_tpot_ms_completed": 60.7150080258143,
+      "output_tokens_per_second": 215.49115607391178,
+      "meets_p90_joint_slo": false
+    }
+  ],
+  "uncertainty_note": "Wilson intervals describe finite-request attainment, not uncertainty in the arrival-rate boundary; repeated Poisson seeds remain necessary."
+}
