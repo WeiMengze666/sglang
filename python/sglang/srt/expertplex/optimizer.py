@@ -339,15 +339,23 @@ class LatencyCoefficients:
 
 
 def fit_coefficients(
-    samples: Sequence[dict[str, float]], *, component: str
+    samples: Sequence[dict[str, float]],
+    *,
+    component: str,
+    loss: str = "least_squares",
 ) -> LatencyCoefficients:
-    """Least squares over measured samples; reject underdetermined profiles.
+    """Fit Eq. (2) using training measurements only.
 
     MoE uses s=1 in Eq2, so beta/gamma/delta are not identifiable separately;
-    fit alpha+beta*x directly. Attention fits all four terms.
+    fit alpha+beta*x directly. Attention fits all four terms. The default
+    preserves least squares. ``minimax_relative`` minimizes the worst relative
+    training error; neither objective establishes heldout prediction accuracy.
+    Coefficients are unrestricted, as in the original least-squares fit.
     """
     if component not in ("attention", "moe"):
         raise ValueError("component must be attention or moe")
+    if loss not in ("least_squares", "minimax_relative"):
+        raise ValueError("loss must be least_squares or minimax_relative")
     width = 4 if component == "attention" else 2
     if len(samples) < width:
         raise ValueError(f"at least {width} measured samples are required")
@@ -373,6 +381,43 @@ def fit_coefficients(
     # Scale columns to reduce conditioning problems for long sequence lengths.
     scales = [max(abs(row[j]) for row in design) or 1 for j in range(width)]
     design = [[row[j] / scales[j] for j in range(width)] for row in design]
+    if loss == "minimax_relative":
+        import numpy as np
+        from scipy.optimize import linprog
+
+        matrix = np.asarray(design)
+        if np.linalg.matrix_rank(matrix) < width:
+            raise ValueError(
+                "measurements are rank deficient; vary batch size and sequence length"
+            )
+        observed = np.asarray(times)
+        time_scale = float(np.median(observed))
+        relative = matrix / (observed / time_scale)[:, None]
+        # |predicted / observed - 1| <= epsilon, with unrestricted coefficients.
+        inequalities = np.vstack(
+            [
+                np.column_stack([relative, -np.ones(len(times))]),
+                np.column_stack([-relative, -np.ones(len(times))]),
+            ]
+        )
+        rhs = np.r_[np.ones(len(times)), -np.ones(len(times))]
+        result = linprog(
+            [0] * width + [1],
+            A_ub=inequalities,
+            b_ub=rhs,
+            bounds=[(None, None)] * width + [(0, None)],
+            method="highs",
+        )
+        if not result.success:
+            raise ValueError(f"Relative minimax fit failed: {result.message}")
+        error = float(np.max(np.abs(relative @ result.x[:width] - 1)))
+        dual = float(rhs @ result.ineqlin.marginals)
+        # Numerical primal/dual consistency, not an exact-arithmetic proof.
+        if not all(math.isfinite(v) for v in (error, result.fun, dual)) or (
+            abs(error - result.fun) > 1e-7 or abs(result.fun - dual) > 1e-7
+        ):
+            raise ValueError("Relative minimax solver failed numerical consistency")
+        return LatencyCoefficients(*(result.x[:width] * time_scale / scales))
     matrix = [
         [sum(row[i] * row[j] for row in design) for j in range(width)]
         + [sum(row[i] * time for row, time in zip(design, times))]

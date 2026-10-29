@@ -487,6 +487,13 @@ P 操作 ID 为 `5,6,1,3,2,7`，D 为 `1,3,2`，分别覆盖 Scatter、GateUp、
 以及最终部署的端到端 SLO；隔离组件模型通过留出检查不能替代这些验收。
 测试中的人工系数只验证代数，不作为 B300 profiles 发布。
 
+`optimizer.fit_coefficients(samples, component="attention", loss="minimax_relative")`
+可选用最大相对误差最小化来拟合 Eq.2；默认仍为 `least_squares`。
+两种方法均只接收训练记录，系数需在收集独立验证点前冻结。选择新的训练目标后，
+已经用于选择该目标的数据属于开发数据，不能再次充当独立验证集。
+此选项只改变组件系数的拟合，不改变插值范围、数值或 SLO 门槛，
+也不代表通信、并发竞争和完整 critical path 已完成校准。
+
 profile 还必须声明 `prefill_preprocess`，并与运行配置一致（旧 schema 缺省为 false）。
 启用 E 侧预处理时，通信量包含发往每张 E 的原始 BF16 hidden、top-k ID/weight 和返回的
 BF16 partial output；不能继续套用 A 侧展开 top-k 后的 routed-row 通信量。
