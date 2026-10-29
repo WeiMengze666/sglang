@@ -16,6 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from .component_profile import ComponentProfiles, ProfileCoverageError
 from .config import ModelSpec, NodeConfig, default_config
 from .native import estimate_buffer_bytes
 
@@ -384,6 +385,7 @@ class MeasuredProfiles:
     expert_probabilities: dict[str, tuple[float, ...]]
     prefill_preprocess: bool = False
     probabilities_by_layer: dict[str, tuple[tuple[float, ...], ...]] | None = None
+    components_by_world: dict[int, ComponentProfiles] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], model: ModelSpec) -> MeasuredProfiles:
@@ -402,6 +404,27 @@ class MeasuredProfiles:
                 or data[name] <= 0
             ):
                 raise ValueError(f"profile {name} must be a positive integer")
+        components = {}
+        for key, value in data.get("moe_components_by_expert_count", {}).items():
+            world = int(key)
+            if str(world) != str(key) or world in components:
+                raise ValueError("Ambiguous expert world size")
+            component = ComponentProfiles.from_dict(value)
+            g = component.geometry
+            if (
+                g.world != world
+                or g.experts * world != model.num_experts
+                or g.hidden != model.hidden_size
+                or g.intermediate != model.intermediate_size
+                or g.top_k != model.top_k
+                or not preprocess
+                or max(s for budgets in component.models.values() for s in budgets)
+                > data["total_sms"]
+            ):
+                raise ValueError(
+                    "Component geometry differs from checkpoint/transport/GPU"
+                )
+            components[world] = component
         tile_rows = data.get("tile_rows")
         phase_tiles = (
             tile_rows
@@ -415,6 +438,13 @@ class MeasuredProfiles:
             raise ValueError(
                 "tile_rows must be positive, or map prefill/decode to positive tile heights"
             )
+        if any(
+            phase_tiles[phase] != getattr(c.geometry, phase + "_gemm_tile_rows")
+            or data["total_sms"] % c.geometry.cluster_size
+            for c in components.values()
+            for phase in ("prefill", "decode")
+        ):
+            raise ValueError("Tile/SM metadata differs from component geometry")
         bandwidth = data.get("nvlink_bytes_per_second", 0)
         if (
             not isinstance(bandwidth, (int, float))
@@ -429,7 +459,12 @@ class MeasuredProfiles:
         for phase in ("prefill", "decode"):
             phase_data = data[phase]
             attention[phase] = LatencyCoefficients(**phase_data["attention"])
-            for budget, coefficients in phase_data["moe_by_sm_count"].items():
+            legacy = phase_data.get("moe_by_sm_count", {})
+            if not legacy and not components:
+                raise ValueError("Measured MoE profiles are required")
+            if legacy and components:
+                raise ValueError("Do not mix aggregate and component MoE profiles")
+            for budget, coefficients in legacy.items():
                 sm_count = int(budget)
                 if not 0 < sm_count <= data["total_sms"]:
                     raise ValueError("profile SM counts must be within GPU capacity")
@@ -495,6 +530,7 @@ class MeasuredProfiles:
             probabilities,
             preprocess,
             by_layer or None,
+            components or None,
         )
 
     @classmethod
@@ -515,6 +551,9 @@ class SearchResult:
     profile_provenance: str
     overlap: str
     expected_decode_tiles: int
+    component_runtime_source_sha256: str | None = None
+    prefill_sm_bracket: tuple[int, int] | None = None
+    decode_sm_bracket: tuple[int, int] | None = None
 
     def config(self, source: NodeConfig) -> NodeConfig:
         """Export the selected placement and contention policy, not the input."""
@@ -605,6 +644,100 @@ def nvlink_payload_bytes(
     return 4 * tokens * model.top_k * model.hidden_size
 
 
+def component_layer_latencies(
+    profiles, layout, phase, batch, input_length, sms, overlap
+):
+    """Per-layer max of per-rank sums of separately executed client operations.
+
+    Routing remains the existing IID-marginal approximation. In particular, a
+    positive expected footprint charges one operation intercept; this does not
+    infer the exact probability of a rank receiving no route from marginals.
+    Raw preprocessing/gather work uses the client's tokens, not routed tokens.
+    """
+    component = profiles.components_by_world[layout.expert_count]
+    geometry = component.geometry
+    component.bracket(phase, sms)  # Fail before any workload-dependent search.
+    if geometry.world != layout.expert_count:
+        raise ValueError("Component profile has a different expert placement")
+    clients = layout.prefill_count if phase == "prefill" else layout.decode_count
+    mailboxes = []
+    for i in range(clients):
+        tokens = (batch // clients + (i < batch % clients)) * (
+            input_length if phase == "prefill" else 1
+        )
+        mailboxes.extend(
+            (tokens // 2, tokens - tokens // 2) if overlap == "tbo" else (tokens,)
+        )
+    layers = (profiles.probabilities_by_layer or {}).get(
+        phase, (profiles.expert_probabilities[phase],)
+    )
+    result, errors = [], []
+    for probabilities in layers:
+        if len(probabilities) != geometry.world * geometry.experts:
+            raise ValueError("Routing and measured expert geometry differ")
+        ranks = [0.0] * geometry.world
+        for tokens in mailboxes:
+            if not tokens:
+                continue
+            data = geometry.features(phase, tokens, [0] * geometry.experts)
+            for rank in range(geometry.world):
+                local = probabilities[rank :: geometry.world]
+                tile = getattr(geometry, phase + "_gemm_tile_rows")
+                gemm = sum(expected_expert_tiles(tokens, p, tile) for p in local)
+                activation = sum(
+                    expected_expert_tiles(tokens, p, geometry.activation_tile_rows)
+                    for p in local
+                )
+                footprint = dict(data, **{"1": gemm, "2": gemm, "3": activation})
+                try:
+                    ranks[rank] += sum(
+                        component.predict_footprints(phase, sms, footprint).values()
+                    )
+                except ProfileCoverageError as error:
+                    errors.append(error)
+        result.append(max(ranks))
+    if errors:
+        raise ProfileCoverageError(
+            "Client/rank workload is outside component profile coverage",
+            below=any(e.below for e in errors),
+            above=any(e.above for e in errors),
+        )
+    return tuple(result)
+
+
+def max_feasible_batch(maximum, slo, latency):
+    """Binary search a monotone latency within a contiguous measured domain.
+
+    A below-coverage probe moves right, an above-coverage probe moves left.
+    Only an actually evaluated in-domain SLO pass can become the result.
+    Nonnegative component fits and monotone footprints provide the contract.
+    """
+    if type(maximum) is not int or maximum < 0 or not math.isfinite(slo) or slo <= 0:
+        raise ValueError("Expected a nonnegative capacity and positive finite SLO")
+    lo, hi, best = 1, maximum, 0
+    while lo <= hi:
+        middle = (lo + hi) // 2
+        try:
+            value = latency(middle)
+        except ProfileCoverageError as error:
+            if error.below and error.above:
+                return best  # The component domains have no common batch.
+            if error.below:
+                lo = middle + 1
+            elif error.above:
+                hi = middle - 1
+            else:
+                raise  # Missing SM/geometry coverage is not a large batch.
+            continue
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("Invalid predicted latency")
+        if value <= slo:
+            best, lo = middle, middle + 1
+        else:
+            hi = middle - 1
+    return best
+
+
 def _iteration_latency(
     model: ModelSpec,
     profiles: MeasuredProfiles,
@@ -627,10 +760,15 @@ def _iteration_latency(
     # Mailboxes belong to independent attention clients. Their partial tiles
     # cannot be merged into a single global-batch tile without changing the
     # runtime. Sum each client's tiles on every expert rank, then take max rank.
-    footprints = expected_rank_footprints(
-        profiles, layout, phase, batch, input_length, overlap
-    )
-    moe = [profiles.moe[phase, sm_count].predict(x) for x in footprints]
+    if profiles.components_by_world:
+        moe = component_layer_latencies(
+            profiles, layout, phase, batch, input_length, sm_count, overlap
+        )
+    else:
+        footprints = expected_rank_footprints(
+            profiles, layout, phase, batch, input_length, overlap
+        )
+        moe = [profiles.moe[phase, sm_count].predict(x) for x in footprints]
     # Match the selected transport's actual duplication boundary. Bandwidth
     # must be measured for that path; launch/control overhead is not inferred
     # from payload bytes and remains a limitation of this approximation.
@@ -673,6 +811,13 @@ def search(
         raise ValueError(
             "profile prefill_preprocess differs from the selected transport; "
             "measure both E preprocessing and its raw-token communication path"
+        )
+    if profiles.components_by_world and (
+        config.cta_count not in (0, profiles.total_sms)
+        or any(client.tp_size != 1 for client in config.clients)
+    ):
+        raise ValueError(
+            "Component search requires matching total SMs and TP1 attention profiles"
         )
     if overlap == "auto":
         candidates = [
@@ -756,13 +901,42 @@ def search(
             reserve_gib=reserve_gib,
         ).fits:
             continue
-        budgets = sorted(
-            sm
-            for (phase, sm) in profiles.moe
-            if phase == "decode"
-            and ("prefill", profiles.total_sms - sm) in profiles.moe
-            and sm <= profiles.total_sms * config.max_decode_sm_fraction
-        )
+        if profiles.components_by_world:
+            if layout.expert_count not in profiles.components_by_world:
+                raise ProfileCoverageError(
+                    f"Missing component profiles for memory-feasible {layout.name}; cannot declare a global optimum"
+                )
+            component = profiles.components_by_world[layout.expert_count]
+            cluster = component.geometry.cluster_size
+            geometry = component.geometry
+            if (
+                config.kernel != "sm100"
+                or cluster != 2
+                or geometry.prefill_gemm_tile_rows != 128
+                or geometry.decode_gemm_tile_rows != 128
+                or geometry.activation_tile_rows != 32
+            ):
+                raise ValueError(
+                    "Component planner currently describes the complete two-CTA SM100 pipeline"
+                )
+            budgets = []
+            for q in range(cluster, profiles.total_sms, cluster):
+                if q > profiles.total_sms * config.max_decode_sm_fraction:
+                    continue
+                try:
+                    component.bracket("prefill", profiles.total_sms - q)
+                    component.bracket("decode", q)
+                except ProfileCoverageError:
+                    continue
+                budgets.append(q)
+        else:
+            budgets = sorted(
+                sm
+                for (phase, sm) in profiles.moe
+                if phase == "decode"
+                and ("prefill", profiles.total_sms - sm) in profiles.moe
+                and sm <= profiles.total_sms * config.max_decode_sm_fraction
+            )
         for q in budgets:
             batches: dict[str, int] = {}
             latencies: dict[str, float] = {}
@@ -786,25 +960,22 @@ def search(
                     q,
                 ),
             ):
-                low, high = 0, count * maximum
-                while low < high:
-                    middle = (low + high + 1) // 2
-                    latency = _iteration_latency(
+                low = max_feasible_batch(
+                    count * maximum,
+                    slo,
+                    lambda batch: _iteration_latency(
                         model,
                         profiles,
                         layout,
                         phase,
-                        middle,
+                        batch,
                         input_length,
                         context_length,
                         sms,
                         overlap,
                         config.prefill_preprocess,
-                    )
-                    if latency <= slo:
-                        low = middle
-                    else:
-                        high = middle - 1
+                    ),
+                )
                 batches[phase] = low
                 if low:
                     latencies[phase] = _iteration_latency(
@@ -848,6 +1019,15 @@ def search(
                         )
                     ),
                 ),
+                component_runtime_source_sha256=component.runtime_source_sha256
+                if profiles.components_by_world
+                else None,
+                prefill_sm_bracket=component.bracket("prefill", profiles.total_sms - q)
+                if profiles.components_by_world
+                else (profiles.total_sms - q, profiles.total_sms - q),
+                decode_sm_bracket=component.bracket("decode", q)
+                if profiles.components_by_world
+                else (q, q),
             )
             if best is None or goodput > best.predicted_goodput_requests_per_second:
                 best = result

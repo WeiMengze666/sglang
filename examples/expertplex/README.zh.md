@@ -429,8 +429,32 @@ schema 要求 `units="seconds_per_layer"`、非空 `provenance`、真实 `total_
 `tile_rows={"prefill":128,"decode":128}`、实测 `nvlink_bytes_per_second`，以及 prefill/decode 各自的
 `attention` 系数 `{alpha,beta,gamma,delta}`、`moe_by_sm_count` 和逐专家激活概率
 `expert_probabilities`（总和为 top-k）。`fit_coefficients` 接受实测
-`{x,sequence_length,latency_s}` 样本；MoE 的 x 必须是 tile footprint。只有实际测量过的
-SM 预算进入搜索。测试里的人工系数仅验证代数，不作为 B300 profiles 发布。
+`{x,sequence_length,latency_s}` 样本；MoE 的 x 必须是 tile footprint。旧的
+`moe_by_sm_count` 格式仍只使用实际测量过的 SM 预算，不对整段 MoE 延迟做隐式插值。
+
+分组件 profile 通过同一个 `--profiles` 入口读取：省略两个 phase 下的
+`moe_by_sm_count`，增加顶层 `moe_components_by_expert_count`，以 E 数量的字符串为键。
+每个值包含 `units="seconds_per_layer"`、非空 `provenance`、测量代码的
+`runtime_source_sha256`、`geometry` 和 `models`。`geometry` 明确声明
+`hidden/intermediate/experts/world/top_k/cluster_size` 及
+`prefill_gemm_tile_rows/decode_gemm_tile_rows/activation_tile_rows`；`experts` 是每张 E
+的专家数。`models[phase][SM数][操作ID]` 提供 `{alpha,beta,x_range:[min,max]}`。
+P 操作 ID 为 `5,6,1,3,2,7`，D 为 `1,3,2`，分别覆盖 Scatter、GateUp、ACT、Down、Gather；
+两种 phase 都还需要独立常数项 `gap`（`beta=0,x_range=[0,0]`），记录操作间的开销。
+该格式目前描述完整双 CTA SM100 后端和 E 侧 P 预处理。
+
+优化器分别计算 GEMM、ACT 和数据处理的 footprint，并在每张 E 上累加独立客户端的
+操作成本后取 rank 临界路径；不会把不同客户端的部分 tile 合并，也不会只收取一次
+操作启动成本。路由仍使用逐专家边缘概率的 IID 近似；正的期望 footprint 会收取操作
+截距，这不是对空 rank 概率或实际争用延迟的精确描述。组件模型采用相邻实测 SM 点
+之间的倒数 SM 插值，拒绝 SM 和各组件 footprint 的范围外外推。批量二分搜索只接受
+处于测量范围且满足 SLO 的候选；任一可容纳布局缺少相应 E 数量的模型时直接报错，
+不会把不完整搜索称为全局最优。输出保留所用 kernel 源码指纹和 P/D 的 SM 插值端点。
+旧格式与分组件格式不能混用。
+
+这些预测还需要实测 attention、传输带宽和真实路由数据，并验证争用、TBO 临界路径
+以及最终部署的端到端 SLO；隔离组件模型通过留出检查不能替代这些验收。
+测试中的人工系数只验证代数，不作为 B300 profiles 发布。
 
 profile 还必须声明 `prefill_preprocess`，并与运行配置一致（旧 schema 缺省为 false）。
 启用 E 侧预处理时，通信量包含发往每张 E 的原始 BF16 hidden、top-k ID/weight 和返回的
