@@ -17,6 +17,7 @@ import urllib.request
 from pathlib import Path
 
 from _bootstrap import module
+from process_lifecycle import stop_owned_services
 
 config = module("config")
 rendezvous = module("rendezvous")
@@ -339,7 +340,10 @@ def main():
         )
     log_root = Path(args.log_dir).resolve()
     log_root.mkdir(parents=True, exist_ok=True)
+    import psutil
+
     children = []
+    owned = []
     base_env = dict(os.environ)
     base_env.pop("SGLANG_EXPERTPLEX_CONFIG", None)
     base_env.pop("SGLANG_EXPERTPLEX_CLIENT_ID", None)
@@ -357,6 +361,10 @@ def main():
             start_new_session=True,
         )
         children.append((name, process, log))
+        try:
+            owned.append(psutil.Process(process.pid))
+        except psutil.NoSuchProcess:
+            pass
         print(
             f"Started {name} PID {process.pid}; log: {log_root / (name + '.log')}",
             flush=True,
@@ -411,26 +419,19 @@ def main():
         pass
     finally:
         stopping = True
-        # Keep the expert allocations alive until all attention clients exit.
-        for group in (
-            [child for child in reversed(children) if child[0] != "experts"],
-            [child for child in children if child[0] == "experts"],
-        ):
-            for _, process, _ in group:
-                if process.poll() is None:
-                    try:
-                        os.killpg(process.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-            for _, process, log in group:
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    process.wait(timeout=10)
+        # Spawn order is E, P/D, router. Reverse shutdown keeps E allocations
+        # alive until clients exit and lets the E supervisor stop its workers.
+        try:
+            remaining = stop_owned_services(owned)
+            rendezvous.atomic_json(
+                log_root / "cleanup.json", {"remaining_owned_pids": remaining}
+            )
+            if remaining:
+                raise RuntimeError(f"Owned service cleanup incomplete: {remaining}")
+        finally:
+            for _, process, log in children:
+                if process.poll() is not None:
+                    process.wait()
                 log.close()
 
 

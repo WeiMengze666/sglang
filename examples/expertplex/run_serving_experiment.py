@@ -23,6 +23,8 @@ from launch import (
     prefill_graph_options,
 )
 
+from process_lifecycle import service_shutdown_budget
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -178,8 +180,10 @@ def main():
         common += ["--prefill-graph-max-tokens", str(args.prefill_graph_max_tokens)]
     if args.mem_fraction_static is not None:
         common += ["--mem-fraction-static", str(args.mem_fraction_static)]
+    shutdown_timeout = 90
     if args.variant == "expertplex":
         node = json.loads(Path(args.config).read_text())
+        shutdown_timeout = service_shutdown_budget(len(node["clients"]) + 2)
         if (
             node["model_path"] != args.model_path
             or node["weight_mode"] != args.weight_mode
@@ -457,9 +461,21 @@ def main():
             except subprocess.TimeoutExpired:
                 os.killpg(benchmark.pid, signal.SIGKILL)
                 benchmark.wait(timeout=10)
-        if service is not None and service.poll() is None:
-            service.terminate()  # Launcher cleans its own worker groups.
-            service.wait(timeout=90)
+        if service is not None:
+            if service.poll() is None:
+                service.terminate()  # Launcher completes owned supervisor shutdown.
+            try:
+                returncode = service.wait(timeout=shutdown_timeout)
+            except subprocess.TimeoutExpired:
+                report["status"] = "failed"
+                report["cleanup_error"] = "Service launcher shutdown timed out"
+                save()
+                raise
+            if returncode != 0:
+                report["status"] = "failed"
+                report["cleanup_error"] = f"Service launcher exited {returncode}"
+                save()
+                raise RuntimeError(report["cleanup_error"])
         save()
     print(json.dumps(report, indent=2))
 

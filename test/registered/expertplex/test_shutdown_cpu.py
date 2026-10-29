@@ -16,6 +16,7 @@ from _bootstrap import module  # noqa: E402
 launch = importlib.import_module("launch")
 baseline = importlib.import_module("launch_baseline")
 worker = module("worker")
+lifecycle = importlib.import_module("process_lifecycle")
 
 
 class ShutdownTests(unittest.TestCase):
@@ -58,9 +59,16 @@ class ShutdownTests(unittest.TestCase):
         handlers = {}
         process = MagicMock(pid=12345)
         process.poll.return_value = None
-        process.wait.side_effect = lambda **_: handlers[signal.SIGTERM](
-            signal.SIGTERM, None
+        owned = MagicMock()
+        fake_psutil = SimpleNamespace(
+            Process=MagicMock(return_value=owned), NoSuchProcess=ProcessLookupError
         )
+
+        def stop(identities):
+            self.assertEqual(identities, [owned])
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            return []
+
         node = launch.config.default_config("/model")
         spec = SimpleNamespace(attention_weight_bytes=0, kv_bytes_per_token=1)
         with (
@@ -72,19 +80,31 @@ class ShutdownTests(unittest.TestCase):
             patch.object(launch.config.ModelSpec, "from_model_path", return_value=spec),
             patch.object(type(node), "validate"),
             patch.dict(launch.os.environ, {}, clear=True),
+            patch.dict(sys.modules, {"psutil": fake_psutil}),
             patch.object(launch.subprocess, "Popen", return_value=process),
             patch.object(launch.signal, "signal", side_effect=handlers.__setitem__),
             patch.object(launch.os, "killpg") as kill,
+            patch.object(launch, "stop_owned_services", side_effect=stop) as cleanup,
             patch.object(
-                launch,
-                "wait_http",
-                side_effect=RuntimeError("startup failed"),
+                launch, "wait_http", side_effect=RuntimeError("startup failed")
             ),
         ):
             with self.assertRaisesRegex(RuntimeError, "startup failed"):
                 launch.main()
-        process.wait.assert_called_once_with(timeout=10)
-        kill.assert_called_once_with(12345, signal.SIGTERM)
+            self.assertTrue((Path(temp) / "cleanup.json").exists())
+        cleanup.assert_called_once_with([owned])
+        kill.assert_not_called()
+        process.wait.assert_not_called()
+
+    def test_outer_timeout_covers_all_supervisor_fallbacks(self):
+        for count in (0, 1, 6, 9):
+            worst = count * (
+                lifecycle.SUPERVISOR_GRACE_SECONDS + 2 * lifecycle.CHILD_GRACE_SECONDS
+            )
+            self.assertGreater(lifecycle.service_shutdown_budget(count), worst)
+        for invalid in (-1, True, 1.5):
+            with self.assertRaises(ValueError):
+                lifecycle.service_shutdown_budget(invalid)
 
     def test_supervisor_signal_does_not_acquire_event_lock(self):
         handlers, inside_wait = {}, [False]

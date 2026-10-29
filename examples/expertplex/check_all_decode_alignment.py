@@ -16,6 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
 
+from process_lifecycle import stop_owned_services  # noqa: E402
+
 
 def option(command, flag):
     if command.count(flag) != 1:
@@ -212,53 +214,6 @@ def finish_report(result, out, remaining):
     temp.replace(out / "report.json")
     if remaining:
         raise RuntimeError(result["cleanup_error"])
-
-
-def stop_owned_services(processes, grace_timeout=90, child_timeout=10):
-    """Stop clients before E and allow each supervisor to release its workers.
-
-    Snapshot process identities before a parent can exit and orphan children.
-    Descendant termination is a bounded fallback, after the supervisor's own
-    stop protocol; killing E workers first bypasses executor.stop().
-    """
-    import psutil
-
-    trees = []
-    for proc in processes:
-        try:
-            trees.append((proc, proc.children(recursive=True)))
-        except psutil.NoSuchProcess:
-            trees.append((proc, []))
-    remaining = []
-    for proc, descendants in reversed(trees):
-        try:
-            proc.terminate()
-            try:
-                proc.wait(timeout=grace_timeout)
-            except psutil.TimeoutExpired:
-                proc.kill()
-        except psutil.NoSuchProcess:
-            pass
-        owned = [proc, *descendants]
-        for child in descendants:
-            try:
-                child.terminate()
-            except psutil.NoSuchProcess:
-                pass
-        _, alive = psutil.wait_procs(owned, timeout=child_timeout)
-        for child in alive:
-            try:
-                child.kill()
-            except psutil.NoSuchProcess:
-                pass
-        _, alive = psutil.wait_procs(alive, timeout=child_timeout)
-        for child in alive:
-            try:
-                if child.status() != psutil.STATUS_ZOMBIE:
-                    remaining.append(child.pid)
-            except psutil.NoSuchProcess:
-                pass
-    return remaining
 
 
 def run_case(source, out):
