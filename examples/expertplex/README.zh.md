@@ -31,9 +31,11 @@ GEMM 直接复用原生 DeepGEMM 的 STSM/TMA epilogue。
 `sm100_cta1` 保留单 CTA 消融后端，`sm100_fused` 保留早期 4-stage 融合 gate/up/激活后端，
 `wmma` 保留功能参考。它们不能混作论文性能结果。
 
-当前仍缺完整的原生流水线性能校准、抢占上界测量、跨栈策略覆盖与跨节点 RDMA MoE。
-TBO 的双 mailbox client/graph 路径已通过；小 checkpoint 的 24×128-token 完整服务测试
-已确认 decode 实际使用 CUDA Graph，尚无真实 Coder 权重下的吞吐/精度验收。
+当前仍缺完整的原生流水线性能校准、抢占上界测量和跨栈策略覆盖；跨节点 RDMA MoE
+暂不属于本轮单机验收范围。真实 Coder BF16 已通过确定性模式下的固定历史逐 token
+全词表对照，覆盖三路 D 同时活动、实际批处理和非空 TBO 图重放；三路 D 使用相同的
+16 组参考历史，每路检查 256 个位置。这是有限轨迹的数值证据，不代表完整模型质量
+评估或性能验收。相对最强原生基线的 1.5× P90 goodput 仍未达到。
 推测解码、LoRA、EPLB、CPU offload、量化、多节点、动态 P/D 切换均未支持。
 
 ## 权重与显存
