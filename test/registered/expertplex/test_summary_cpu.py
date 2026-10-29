@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 PATH = (
     Path(__file__).resolve().parents[3] / "examples/expertplex/summarize_experiments.py"
 )
+sys.path.insert(0, str(PATH.parent))
 SPEC = importlib.util.spec_from_file_location("expertplex_summary", PATH)
 SUMMARY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SUMMARY)
@@ -40,6 +42,7 @@ def write_fixture(root, warmup=1):
         )
     )
     details = dict(
+        request_rate=1,
         input_lens=[3] * 4,
         output_lens=[3, 2, 1, 0],
         successes=[True, True, True, False],
@@ -63,6 +66,86 @@ def write_fixture(root, warmup=1):
 
 
 class ServingSummaryTests(unittest.TestCase):
+    def test_stale_summary_metrics_cannot_override_raw_requests(self):
+        for key, value in (
+            ("joint_slo_met_requests", 4),
+            ("joint_slo_attainment", 1.0),
+            ("meets_p90_joint_slo", True),
+            ("attempted_requests", 3),
+            ("completed_requests", 4),
+            ("request_rate", 2),
+            ("observed_slo_goodput_rps", 10),
+        ):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "run"
+                write_fixture(root)
+                p = root / "sweep/joint-slo.json"
+                data = json.loads(p.read_text())
+                data["results"][0][key] = value
+                p.write_text(json.dumps(data))
+                with self.assertRaisesRegex(ValueError, "Raw-derived"):
+                    SUMMARY.summarize([root])
+
+    def test_invalid_rate_and_mismatched_slo_headers_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "run"
+            write_fixture(root)
+            p = root / "sweep/detail.json"
+            original = p.read_text()
+            for rate in (None, 0, -1, True, float("inf"), float("nan")):
+                details = json.loads(original)
+                details["request_rate"] = rate
+                p.write_text(json.dumps(details))
+                with (
+                    self.subTest(rate=rate),
+                    self.assertRaisesRegex(ValueError, "rate"),
+                ):
+                    SUMMARY.summarize([root])
+            p.write_text(original)
+            p = root / "sweep/joint-slo.json"
+            data = json.loads(p.read_text())
+            data["ttft_slo_ms"] = 2000
+            p.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "SLO mismatch"):
+                SUMMARY.summarize([root])
+
+    def test_truncated_details_or_false_maximum_cannot_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "run"
+            write_fixture(root)
+            p = root / "sweep/detail.json"
+            original = p.read_text()
+            details = json.loads(original)
+            details["latencies"].pop()
+            p.write_text(json.dumps(details))
+            with self.assertRaises(ValueError):
+                SUMMARY.summarize([root])
+            p.write_text(original)
+            p = root / "sweep/joint-slo.json"
+            data = json.loads(p.read_text())
+            data["p90_goodput_max_tested_arrival_rps"] = 1
+            p.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "maximum"):
+                SUMMARY.summarize([root])
+
+    def test_output_lengths_must_match_without_using_failed_responses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            roots = [Path(tmp) / "first", Path(tmp) / "second"]
+            for root in roots:
+                write_fixture(root)
+            p = roots[1] / "sweep/detail.json"
+            details = json.loads(p.read_text())
+            details["output_lens"][3] = 99  # Failed; not useful delivered tokens.
+            p.write_text(json.dumps(details))
+            report = SUMMARY.summarize(roots)
+            self.assertEqual(report["rows"][1]["output_tokens_per_second"], 2)
+            self.assertFalse(report["output_length_reference_complete"])
+            self.assertAlmostEqual(report["rows"][1]["observed_slo_goodput_rps"], 1 / 3)
+            details["output_lens"][0] = 4  # Still meets SLO, but a different workload.
+            p.write_text(json.dumps(details))
+            with self.assertRaisesRegex(ValueError, "output lengths"):
+                SUMMARY.summarize(roots)
+
     def test_explicit_memory_tuning_retains_fractions_and_other_constraints(self):
         with tempfile.TemporaryDirectory() as tmp:
             roots = [Path(tmp) / "first", Path(tmp) / "second"]

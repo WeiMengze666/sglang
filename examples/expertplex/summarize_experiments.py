@@ -13,6 +13,8 @@ import json
 import math
 from pathlib import Path
 
+from bench_sweep import joint_slo
+
 
 def read_json(path):
     if not path.exists():
@@ -48,6 +50,7 @@ def summarize(paths, *, allow_memory_tuning=False):
     # Source digests are retained below for review of implementation revisions.
     common = None
     expected_input_digest = None
+    expected_output_lengths = None
     rows, runs = [], []
     for root in paths:
         experiment = read_json(root / "experiment.json")
@@ -142,8 +145,60 @@ def summarize(paths, *, allow_memory_tuning=False):
                 },
             }
         )
+        feasible_rates = []
+        for key in ("ttft_slo_ms", "tpot_slo_ms"):
+            if key in sweep and sweep[key] != settings[key]:
+                raise ValueError(f"Sweep/settings SLO mismatch in {root}: {key}")
         for result in sweep["results"]:
             detailed = read_json(root / "sweep" / Path(result["details_file"]).name)
+            rate = detailed.get("request_rate")
+            if type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0:
+                raise ValueError(f"Invalid measured request rate in {root}")
+            measured = joint_slo(
+                detailed, settings["ttft_slo_ms"] / 1000, settings["tpot_slo_ms"] / 1000
+            )
+            count = measured["attempted_requests"]
+            if count != settings["requests"] or len(detailed["input_lens"]) != count:
+                raise ValueError(f"Requested/detail count mismatch in {root}")
+            if any(type(v) is not int or v < 1 for v in detailed["input_lens"]) or any(
+                type(v) is not int or v < 0 for v in detailed["output_lens"]
+            ):
+                raise ValueError(f"Invalid token lengths in {root}")
+            if any(type(v) is not bool for v in detailed["successes"]):
+                raise ValueError(f"Invalid request success flags in {root}")
+            for key, value in measured.items():
+                # Older summaries omit goodput and one-token counts. Recompute
+                # both; verify every stored field rather than trusting it.
+                if key not in result and key in (
+                    "observed_slo_goodput_rps",
+                    "unscorable_one_token_responses",
+                ):
+                    continue
+                stored = result.get(key)
+                matches = (
+                    type(stored) in (int, float)
+                    and math.isfinite(stored)
+                    and math.isclose(stored, value, rel_tol=1e-12, abs_tol=1e-15)
+                    if type(value) is float
+                    else stored == value
+                )
+                if not matches:
+                    raise ValueError(f"Raw-derived SLO mismatch in {root}: {key}")
+            if measured["meets_p90_joint_slo"]:
+                feasible_rates.append(measured["request_rate"])
+            if expected_output_lengths is None:
+                expected_output_lengths = [None] * count
+            for i, (length, ok) in enumerate(
+                zip(detailed["output_lens"], detailed["successes"], strict=True)
+            ):
+                if not ok:
+                    continue  # A failed response cannot establish requested length.
+                previous = expected_output_lengths[i]
+                if previous is not None and previous != length:
+                    raise ValueError(
+                        f"Actual ordered request output lengths differ in {root}"
+                    )
+                expected_output_lengths[i] = length
             input_digest = hashlib.sha256(
                 json.dumps(detailed["input_lens"]).encode()
             ).hexdigest()
@@ -196,17 +251,33 @@ def summarize(paths, *, allow_memory_tuning=False):
                     ],
                     0.9,
                 ),
-                "output_tokens_per_second": sum(detailed["output_lens"])
+                "observed_slo_goodput_rps": measured["observed_slo_goodput_rps"],
+                "unscorable_one_token_responses": measured[
+                    "unscorable_one_token_responses"
+                ],
+                "output_tokens_per_second": sum(length for _, _, length in completed)
                 / detailed["duration"],
                 "meets_p90_joint_slo": result["meets_p90_joint_slo"],
             }
             rows.append(row)
+        if (
+            max(feasible_rates, default=None)
+            != sweep["p90_goodput_max_tested_arrival_rps"]
+        ):
+            raise ValueError(
+                f"Raw-derived maximum feasible tested rate mismatch in {root}"
+            )
     for key in ("model_path", "tokenizer_path", "dataset_path"):
         common[key] = Path(common[key]).name
     return {
         "scope": __doc__,
         "common_conditions": common,
         "ordered_input_lengths_sha256": expected_input_digest,
+        "ordered_successful_output_lengths_sha256": hashlib.sha256(
+            json.dumps(expected_output_lengths).encode()
+        ).hexdigest(),
+        "output_length_reference_complete": expected_output_lengths is not None
+        and all(v is not None for v in expected_output_lengths),
         "runs": runs,
         "memory_fraction_policy": (
             "Per-method tuning; individual static memory fractions are recorded in runs. "

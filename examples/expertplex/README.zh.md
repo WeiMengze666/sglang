@@ -394,6 +394,9 @@ python examples/expertplex/check_e2e.py \
 保留逐请求 `successes/ttfts/latencies/output_lens`，计算同一个请求同时满足 TTFT、TPOT
 的比例，失败请求保留在分母中。分别比较两个 P90 百分位不等价于联合 90% attainment。
 报告最高**已测试**且联合 attainment≥90% 的 offered rate，以及观测 SLO goodput。
+`summarize_experiments.py` 从逐请求数据重算并核对 SLO 计数、goodput 和最高通过速率，
+拒绝截断数组、汇总字段冲突及成功请求输出长度不一致。失败请求保留在 attainment 分母中，
+其输出不计入成功交付的 token 吞吐；始终失败的位置不能证明输出长度可比。
 
 本次 ShareGPT 对比在测量前固定 TTFT=1s、TPOT=50ms；LooGLE 固定为 10s/100ms。
 这沿用论文的阈值，但模型和 BF16/B300 平台已经改变，仍须标为适配实验。
