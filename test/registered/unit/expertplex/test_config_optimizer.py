@@ -61,6 +61,12 @@ def model_config(*, coder=False, large=False):
 def profiles_dict(model):
     phase = {
         "attention": {"alpha": 1e-6, "beta": 2e-6, "gamma": 0.0, "delta": 0.0},
+        "attention_domain": {
+            "training_points": [[1, 1], [100000, 1], [1, 1000000], [100000, 1000000]],
+            "max_phase_tokens": 10**12,
+            "max_kv_tokens": 10**12,
+            "kv_reserve_per_sequence": 4,
+        },
         "moe_by_sm_count": {
             "2": {"alpha": 1e-6, "beta": 2e-7},
             "4": {"alpha": 1e-6, "beta": 1e-7},

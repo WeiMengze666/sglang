@@ -432,6 +432,15 @@ schema 要求 `units="seconds_per_layer"`、非空 `provenance`、真实 `total_
 `{x,sequence_length,latency_s}` 样本；MoE 的 x 必须是 tile footprint。旧的
 `moe_by_sm_count` 格式仍只使用实际测量过的 SM 预算，不对整段 MoE 延迟做隐式插值。
 
+每个 phase 还必须提供 `attention_domain`：`training_points` 是实际训练测量的
+`[local_batch, sequence_length]` 列表；`max_phase_tokens`、`max_kv_tokens` 和
+`kv_reserve_per_sequence` 必须来自该次测量配置。不能用留出样本扩张训练范围。
+优化器只在训练形状的凸包内插值，并与 phase token / KV 容量限制取交集；
+固定序列长度下，批量搜索只接受其中有测量支持的整数 local batch。
+缺失范围或序列长度超出覆盖时会报错；不会为了满足 SLO 而外推系数。
+旧 profile 需从原始训练记录补齐这些字段，不能人为填写宽泛范围。
+该检查约束输入形状，不等于预测误差通过；仍需冻结系数后的独立留出验证。
+
 分组件 profile 通过同一个 `--profiles` 入口读取：省略两个 phase 下的
 `moe_by_sm_count`，增加顶层 `moe_components_by_expert_count`，以 E 数量的字符串为键。
 每个值包含 `units="seconds_per_layer"`、非空 `provenance`、测量代码的

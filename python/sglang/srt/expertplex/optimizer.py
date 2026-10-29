@@ -13,6 +13,7 @@ import json
 import math
 from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -373,6 +374,133 @@ def fit_coefficients(
 
 
 @dataclass(frozen=True)
+class AttentionDomain:
+    """Interpolation support from training shapes, clipped by profiled capacity.
+
+    The convex hull bounds input shapes, not prediction error. Heldout checks
+    must independently validate the frozen fit; they must not expand this hull.
+    Sequence length is fixed during batch search, so intersecting the hull and
+    memory limits gives one contiguous interval of supported local batches.
+    """
+
+    phase: str
+    training_points: tuple[tuple[int, int], ...]  # (local batch, sequence)
+    max_phase_tokens: int
+    max_kv_tokens: int
+    kv_reserve_per_sequence: int
+
+    def __post_init__(self):
+        if self.phase not in ("prefill", "decode"):
+            raise ValueError("Unknown attention profile phase")
+        if any(
+            type(v) is not int or v <= 0
+            for v in (self.max_phase_tokens, self.max_kv_tokens)
+        ) or (
+            type(self.kv_reserve_per_sequence) is not int
+            or self.kv_reserve_per_sequence < 0
+        ):
+            raise ValueError("Attention profile capacity must be explicit integers")
+        if (
+            len(self.training_points) < 3
+            or any(
+                len(point) != 2 or any(type(v) is not int or v <= 0 for v in point)
+                for point in self.training_points
+            )
+            or len(set(self.training_points)) != len(self.training_points)
+        ):
+            raise ValueError("Need unique positive integer attention training shapes")
+        for batch, sequence in self.training_points:
+            if batch > self.capacity_batch(sequence):
+                raise ValueError("Attention training shape exceeds profiled capacity")
+        if len(self.hull()) < 3:
+            raise ValueError("Attention training shapes must span batch and sequence")
+
+    @classmethod
+    def from_dict(cls, data, phase):
+        if not isinstance(data, dict) or set(data) != {
+            "training_points",
+            "max_phase_tokens",
+            "max_kv_tokens",
+            "kv_reserve_per_sequence",
+        }:
+            raise ValueError(
+                "Measured attention_domain with training shapes and capacity is required"
+            )
+        points = data["training_points"]
+        if not isinstance(points, (list, tuple)) or any(
+            not isinstance(p, (list, tuple)) for p in points
+        ):
+            raise ValueError("Invalid attention training shapes")
+        return cls(
+            phase,
+            tuple(tuple(p) for p in points),
+            data["max_phase_tokens"],
+            data["max_kv_tokens"],
+            data["kv_reserve_per_sequence"],
+        )
+
+    def capacity_batch(self, sequence):
+        return min(
+            self.max_phase_tokens // (sequence if self.phase == "prefill" else 1),
+            self.max_kv_tokens // (sequence + self.kv_reserve_per_sequence),
+        )
+
+    @lru_cache(maxsize=32)
+    def hull(self):
+        points = sorted((s, b) for b, s in self.training_points)
+
+        def cross(o, a, b):
+            return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+        def half(values):
+            result = []
+            for point in values:
+                while len(result) >= 2 and cross(result[-2], result[-1], point) <= 0:
+                    result.pop()
+                result.append(point)
+            return result
+
+        return tuple(half(points)[:-1] + half(reversed(points))[:-1])
+
+    def batch_bounds(self, sequence):
+        if type(sequence) is not int or sequence <= 0:
+            raise ValueError("Attention sequence length must be a positive integer")
+        hull = self.hull()
+        if not min(p[0] for p in hull) <= sequence <= max(p[0] for p in hull):
+            # A batch search cannot repair missing sequence coverage.
+            raise ProfileCoverageError(
+                "Sequence is outside attention training coverage"
+            )
+        intersections = []
+        for a, b in zip(hull, hull[1:] + hull[:1]):
+            if min(a[0], b[0]) <= sequence <= max(a[0], b[0]):
+                if a[0] == b[0]:
+                    intersections.extend((Fraction(a[1]), Fraction(b[1])))
+                else:
+                    intersections.append(
+                        Fraction(a[1])
+                        + Fraction((sequence - a[0]) * (b[1] - a[1]), b[0] - a[0])
+                    )
+        if not intersections:
+            raise ProfileCoverageError("No attention shape support at sequence")
+        return (
+            math.ceil(min(intersections)),
+            min(math.floor(max(intersections)), self.capacity_batch(sequence)),
+        )
+
+    def validate(self, batch, sequence):
+        if type(batch) is not int or batch <= 0:
+            raise ValueError("Attention local batch must be a positive integer")
+        lower, upper = self.batch_bounds(sequence)
+        if not lower <= batch <= upper:
+            raise ProfileCoverageError(
+                "Batch is outside measured attention shape/capacity support",
+                below=batch < lower,
+                above=batch > upper,
+            )
+
+
+@dataclass(frozen=True)
 class MeasuredProfiles:
     """Measured profile database: no default coefficients or bandwidth."""
 
@@ -386,6 +514,7 @@ class MeasuredProfiles:
     prefill_preprocess: bool = False
     probabilities_by_layer: dict[str, tuple[tuple[float, ...], ...]] | None = None
     components_by_world: dict[int, ComponentProfiles] | None = None
+    attention_domains: dict[str, AttentionDomain] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], model: ModelSpec) -> MeasuredProfiles:
@@ -456,8 +585,12 @@ class MeasuredProfiles:
         moe: dict[tuple[str, int], LatencyCoefficients] = {}
         probabilities: dict[str, tuple[float, ...]] = {}
         by_layer = {}
+        domains = {}
         for phase in ("prefill", "decode"):
             phase_data = data[phase]
+            domains[phase] = AttentionDomain.from_dict(
+                phase_data.get("attention_domain"), phase
+            )
             attention[phase] = LatencyCoefficients(**phase_data["attention"])
             legacy = phase_data.get("moe_by_sm_count", {})
             if not legacy and not components:
@@ -531,6 +664,7 @@ class MeasuredProfiles:
             preprocess,
             by_layer or None,
             components or None,
+            domains,
         )
 
     @classmethod
@@ -755,6 +889,9 @@ def _iteration_latency(
     )
     local_batch = math.ceil(batch / attention_count)
     sequence = input_length if phase == "prefill" else context_length
+    if not profiles.attention_domains or phase not in profiles.attention_domains:
+        raise ProfileCoverageError("Measured attention shape coverage is required")
+    profiles.attention_domains[phase].validate(local_batch, sequence)
     attention = profiles.attention[phase].predict(local_batch, sequence)
     tokens = batch * input_length if phase == "prefill" else batch
     # Mailboxes belong to independent attention clients. Their partial tiles
@@ -866,6 +1003,9 @@ def search(
         if not math.isfinite(value) or value <= 0:
             raise ValueError(f"{name} must be finite and positive")
     for phase, sequence in (("prefill", input_length), ("decode", context_length)):
+        if not profiles.attention_domains or phase not in profiles.attention_domains:
+            raise ProfileCoverageError("Measured attention shape coverage is required")
+        profiles.attention_domains[phase].batch_bounds(sequence)
         coefficients = profiles.attention[phase]
         if (
             coefficients.beta
