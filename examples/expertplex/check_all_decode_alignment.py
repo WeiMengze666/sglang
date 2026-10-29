@@ -214,6 +214,53 @@ def finish_report(result, out, remaining):
         raise RuntimeError(result["cleanup_error"])
 
 
+def stop_owned_services(processes, grace_timeout=90, child_timeout=10):
+    """Stop clients before E and allow each supervisor to release its workers.
+
+    Snapshot process identities before a parent can exit and orphan children.
+    Descendant termination is a bounded fallback, after the supervisor's own
+    stop protocol; killing E workers first bypasses executor.stop().
+    """
+    import psutil
+
+    trees = []
+    for proc in processes:
+        try:
+            trees.append((proc, proc.children(recursive=True)))
+        except psutil.NoSuchProcess:
+            trees.append((proc, []))
+    remaining = []
+    for proc, descendants in reversed(trees):
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=grace_timeout)
+            except psutil.TimeoutExpired:
+                proc.kill()
+        except psutil.NoSuchProcess:
+            pass
+        owned = [proc, *descendants]
+        for child in descendants:
+            try:
+                child.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(owned, timeout=child_timeout)
+        for child in alive:
+            try:
+                child.kill()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(alive, timeout=child_timeout)
+        for child in alive:
+            try:
+                if child.status() != psutil.STATUS_ZOMBIE:
+                    remaining.append(child.pid)
+            except psutil.NoSuchProcess:
+                pass
+    return remaining
+
+
 def run_case(source, out):
     import psutil
     from check_incremental import post
@@ -415,32 +462,7 @@ def run_case(source, out):
         result.update(status="failed", error=repr(exc))
         raise
     finally:
-        owned = {}
-        for proc in processes:
-            try:
-                for child in [proc, *proc.children(recursive=True)]:
-                    owned[(child.pid, child.create_time())] = child
-            except psutil.NoSuchProcess:
-                pass
-        for proc in reversed(list(owned.values())):
-            try:
-                proc.terminate()
-            except psutil.NoSuchProcess:
-                pass
-        _, alive = psutil.wait_procs(list(owned.values()), timeout=30)
-        for proc in alive:
-            try:
-                proc.kill()
-            except psutil.NoSuchProcess:
-                pass
-        _, alive = psutil.wait_procs(alive, timeout=10)
-        remaining = []
-        for proc in alive:
-            try:
-                if proc.status() != psutil.STATUS_ZOMBIE:
-                    remaining.append(proc.pid)
-            except psutil.NoSuchProcess:
-                pass
+        remaining = stop_owned_services(processes)
         for log in logs:
             log.close()
         finish_report(result, out, remaining)

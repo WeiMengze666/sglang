@@ -3,6 +3,7 @@
 import copy
 import importlib
 import json
+import subprocess
 import sys
 import tempfile
 import threading
@@ -284,6 +285,91 @@ class AllDecodeTests(unittest.TestCase):
             stamps = json.loads((Path(temp) / "dispatch.json").read_text())
             self.assertLessEqual(stamps["prepared_ns"], stamps["release_ns"])
             self.assertLessEqual(stamps["release_ns"], stamps["dispatch_ns"])
+
+
+@unittest.skipUnless(importlib.util.find_spec("psutil"), "psutil required")
+class OwnedServiceShutdownTests(unittest.TestCase):
+    def test_supervisors_release_workers_before_expert_teardown(self):
+        import psutil
+
+        child_code = """
+import sys,time
+from pathlib import Path
+root,name=Path(sys.argv[1]),sys.argv[2]
+(root/(name+'.child-ready')).touch()
+while not (root/(name+'.release')).exists(): time.sleep(.005)
+with (root/'order').open('a') as f: f.write(name+'-child\\n')
+"""
+        parent_code = """
+import signal,subprocess,sys,time
+from pathlib import Path
+root,name,code=Path(sys.argv[1]),sys.argv[2],sys.argv[3]
+stopping=False
+def stop(*args):
+ global stopping
+ stopping=True
+signal.signal(signal.SIGTERM,stop)
+child=subprocess.Popen([sys.executable,'-c',code,str(root),name])
+while not stopping: time.sleep(.005)
+(root/(name+'.release')).touch()
+child.wait(timeout=5)
+with (root/'order').open('a') as f: f.write(name+'-parent\\n')
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            procs = [
+                subprocess.Popen(
+                    [sys.executable, "-c", parent_code, temp, role, child_code]
+                )
+                for role in ("expert", "decode")
+            ]
+            owned = [psutil.Process(p.pid) for p in procs]
+            try:
+                deadline = time.monotonic() + 5
+                while len(list(Path(temp).glob("*.child-ready"))) < 2:
+                    if time.monotonic() > deadline:
+                        self.fail("Fixture children did not become ready")
+                    time.sleep(0.01)
+                self.assertEqual(check.stop_owned_services(owned, 5, 2), [])
+                self.assertEqual(
+                    (Path(temp) / "order").read_text().splitlines(),
+                    ["decode-child", "decode-parent", "expert-child", "expert-parent"],
+                )
+            finally:
+                check.stop_owned_services(owned, 1, 1)
+                for p in procs:
+                    p.wait(timeout=2)
+
+    def test_unresponsive_owned_tree_is_bounded_and_reaped(self):
+        import psutil
+
+        code = """
+import signal,subprocess,sys,time
+from pathlib import Path
+signal.signal(signal.SIGTERM,signal.SIG_IGN)
+child=subprocess.Popen([sys.executable,'-c','import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(60)'])
+Path(sys.argv[1]).write_text(str(child.pid))
+time.sleep(60)
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            ready = Path(temp) / "ready"
+            p = subprocess.Popen([sys.executable, "-c", code, str(ready)])
+            owned = [psutil.Process(p.pid)]
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists():
+                    if time.monotonic() > deadline:
+                        self.fail("Fixture tree did not become ready")
+                    time.sleep(0.01)
+                child = psutil.Process(int(ready.read_text()))
+                start = time.monotonic()
+                self.assertEqual(check.stop_owned_services(owned, 0.1, 0.1), [])
+                self.assertLess(time.monotonic() - start, 5)
+                self.assertTrue(
+                    not child.is_running() or child.status() == psutil.STATUS_ZOMBIE
+                )
+            finally:
+                check.stop_owned_services(owned, 1, 1)
+                p.wait(timeout=2)
 
 
 if __name__ == "__main__":
