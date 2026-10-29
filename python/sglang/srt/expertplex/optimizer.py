@@ -149,27 +149,48 @@ class Layout:
     prefill_count: int
     decode_count: int
     expert_count: int
+    prefill_tp_size: int = 1
+    decode_tp_size: int = 1
 
     @property
     def name(self) -> str:
-        return f"{self.prefill_count}P{self.decode_count}D{self.expert_count}E"
+        base = f"{self.prefill_count}P{self.decode_count}D{self.expert_count}E"
+        if self.prefill_tp_size != 1 or self.decode_tp_size != 1:
+            base += f"-TP{self.prefill_tp_size}x{self.decode_tp_size}"
+        return base
 
     def config(self, model_path: str, **overrides: Any) -> NodeConfig:
         return default_config(model_path, **asdict(self), **overrides)
 
 
-def enumerate_layouts(num_experts: int, node_gpu_count: int = 8) -> list[Layout]:
+def enumerate_layouts(
+    num_experts: int,
+    node_gpu_count: int = 8,
+    *,
+    attention_tp_sizes: Sequence[int] = (1,),
+) -> list[Layout]:
     if node_gpu_count != 8 or num_experts <= 0:
         raise ValueError(
             "placement enumeration requires one 8-GPU node and a positive expert count"
         )
+    widths = _tp_widths(attention_tp_sizes)
     return [
-        Layout(p, 8 - p - e, e)
+        Layout(p, (8 - e - p * ptp) // dtp, e, ptp, dtp)
         for e in range(1, 7)
         if num_experts % e == 0
-        for p in range(1, 8 - e)
-        if 8 - p - e > 0
+        for ptp in widths
+        for dtp in widths
+        for p in range(1, (8 - e) // ptp + 1)
+        if 8 - e - p * ptp >= dtp and (8 - e - p * ptp) % dtp == 0
     ]
+
+
+def _tp_widths(values):
+    if not values or any(type(v) is not int or not 1 <= v <= 8 for v in values):
+        raise ValueError("attention TP widths must be integers in [1, 8]")
+    if len(set(values)) != len(values):
+        raise ValueError("attention TP widths must be unique")
+    return tuple(sorted(values))
 
 
 @dataclass(frozen=True)
@@ -266,8 +287,13 @@ def estimate_memory(
         * 8
     )
     return MemoryEstimate(
-        attention_weights_bytes=model.attention_weight_bytes,
-        attention_kv_bytes=model.kv_bytes_per_token * kv_tokens_per_attention_gpu,
+        attention_weights_bytes=max(
+            model.attention_rank_weight_bytes(c.tp_size) for c in config.clients
+        ),
+        attention_kv_bytes=max(
+            model.attention_rank_kv_bytes_per_token(c.tp_size) for c in config.clients
+        )
+        * kv_tokens_per_attention_gpu,
         attention_buffers_bytes=attention_buffers,
         expert_weights_bytes=model.expert_weight_bytes // len(config.expert_devices),
         expert_buffers_bytes=expert_buffers,
@@ -501,6 +527,43 @@ class AttentionDomain:
 
 
 @dataclass(frozen=True)
+class AttentionTPProfile:
+    """Measured attention path, including its TP collectives, at one TP width.
+
+    Includes the attention-output and remote-MoE-output reductions exposed by
+    native boundaries. A self_attn-only hook does not cover this path at TP>1.
+    No latency division by TP or reuse of a TP1 domain is permitted.
+    """
+
+    coefficients: LatencyCoefficients
+    domain: AttentionDomain
+    provenance: str
+
+    @classmethod
+    def from_dict(cls, data, phase):
+        if not isinstance(data, dict) or set(data) != {
+            "attention",
+            "attention_domain",
+            "provenance",
+            "includes_tp_collectives",
+        }:
+            raise ValueError(
+                "TP attention requires measured coefficients, domain and provenance"
+            )
+        if data["includes_tp_collectives"] is not True:
+            raise ValueError(
+                "TP attention profile must include native attention and MoE-output collectives"
+            )
+        if not isinstance(data["provenance"], str) or not data["provenance"].strip():
+            raise ValueError("TP attention profile provenance is required")
+        return cls(
+            LatencyCoefficients(**data["attention"]),
+            AttentionDomain.from_dict(data["attention_domain"], phase),
+            data["provenance"],
+        )
+
+
+@dataclass(frozen=True)
 class MeasuredProfiles:
     """Measured profile database: no default coefficients or bandwidth."""
 
@@ -515,6 +578,23 @@ class MeasuredProfiles:
     probabilities_by_layer: dict[str, tuple[tuple[float, ...], ...]] | None = None
     components_by_world: dict[int, ComponentProfiles] | None = None
     attention_domains: dict[str, AttentionDomain] | None = None
+    attention_tp_profiles: dict[tuple[str, int], AttentionTPProfile] | None = None
+
+    def attention_profile(self, phase, tp_size):
+        if tp_size == 1:
+            if not self.attention_domains or phase not in self.attention_domains:
+                raise ProfileCoverageError(
+                    "Measured attention shape coverage is required"
+                )
+            return AttentionTPProfile(
+                self.attention[phase], self.attention_domains[phase], self.provenance
+            )
+        try:
+            return (self.attention_tp_profiles or {})[phase, tp_size]
+        except KeyError:
+            raise ProfileCoverageError(
+                f"Missing measured {phase} attention TP{tp_size} profile"
+            ) from None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], model: ModelSpec) -> MeasuredProfiles:
@@ -585,13 +665,33 @@ class MeasuredProfiles:
         moe: dict[tuple[str, int], LatencyCoefficients] = {}
         probabilities: dict[str, tuple[float, ...]] = {}
         by_layer = {}
-        domains = {}
+        domains, tp_profiles = {}, {}
         for phase in ("prefill", "decode"):
             phase_data = data[phase]
             domains[phase] = AttentionDomain.from_dict(
                 phase_data.get("attention_domain"), phase
             )
             attention[phase] = LatencyCoefficients(**phase_data["attention"])
+            extra = phase_data.get("attention_by_tp_size", {})
+            if not isinstance(extra, dict):
+                raise ValueError(
+                    "attention_by_tp_size must map TP widths to measured profiles"
+                )
+            for key, value in extra.items():
+                try:
+                    tp = int(key)
+                except (ValueError, TypeError):
+                    raise ValueError("Invalid TP profile width") from None
+                if (
+                    str(tp) != str(key)
+                    or not 2 <= tp <= 8
+                    or (phase, tp) in tp_profiles
+                ):
+                    raise ValueError(
+                        "TP profile widths must be unique integers in [2, 8]"
+                    )
+                model.attention_rank_kv_heads(tp)
+                tp_profiles[phase, tp] = AttentionTPProfile.from_dict(value, phase)
             legacy = phase_data.get("moe_by_sm_count", {})
             if not legacy and not components:
                 raise ValueError("Measured MoE profiles are required")
@@ -665,6 +765,7 @@ class MeasuredProfiles:
             by_layer or None,
             components or None,
             domains,
+            tp_profiles or None,
         )
 
     @classmethod
@@ -688,6 +789,8 @@ class SearchResult:
     component_runtime_source_sha256: str | None = None
     prefill_sm_bracket: tuple[int, int] | None = None
     decode_sm_bracket: tuple[int, int] | None = None
+    searched_attention_tp_sizes: tuple[int, ...] = (1,)
+    attention_profile_provenance: tuple[str, str] | None = None
 
     def config(self, source: NodeConfig) -> NodeConfig:
         """Export the selected placement and contention policy, not the input."""
@@ -889,10 +992,10 @@ def _iteration_latency(
     )
     local_batch = math.ceil(batch / attention_count)
     sequence = input_length if phase == "prefill" else context_length
-    if not profiles.attention_domains or phase not in profiles.attention_domains:
-        raise ProfileCoverageError("Measured attention shape coverage is required")
-    profiles.attention_domains[phase].validate(local_batch, sequence)
-    attention = profiles.attention[phase].predict(local_batch, sequence)
+    tp = layout.prefill_tp_size if phase == "prefill" else layout.decode_tp_size
+    attention_profile = profiles.attention_profile(phase, tp)
+    attention_profile.domain.validate(local_batch, sequence)
+    attention = attention_profile.coefficients.predict(local_batch, sequence)
     tokens = batch * input_length if phase == "prefill" else batch
     # Mailboxes belong to independent attention clients. Their partial tiles
     # cannot be merged into a single global-batch tile without changing the
@@ -937,6 +1040,7 @@ def search(
     kv_tokens_per_attention_gpu: int,
     reserve_gib: float = 16.0,
     overlap: str = "sequential",
+    attention_tp_sizes: Sequence[int] = (1,),
 ) -> SearchResult | None:
     """Algorithm 1, using only explicitly profiled contention SM budgets.
 
@@ -944,18 +1048,14 @@ def search(
     TBO is an analytical option for a measured TBO setup; selecting it here
     does not enable communication overlap in the runtime.
     """
+    attention_tp_sizes = _tp_widths(attention_tp_sizes)
     if profiles.prefill_preprocess != config.prefill_preprocess:
         raise ValueError(
             "profile prefill_preprocess differs from the selected transport; "
             "measure both E preprocessing and its raw-token communication path"
         )
-    if profiles.components_by_world and (
-        config.cta_count not in (0, profiles.total_sms)
-        or any(client.tp_size != 1 for client in config.clients)
-    ):
-        raise ValueError(
-            "Component search requires matching total SMs and TP1 attention profiles"
-        )
+    if profiles.components_by_world and config.cta_count not in (0, profiles.total_sms):
+        raise ValueError("Component search requires matching total SMs")
     if overlap == "auto":
         candidates = [
             search(
@@ -970,6 +1070,7 @@ def search(
                 kv_tokens_per_attention_gpu=kv_tokens_per_attention_gpu,
                 reserve_gib=reserve_gib,
                 overlap=choice,
+                attention_tp_sizes=attention_tp_sizes,
             )
             for choice in ("sequential", "tbo")
         ]
@@ -1002,20 +1103,7 @@ def search(
     ):
         if not math.isfinite(value) or value <= 0:
             raise ValueError(f"{name} must be finite and positive")
-    for phase, sequence in (("prefill", input_length), ("decode", context_length)):
-        if not profiles.attention_domains or phase not in profiles.attention_domains:
-            raise ProfileCoverageError("Measured attention shape coverage is required")
-        profiles.attention_domains[phase].batch_bounds(sequence)
-        coefficients = profiles.attention[phase]
-        if (
-            coefficients.beta
-            + coefficients.gamma * sequence
-            + coefficients.delta * sequence**2
-            < 0
-        ):
-            raise ValueError(
-                "attention profile must be monotone in batch size for binary search"
-            )
+    for phase in ("prefill", "decode"):
         if any(
             c.beta + c.gamma + c.delta < 0
             for (p, _), c in profiles.moe.items()
@@ -1025,7 +1113,14 @@ def search(
                 "MoE profile must be monotone in tile count for binary search"
             )
     best: SearchResult | None = None
-    for layout in enumerate_layouts(model.num_experts):
+    for layout in enumerate_layouts(
+        model.num_experts, attention_tp_sizes=attention_tp_sizes
+    ):
+        try:
+            model.attention_rank_kv_heads(layout.prefill_tp_size)
+            model.attention_rank_kv_heads(layout.decode_tp_size)
+        except ValueError:
+            continue  # This checkpoint cannot execute these head partitions.
         candidate_config = layout.config(
             config.model_path,
             **{
@@ -1041,6 +1136,17 @@ def search(
             reserve_gib=reserve_gib,
         ).fits:
             continue
+        for phase, sequence, tp in (
+            ("prefill", input_length, layout.prefill_tp_size),
+            ("decode", context_length, layout.decode_tp_size),
+        ):
+            profile = profiles.attention_profile(phase, tp)
+            profile.domain.batch_bounds(sequence)
+            c = profile.coefficients
+            if c.beta + c.gamma * sequence + c.delta * sequence**2 < 0:
+                raise ValueError(
+                    "attention profile must be monotone in batch size for binary search"
+                )
         if profiles.components_by_world:
             if layout.expert_count not in profiles.components_by_world:
                 raise ProfileCoverageError(
@@ -1168,6 +1274,15 @@ def search(
                 decode_sm_bracket=component.bracket("decode", q)
                 if profiles.components_by_world
                 else (q, q),
+                searched_attention_tp_sizes=attention_tp_sizes,
+                attention_profile_provenance=(
+                    profiles.attention_profile(
+                        "prefill", layout.prefill_tp_size
+                    ).provenance,
+                    profiles.attention_profile(
+                        "decode", layout.decode_tp_size
+                    ).provenance,
+                ),
             )
             if best is None or goodput > best.predicted_goodput_requests_per_second:
                 best = result
@@ -1194,6 +1309,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--decode-slo-s", type=float, default=0.05)
     parser.add_argument(
         "--overlap", choices=("sequential", "tbo", "auto"), default="auto"
+    )
+    parser.add_argument(
+        "--attention-tp-sizes",
+        type=int,
+        nargs="+",
+        default=[1],
+        help="Search these native attention TP widths; each feasible width requires its own measured phase profile, including TP collectives",
     )
     parser.add_argument(
         "--prefill-preprocess", action=argparse.BooleanOptionalAction, default=True
@@ -1236,6 +1358,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             kv_tokens_per_attention_gpu=args.kv_tokens_per_attention_gpu,
             reserve_gib=args.reserve_gib,
             overlap=args.overlap,
+            attention_tp_sizes=args.attention_tp_sizes,
         )
         output["prediction"] = asdict(result) if result is not None else None
         if result is not None:

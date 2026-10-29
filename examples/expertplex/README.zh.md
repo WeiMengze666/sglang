@@ -447,6 +447,22 @@ schema 要求 `units="seconds_per_layer"`、非空 `provenance`、真实 `total_
 旧 profile 需从原始训练记录补齐这些字段，不能人为填写宽泛范围。
 该检查约束输入形状，不等于预测误差通过；仍需冻结系数后的独立留出验证。
 
+`--attention-tp-sizes 1 2` 联合枚举独立 P/D 服务数量、各角色的 attention TP
+宽度和 E 数量，总共使用 8 张卡。默认仍为 `1`；输出的
+`searched_attention_tp_sizes` 明确记录搜索范围。每个 TP 组只有 rank 0 持有一个
+通信客户端，TP rank 数不会被误算成独立 mailbox。导出的配置保留胜出布局的 TP 宽度。
+HBM 估算对 Q/O、词表权重做原生分片，保留 router/norm 的复制、KV head 复制及词表
+padding；scratch 和 collective workspace 仍需要配置内存预留并在部署后检查。
+
+TP1 继续使用上述 `attention`/`attention_domain`。对每个额外宽度，在每个 phase 下
+增加 `attention_by_tp_size`，例如键 `"2"` 的值必须包含 `attention`、
+`attention_domain`、独立 `provenance` 和 `includes_tp_collectives: true`。
+该 profile 必须实测完整 attention 路径以及原生 attention-output、remote-MoE-output
+TP reductions；仅测 `self_attn` 的 hook 不足以覆盖 TP>1。不能把 TP1 系数除以卡数，
+也不能借用 TP1 的形状覆盖范围。内存可容纳的候选缺少相应 profile 时搜索报错，
+不将跳过未知候选后的结果称为最优。此功能验证了 CPU 搜索与配置导出；TP profile 的
+留出误差、并行通信争用和选中部署的 goodput 仍须独立 GPU 验收。
+
 分组件 profile 通过同一个 `--profiles` 入口读取：省略两个 phase 下的
 `moe_by_sm_count`，增加顶层 `moe_components_by_expert_count`，以 E 数量的字符串为键。
 每个值包含 `units="seconds_per_layer"`、非空 `provenance`、测量代码的
@@ -506,7 +522,8 @@ python examples/expertplex/profile_full_moe.py \
 TBO 假设 token 均衡切分，实际序列边界会影响预测，需要实测校准。
 `--write-config` 在有 profile 时导出搜索胜出的布局、overlap、q 和预期 decode footprint；
 预测 batch 仍在 JSON 中单独报告，容量上限不等同于服务调度器的实际 batch。
-当前并行策略仍限于 TP1 attention + EP 专家，未覆盖论文的全部跨栈候选。
+当前可搜索显式提供实测 profile 的 attention TP 宽度与 EP 专家布局，尚未覆盖
+SBO、专家内部 TP 和论文的全部跨栈候选。
 profile 搜索结果要在 B300 上用同配置的端到端 sweep 重新验收。
 
 

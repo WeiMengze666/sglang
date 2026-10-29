@@ -166,15 +166,30 @@ class ModelSpec:
 
     @property
     def attention_weight_bytes(self) -> int:
+        return self.attention_rank_weight_bytes(1)
+
+    def attention_rank_weight_bytes(self, tp_size: int) -> int:
+        """BF16 resident tensors for one native attention TP rank.
+
+        Q/O and vocabulary weights shard; routers and norms replicate. KV
+        heads replicate when TP exceeds their count. Match native vocabulary
+        padding (64 rows, enlarged if needed for divisibility). Scratch and
+        communication workspaces belong in the separate memory reserve.
+        """
+        local_kv = self.attention_rank_kv_heads(tp_size)
         qkv = (
             self.hidden_size
             * self.head_dim
-            * (self.num_attention_heads + 2 * self.num_key_value_heads)
+            * (self.num_attention_heads // tp_size + 2 * local_kv)
         )
-        output = self.num_attention_heads * self.head_dim * self.hidden_size
+        output = self.num_attention_heads // tp_size * self.head_dim * self.hidden_size
         router = self.hidden_size * self.num_experts
         norms = 2 * self.hidden_size + 2 * self.head_dim
-        embeddings = 2 * self.vocab_size * self.hidden_size
+        padding = 64
+        if ((self.vocab_size + padding - 1) // padding * padding) % tp_size:
+            padding *= tp_size
+        padded_vocab = (self.vocab_size + padding - 1) // padding * padding
+        embeddings = 2 * (padded_vocab // tp_size) * self.hidden_size
         return 2 * (
             (qkv + output + router + norms) * self.num_layers
             + embeddings
@@ -183,7 +198,24 @@ class ModelSpec:
 
     @property
     def kv_bytes_per_token(self) -> int:
-        return 2 * self.num_key_value_heads * self.head_dim * self.num_layers * 2
+        return self.attention_rank_kv_bytes_per_token(1)
+
+    def attention_rank_kv_heads(self, tp_size: int) -> int:
+        _positive_integer("attention tp_size", tp_size)
+        if self.num_attention_heads % tp_size:
+            raise ValueError("attention TP width must divide query head count")
+        if self.num_key_value_heads % tp_size and tp_size % self.num_key_value_heads:
+            raise ValueError("attention TP and KV head counts must divide one another")
+        return max(1, self.num_key_value_heads // tp_size)
+
+    def attention_rank_kv_bytes_per_token(self, tp_size: int) -> int:
+        return (
+            2
+            * self.attention_rank_kv_heads(tp_size)
+            * self.head_dim
+            * self.num_layers
+            * 2
+        )
 
 
 @dataclass(frozen=True)
