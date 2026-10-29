@@ -2112,7 +2112,15 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
 
 
 def enable_num_token_non_padded():
+    from sglang.srt.expertplex.integration import expertplex_enabled
     from sglang.srt.layers.moe.utils import get_moe_a2a_backend
+    from sglang.srt.runtime_context import get_context
+
+    # Remote MoE uses an attention-local EP=1 group, but still dispatches
+    # tokens to expert ranks. Keep the native graph replay count alive so its
+    # TopK can mask padded rows before any remote dispatch.
+    if get_context().is_config_namespace_published("disagg") and expertplex_enabled():
+        return True
 
     # Elastic joiners also need graph padding masked after joining WORLD; a
     # customized A2A backend consumes the count whatever the EP size.

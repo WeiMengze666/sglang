@@ -307,6 +307,12 @@ TBO 和 prefill graph：ExpertPlex 配置使用 `overlap: "none"`，原生基线
 `--disable-tbo`。数值比较需要记录并匹配图模式与确定性设置；跨 eager/graph 的
 逐位对齐应另外验证，两端同时启用原生 `--enable-deterministic-inference`。
 
+启用 ExpertPlex 后，attention 本地 EP=1 的普通 MoE 路径也会保留原生
+`num_token_non_padded` 图缓冲区，并把 `ForwardBatch.moe_num_token_non_padded()`
+返回的安全边界传给 TopK，避免图补齐行产生无效的远端专家工作。计数随原生图重放
+更新，无需新增启动参数；涉及 TP 行布局时仍由原生 helper 判断能否使用前缀计数，
+不能自行用全局 token 数替代。关闭 ExpertPlex 时保留原生 MoE 的调用路径。
+
 控制面位于 `sglang/srt/disaggregation/expertplex.py` 和
 `sglang/srt/expertplex/bootstrap.py`；APK、MoE client/worker 等计算后端保留在
 `sglang/srt/expertplex`。详细边界见

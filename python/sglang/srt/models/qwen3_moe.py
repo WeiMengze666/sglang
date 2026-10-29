@@ -326,6 +326,8 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             not is_deepep_class_backend()
             and not get_moe_a2a_backend().is_ascend_fuseep()
         ):
+            if self._expertplex:
+                return self.forward_normal(hidden_states, forward_batch)
             return self.forward_normal(hidden_states)
         else:
             return self.forward_deepep(hidden_states, forward_batch)
@@ -343,6 +345,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
     def forward_normal(
         self,
         hidden_states: torch.Tensor,
+        forward_batch: Optional[ForwardBatch] = None,
     ) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
@@ -350,7 +353,14 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         if hidden_states.shape[0] > 0:
             # router_logits: (num_tokens, n_experts)
             router_logits, _ = self.gate(hidden_states)
-            topk_output = self.topk(hidden_states, router_logits)
+            # Native decode/prefill graphs may pad this attention-local
+            # tensor. Remote EP must not route those rows as real tokens.
+            routing_kwargs = (
+                {"num_token_non_padded": forward_batch.moe_num_token_non_padded()}
+                if self._expertplex and forward_batch is not None
+                else {}
+            )
+            topk_output = self.topk(hidden_states, router_logits, **routing_kwargs)
         else:
             topk_output = self.topk.empty_topk_output(hidden_states.device)
         final_hidden_states = self.experts(hidden_states, topk_output)
