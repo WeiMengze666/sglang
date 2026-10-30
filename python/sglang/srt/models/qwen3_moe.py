@@ -678,6 +678,16 @@ class Qwen3MoeAttention(nn.Module):
         inner_state = q, k, v, forward_batch
         return None, forward_batch, inner_state
 
+    def _can_fuse_rope_kv(self, forward_batch):
+        # BaseFusedOp switches RoPE to forward_native inside torch.compile.
+        # That path does not write KV: pass no fused args and let attention
+        # save the cache. Eager and CUDA-graph-only calls retain the fusion.
+        return (
+            not self.rotary_emb.is_torch_compile
+            and self.compatible_with_fused_kv_buffer
+            and enable_fused_set_kv_buffer(forward_batch)
+        )
+
     def apply_qk_norm_rope(self, qkv, positions, forward_batch):
         use_fused = (self.use_fused_qk_norm_rope and qkv.dtype == torch.bfloat16) or (
             self.use_fused_qk_norm_rope_cpu
@@ -762,8 +772,7 @@ class Qwen3MoeAttention(nn.Module):
                         layer=self.attn,
                         forward_batch=forward_batch,
                     )
-                    if enable_fused_set_kv_buffer(forward_batch)
-                    and self.compatible_with_fused_kv_buffer
+                    if self._can_fuse_rope_kv(forward_batch)
                     else None
                 ),
             )
@@ -799,10 +808,7 @@ class Qwen3MoeAttention(nn.Module):
         q, k, v, fb = inner_state
 
         must_save_kv = self._used_fused_qk_norm_rope_last_call
-        save_kv_cache = must_save_kv or not (
-            enable_fused_set_kv_buffer(forward_batch)
-            and self.compatible_with_fused_kv_buffer
-        )
+        save_kv_cache = must_save_kv or not self._can_fuse_rope_kv(forward_batch)
         attn_output = self.attn(
             q,
             k,
