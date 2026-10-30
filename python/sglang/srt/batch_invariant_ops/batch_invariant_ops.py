@@ -602,6 +602,29 @@ def mm_batch_invariant(a, b):
     return matmul_persistent(a, b)
 
 
+def mm_out_batch_invariant(a, b, *, out):
+    """Keep Inductor's torch.mm(..., out=...) on the native invariant GEMM.
+
+    Inductor emits the out overload; registering aten::mm alone leaves that
+    overload on the CUDA library implementation. Preserve destination identity
+    and arbitrary output strides. The temporary copy is deliberate until an
+    output-buffer implementation has its own numerical/performance validation.
+    """
+    if a.ndim != 2 or b.ndim != 2 or a.shape[1] != b.shape[0]:
+        raise ValueError("mm.out requires compatible 2D matrices")
+    if out.dtype != a.dtype or out.device != a.device:
+        raise ValueError("mm.out destination must match input dtype and device")
+    shape = (a.shape[0], b.shape[1])
+    # Inductor always provides the exact shape; retain ordinary empty-out usage.
+    if tuple(out.shape) != shape:
+        if out.numel() != 0:
+            raise ValueError("mm.out nonempty destination has incorrect shape")
+        out.resize_(shape)
+    result = matmul_persistent(a, b)
+    out.copy_(result)
+    return out
+
+
 def addmm_batch_invariant(bias, a, b):
     return matmul_persistent(a, b, bias=bias)
 
@@ -1014,6 +1037,7 @@ def enable_batch_invariant_mode(enable_bmm: bool = True):
     if not _is_npu:
         # Register for detected device
         _batch_invariant_LIB.impl("aten::mm", mm_batch_invariant, dispatch_key)
+        _batch_invariant_LIB.impl("aten::mm.out", mm_out_batch_invariant, dispatch_key)
         _batch_invariant_LIB.impl("aten::addmm", addmm_batch_invariant, dispatch_key)
         _batch_invariant_LIB.impl(
             "aten::_log_softmax", _log_softmax_batch_invariant, dispatch_key

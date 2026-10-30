@@ -72,7 +72,12 @@ def set_torch_compile_config() -> None:
     import torch._dynamo.config
     import torch._inductor.config
 
-    torch._inductor.config.coordinate_descent_tuning = True
+    # Fixed reduction geometry is required by the strict invariant path.
+    # Keep native tuning behavior for ordinary serving.
+    invariant = get_bool_env_var("TORCHINDUCTOR_BATCH_INVARIANT")
+    torch._inductor.config.coordinate_descent_tuning = not invariant
+    if invariant:
+        torch._inductor.config.dynamic_scale_rblock = False
     torch._inductor.config.triton.unique_kernel_names = True
     torch._inductor.config.fx_graph_cache = True
 
