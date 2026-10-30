@@ -147,6 +147,9 @@ def _local_rank_compile_lock(
 
 
 # TODO improve code
+# Startup allocations and cache mutation must not enter Dynamo graphs.
+# This boundary does not change the subsequent DeepGEMM compute call.
+@torch.compiler.disable
 def _maybe_compile_deep_gemm_one_type_all(
     kernel_type: DeepGemmKernelType,
     n: int,
