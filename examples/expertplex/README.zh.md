@@ -326,6 +326,19 @@ TBO 和 prefill graph：ExpertPlex 配置使用 `overlap: "none"`，原生基线
 `--disable-tbo`。数值比较需要记录并匹配图模式与确定性设置；跨 eager/graph 的
 逐位对齐应另外验证，两端同时启用原生 `--enable-deterministic-inference`。
 
+FlashInfer 的确定性长上下文 prefill 可能需要超过 2 GiB 的临时工作区。
+若 planner 报 `batch_prefill_tmp_v` 的 `Buffer overflow`，可在 GPU 作业中、
+启动使用 FlashInfer 的 attention 服务之前设置较大的字节数，例如：
+
+```bash
+export SGLANG_FLASHINFER_WORKSPACE_SIZE=4294967296  # 4 GiB
+```
+
+模型和确定性模式的工作区设置是下限，会保留用户配置的更大值。该缓冲区独立于
+KV pool，应计入显存预算；4 GiB 是配置示例，仍需按实际 batch 和序列长度验证。
+数值对照应记录双方的工作区配置，并保持 attention backend、split tile、精度和
+验收门槛一致。扩大工作区只解决容量问题，不代表数值或性能验收通过。
+
 启用 ExpertPlex 后，attention 本地 EP=1 的普通 MoE 路径也会保留原生
 `num_token_non_padded` 图缓冲区，并把 `ForwardBatch.moe_num_token_non_padded()`
 返回的安全边界传给 TopK，避免图补齐行产生无效的远端专家工作。计数随原生图重放
