@@ -1093,6 +1093,11 @@ def search(
     TBO is an analytical option for a measured TBO setup; selecting it here
     does not enable communication overlap in the runtime.
     """
+    if model.shared_intermediate_size:
+        raise ProfileCoverageError(
+            "Shared-expert placement requires independently validated shared-branch "
+            "and overlap latency profiles; the routed-only optimizer cannot predict it"
+        )
     attention_tp_sizes = _tp_widths(attention_tp_sizes)
     if profiles.prefill_preprocess != config.prefill_preprocess:
         raise ValueError(

@@ -586,3 +586,20 @@ count and the aggregator rejects comparisons with mismatched counts. Earlier
 results are retained with their original one-request condition. Neither count
 proves that every dynamic shape has been warmed, and no causal attribution of
 the observed timing differences to compilation is claimed.
+
+## Native Qwen2 SBO integration (2026-10-30)
+
+Experiment 213 validates the isolated adapter on published base
+`865c94bbce7bcb03a627399341e46d97ef8fe700`: 98 runtime CPU checks passed,
+then fresh native, native repeat, ExpertPlex SBO-off and SBO-on services each
+passed 16 histories × 32 positions × 1024 vocabulary values. The independent
+raw reader checked all 2048 copies, their hashes, finite FP32 logprobs, forced
+histories and nonempty multi-request decode coverage. Owned services stopped
+cleanly. The fixture is a two-layer BF16 Qwen2 MoE, not the main Coder model.
+
+Experiment 208 separately attributed shared/remote branches using actual CUDA
+graph clone/node IDs: both layers had zero overlap in 45 off replays and
+positive overlap in all 36 on replays. This is profiled one-D auxiliary graph
+evidence, not pure expert compute timing or goodput. Prefill graph SBO, shared
+TBO, calibrated shared critical-path prediction and the 1.5x main-model
+goodput target remain unaccepted. See [QWEN2_SBO.md](QWEN2_SBO.md).

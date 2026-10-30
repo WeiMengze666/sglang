@@ -112,7 +112,11 @@ def expert_node_config(cfg):
         startup_timeout_s=getattr(cfg, "expertplex_startup_timeout", 600.0),
         weight_mode="synthetic" if cfg.load_format == "dummy" else "checkpoint",
         synthetic_seed=int(os.environ.get("SGLANG_EXPERTPLEX_SYNTHETIC_SEED", "1234")),
-        overlap="tbo" if cfg.enable_two_batch_overlap else "none",
+        overlap="tbo"
+        if cfg.enable_two_batch_overlap
+        else "sbo"
+        if getattr(cfg, "enable_single_batch_overlap", False)
+        else "none",
         prefill_preprocess=True,
         **(
             {
@@ -305,7 +309,6 @@ def validate_server_args(cfg: Any) -> None:
         if getattr(cfg, name, 1) != 1:
             errors.append(f"--{name.replace('_', '-')} must be 1")
     for name in (
-        "enable_single_batch_overlap",
         "enable_torch_compile",
         "enable_eplb",
         "enable_lora",
@@ -323,6 +326,12 @@ def validate_server_args(cfg: Any) -> None:
         config.overlap == "tbo"
     ):
         errors.append("--enable-two-batch-overlap must match ExpertPlex config.overlap")
+    if bool(getattr(cfg, "enable_single_batch_overlap", False)) != (
+        config.overlap == "sbo"
+    ):
+        errors.append(
+            "--enable-single-batch-overlap must match ExpertPlex config.overlap"
+        )
     if config.prefill_mailbox_tokens is not None and (
         getattr(cfg, "tbo_token_distribution_threshold", None) != 0.5
         or not isinstance(getattr(cfg, "max_running_requests", None), int)
@@ -410,6 +419,10 @@ def validate_server_args(cfg: Any) -> None:
         )
         if backend not in allowed:
             errors.append(f"--cuda-graph-backend-{phase} must be one of {allowed}")
+        if phase == "prefill" and backend != "disabled" and config.overlap == "sbo":
+            errors.append(
+                "Qwen2 SBO prefill graph overlap needs separate validation; use disabled"
+            )
         if phase == "prefill" and backend == "breakable" and config.overlap == "tbo":
             errors.append(
                 "ExpertPlex prefill breakable graph with TBO is not yet validated; "

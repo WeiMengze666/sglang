@@ -1,6 +1,6 @@
 """Dependency-free configuration for the single-node ExpertPlex experiment.
 
-The model adapter deliberately accepts only unquantized Qwen3 MoE checkpoints.
+The adapters accept unquantized Qwen3 MoE and Qwen2 MoE shared-expert checkpoints.
 GPU memory is expressed in GiB; NVIDIA's advertised 288 GB is about 268 GiB.
 """
 
@@ -68,7 +68,7 @@ class ClientConfig:
 
 @dataclass(frozen=True)
 class ModelSpec:
-    """The dimensions required by the Qwen3 MoE adapter and memory planner."""
+    """The dimensions required by the native MoE adapters and memory planner."""
 
     hidden_size: int
     intermediate_size: int
@@ -81,6 +81,9 @@ class ModelSpec:
     vocab_size: int
     architecture: str = "Qwen3MoeForCausalLM"
     dtype: str = "bfloat16"
+    shared_intermediate_size: int = 0
+    qkv_bias: bool = False
+    use_qk_norm: bool = True
 
     def __post_init__(self) -> None:
         for name in (
@@ -95,8 +98,22 @@ class ModelSpec:
             "vocab_size",
         ):
             _positive_integer(name, getattr(self, name))
-        if self.architecture != "Qwen3MoeForCausalLM":
-            raise ValueError("ExpertPlex currently supports Qwen3MoeForCausalLM only")
+        if self.architecture not in ("Qwen3MoeForCausalLM", "Qwen2MoeForCausalLM"):
+            raise ValueError(
+                "ExpertPlex supports Qwen3MoeForCausalLM or Qwen2MoeForCausalLM"
+            )
+        _positive_integer(
+            "shared_intermediate_size", self.shared_intermediate_size, allow_zero=True
+        )
+        if type(self.qkv_bias) is not bool or type(self.use_qk_norm) is not bool:
+            raise ValueError("qkv_bias and use_qk_norm must be boolean")
+        if self.architecture == "Qwen3MoeForCausalLM":
+            if self.shared_intermediate_size or self.qkv_bias or not self.use_qk_norm:
+                raise ValueError(
+                    "Qwen3 requires QK norm, no QKV bias and no shared expert"
+                )
+        elif not self.shared_intermediate_size or self.use_qk_norm:
+            raise ValueError("Qwen2 adapter requires a shared expert and no QK norm")
         if self.dtype not in ("bfloat16", "bf16"):
             raise ValueError("ExpertPlex currently supports BF16 checkpoints only")
         if self.top_k > self.num_experts:
@@ -107,27 +124,46 @@ class ModelSpec:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ModelSpec:
         data = normalize_model_config(data)
-        if data.get("model_type") != "qwen3_moe":
-            raise ValueError("model_type must be qwen3_moe")
+        model_type = data.get("model_type")
+        if model_type not in ("qwen3_moe", "qwen2_moe"):
+            raise ValueError("model_type must be qwen3_moe or qwen2_moe")
+        is_qwen3 = model_type == "qwen3_moe"
         if data.get("quantization_config") is not None:
             raise ValueError(
                 "quantized checkpoints are not supported; use the BF16 model"
             )
         architectures = data.get("architectures", [])
-        if architectures != ["Qwen3MoeForCausalLM"]:
-            raise ValueError("architectures must contain only Qwen3MoeForCausalLM")
+        architecture = "Qwen3MoeForCausalLM" if is_qwen3 else "Qwen2MoeForCausalLM"
+        if architectures != [architecture]:
+            raise ValueError(f"architectures must contain only {architecture}")
         if data.get("mlp_only_layers", []):
             raise ValueError("dense MLP layers are not supported")
         if data.get("decoder_sparse_step", 1) != 1:
             raise ValueError("every layer must be an MoE layer")
         if data.get("attention_bias", False):
             raise ValueError("attention_bias is not supported")
-        if data.get("qkv_bias", False):
-            raise ValueError("qkv_bias is not supported")
-        if data.get("shared_expert_intermediate_size", 0):
-            raise ValueError("shared experts are not supported by this model adapter")
-        if not data.get("use_qk_norm", True):
-            raise ValueError("the Qwen3 adapter requires query/key normalization")
+        if data.get("hidden_act", "silu") != "silu":
+            raise ValueError("ExpertPlex requires the native SiLU gated MoE")
+        if is_qwen3 and data.get("qkv_bias", False):
+            raise ValueError("qkv_bias is not supported by Qwen3")
+        shared = data.get("shared_expert_intermediate_size", 0)
+        if is_qwen3 and shared:
+            raise ValueError(
+                "shared experts are not supported by the Qwen3 model adapter"
+            )
+        if not is_qwen3 and data.get("n_shared_experts", 1) not in (None, 1):
+            raise ValueError("Qwen2 adapter supports its native single shared MLP")
+        use_qk_norm = data.get("use_qk_norm", is_qwen3)
+        if type(use_qk_norm) is not bool or use_qk_norm != is_qwen3:
+            raise ValueError(
+                "query/key normalization must match the native model architecture"
+            )
+        if not is_qwen3 and data["hidden_size"] % data["num_attention_heads"]:
+            raise ValueError("Qwen2 hidden size must divide evenly across query heads")
+        if not is_qwen3 and data.get("head_dim") is not None:
+            head_dim = _positive_integer("head_dim", data["head_dim"])
+            if head_dim != data["hidden_size"] // data["num_attention_heads"]:
+                raise ValueError("Qwen2 head_dim must match hidden_size / query heads")
         if data.get("tie_word_embeddings", False):
             raise ValueError("tied embeddings are not supported by this model adapter")
         return cls(
@@ -138,10 +174,15 @@ class ModelSpec:
             num_layers=data["num_hidden_layers"],
             num_attention_heads=data["num_attention_heads"],
             num_key_value_heads=data["num_key_value_heads"],
-            head_dim=data["head_dim"],
+            head_dim=data["head_dim"]
+            if is_qwen3
+            else data["hidden_size"] // data["num_attention_heads"],
             vocab_size=data["vocab_size"],
             architecture=architectures[0],
             dtype=data.get("dtype", data.get("torch_dtype", "")),
+            shared_intermediate_size=shared,
+            qkv_bias=data.get("qkv_bias", not is_qwen3),
+            use_qk_norm=use_qk_norm,
         )
 
     @classmethod
@@ -184,14 +225,31 @@ class ModelSpec:
         )
         output = self.num_attention_heads // tp_size * self.head_dim * self.hidden_size
         router = self.hidden_size * self.num_experts
-        norms = 2 * self.hidden_size + 2 * self.head_dim
+        norms = 2 * self.hidden_size + (2 * self.head_dim if self.use_qk_norm else 0)
+        bias = (
+            self.head_dim * (self.num_attention_heads // tp_size + 2 * local_kv)
+            if self.qkv_bias
+            else 0
+        )
+        if self.shared_intermediate_size % tp_size:
+            raise ValueError(
+                "shared expert width must divide across attention TP ranks"
+            )
+        shared = (
+            (
+                3 * self.hidden_size * (self.shared_intermediate_size // tp_size)
+                + self.hidden_size
+            )
+            if self.shared_intermediate_size
+            else 0
+        )
         padding = 64
         if ((self.vocab_size + padding - 1) // padding * padding) % tp_size:
             padding *= tp_size
         padded_vocab = (self.vocab_size + padding - 1) // padding * padding
         embeddings = 2 * (padded_vocab // tp_size) * self.hidden_size
         return 2 * (
-            (qkv + output + router + norms) * self.num_layers
+            (qkv + output + router + norms + bias + shared) * self.num_layers
             + embeddings
             + self.hidden_size
         )
@@ -270,8 +328,8 @@ class NodeConfig:
             )
         if self.kernel not in ("sm100", "sm100_cta1", "sm100_fused", "wmma"):
             raise ValueError("kernel must be sm100, sm100_cta1, sm100_fused or wmma")
-        if self.overlap not in ("none", "tbo"):
-            raise ValueError("overlap must be none or tbo")
+        if self.overlap not in ("none", "tbo", "sbo"):
+            raise ValueError("overlap must be none, tbo or sbo")
         if self.weight_mode not in ("checkpoint", "synthetic"):
             raise ValueError("weight_mode must be checkpoint or synthetic")
         _positive_integer("synthetic_seed", self.synthetic_seed, allow_zero=True)
@@ -351,7 +409,22 @@ class NodeConfig:
             )
 
         if model_spec is not None:
+            if self.overlap == "sbo" and not model_spec.shared_intermediate_size:
+                raise ValueError("SBO requires a model with a shared expert")
+            if model_spec.architecture == "Qwen2MoeForCausalLM":
+                if self.weight_mode == "synthetic":
+                    raise ValueError(
+                        "Canonical dummy initialization is Qwen3-only; use a BF16 Qwen2 checkpoint"
+                    )
+                if self.overlap == "tbo":
+                    raise ValueError(
+                        "Qwen2 ExpertPlex TBO stage hooks are not yet validated"
+                    )
             for client in self.clients:
+                if model_spec.shared_intermediate_size % client.tp_size:
+                    raise ValueError(
+                        "shared expert width must divide across attention TP ranks"
+                    )
                 if model_spec.num_attention_heads % client.tp_size:
                     raise ValueError("attention TP width must divide query head count")
                 kv_heads = model_spec.num_key_value_heads

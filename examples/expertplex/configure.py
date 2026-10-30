@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--expected-decode-tiles", type=int, default=128)
     parser.add_argument("--max-decode-sm-fraction", type=float, default=0.75)
     parser.add_argument("--rendezvous-dir", required=True)
-    parser.add_argument("--overlap", choices=("none", "tbo"), default="none")
+    parser.add_argument("--overlap", choices=("none", "tbo", "sbo"), default="none")
     parser.add_argument(
         "--kernel",
         choices=("sm100", "sm100_cta1", "sm100_fused", "wmma"),

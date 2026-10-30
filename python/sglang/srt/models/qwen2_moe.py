@@ -39,6 +39,11 @@ from sglang.srt.environ import envs
 from sglang.srt.eplb.expert_distribution import get_global_expert_distribution_recorder
 from sglang.srt.eplb.expert_location import ModelConfigForExpertLocation
 from sglang.srt.eplb.expert_location_dispatch import ExpertLocationDispatchInfo
+from sglang.srt.expertplex.integration import (
+    expertplex_enabled,
+    is_routed_expert_weight,
+    validate_attention_model,
+)
 from sglang.srt.layers.activation import SiluAndMul
 from sglang.srt.layers.aux_hidden_states import (
     AuxHiddenStateAccumulator,
@@ -66,11 +71,17 @@ from sglang.srt.layers.logits_processor import LogitsProcessor
 from sglang.srt.layers.moe import get_moe_a2a_backend, reduce_moe_output
 from sglang.srt.layers.moe.ep_moe.layer import get_moe_impl_class
 from sglang.srt.layers.moe.fused_moe_triton import FusedMoE
-from sglang.srt.layers.moe.topk import StandardTopKOutput, TopK, TopKOutputChecker
+from sglang.srt.layers.moe.topk import (
+    StandardTopKOutput,
+    TopK,
+    TopKOutputChecker,
+    TopKOutputFormat,
+)
 from sglang.srt.layers.moe.utils import (
     RoutingMethodType,
     filter_moe_weight_param_global_expert,
     is_deepep_class_backend,
+    is_sbo_enabled,
     sum_post_experts_output,
     uses_per_rank_fused_shared_slots,
 )
@@ -149,6 +160,7 @@ def can_fuse_shared_expert(
         or config.shared_expert_intermediate_size != config.moe_intermediate_size
         or get_moe_a2a_backend().is_deepep()
         or get_moe_a2a_backend().is_deepep_v2()
+        or expertplex_enabled()
         or get_moe_a2a_backend().is_mori()
     ):
         return False
@@ -271,6 +283,7 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         self.tp_size = get_parallel().tp_size
         self.layer_id = layer_id
         self.alt_stream = alt_stream
+        self._expertplex = expertplex_enabled()
         if self.tp_size > config.num_experts:
             raise ValueError(
                 f"Tensor parallel size {self.tp_size} is greater than "
@@ -309,6 +322,7 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
             top_k=config.num_experts_per_tok,
             renormalize=config.norm_topk_prob,
             layer_id=layer_id,
+            output_format=TopKOutputFormat.STANDARD if self._expertplex else None,
         )
 
         # Disable inplace MoE when fused gate will need hidden_states after experts
@@ -364,7 +378,9 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
                 reduce_results=False,
                 prefix=add_prefix("shared_expert", prefix),
                 **(
-                    dict(parallel_group="replicated")
+                    dict(parallel_group="attn_tp")
+                    if self._expertplex
+                    else dict(parallel_group="replicated")
                     if (
                         get_moe_a2a_backend().is_deepep()
                         or get_moe_a2a_backend().is_mori()
@@ -392,6 +408,7 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         if (
             get_moe_a2a_backend().is_deepep()
             or get_moe_a2a_backend().is_deepep_v2()
+            or self._expertplex
             or get_moe_a2a_backend().is_mori()
         ):
             self.num_experts = (
@@ -571,7 +588,11 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         )
         enable_cuda_shared_overlap = (
             _is_cuda
-            and envs.SGLANG_ENABLE_QWEN_DEEPEP_SHARED_OVERLAP.get()
+            and (
+                is_sbo_enabled()
+                if self._expertplex
+                else envs.SGLANG_ENABLE_QWEN_DEEPEP_SHARED_OVERLAP.get()
+            )
             # Breakable CUDA graph joins side streams before the eager DeepEP
             # break, so this path cannot overlap the two expert computations.
             and not is_in_breakable_cuda_graph()
@@ -826,6 +847,7 @@ class Qwen2MoeSparseMoeBlock(nn.Module):
         if (
             get_moe_a2a_backend().is_deepep()
             or get_moe_a2a_backend().is_deepep_v2()
+            or self._expertplex
             or get_moe_a2a_backend().is_mori()
         ):
             return self._forward_deepep(hidden_states, forward_batch)
@@ -1100,6 +1122,13 @@ class Qwen2MoeDecoderLayer(nn.Module):
 
         hidden_states = self.mlp(hidden_states, forward_batch)
         hidden_states = self.ffn_boundary.finish(hidden_states, forward_batch)
+        # Match the native terminal DeepEP residual rounding before final norm.
+        if (
+            getattr(self.mlp, "_expertplex", False)
+            and self.ffn_boundary.plan.terminal
+            and get_parallel().attn_tp_size > 1
+        ):
+            hidden_states = residual_batch.fold(hidden_states, forward_batch)
 
         return hidden_states
 
@@ -1232,6 +1261,7 @@ class Qwen2MoeForCausalLM(nn.Module):
         prefix: str = "",
     ) -> None:
         super().__init__()
+        validate_attention_model(config, quant_config)
         self.pp_group = get_parallel().pp_group
         self.config = config
         self.quant_config = quant_config
@@ -1347,6 +1377,10 @@ class Qwen2MoeForCausalLM(nn.Module):
 
         params_dict = dict(self.named_parameters())
         for name, loaded_weight in weights:
+            if expertplex_enabled() and is_routed_expert_weight(name):
+                # The default loader filters these before I/O; protect callers
+                # that supply a custom weight iterator as well.
+                continue
             layer_id = get_layer_id(name)
             if (
                 layer_id is not None

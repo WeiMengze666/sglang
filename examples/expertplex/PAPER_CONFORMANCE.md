@@ -83,7 +83,7 @@ TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
 | §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 双 accumulator，延迟 store 退休与 Task ring 元数据复用已分离；跨 mailbox 回归通过，配对汇总仍慢约 0.73%。完整 SM100 后端默认开启，可显式关闭做消融 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
 | §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | NVLink IPC 路径已验证全部 56 个有向 GPU 对 | 多发送方、重复 epoch、容量边界、故障路径 |
 | §5.2 | E 无通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 默认服务路径已实现，E 侧预处理直接读取最终 raw buffer；通信微基准的 identity echo 仅为计时外诊断 | kernel trace、并发 P/D 数值验证 |
-| §5.2 Fig.5 | 单线程 WaitDone 位于 COMM stream；COMPUTE stream 可继续 TBO/SBO | 独立 COMM stream 和双 mailbox 已实现；真实模型三路 D 已验证非空双 microbatch 图重放及所有 E 的 epoch 完成，SBO 尚未适配；完成证据不等于重叠时长证明 | CUDA timeline 的计算/通信重叠量与 SBO 验证 |
+| §5.2 Fig.5 | 单线程 WaitDone 位于 COMM stream；COMPUTE stream 可继续 TBO/SBO | 独立 COMM stream 和双 mailbox 已实现；真实模型三路 D 已验证非空双 microbatch 图重放及所有 E 的 epoch 完成，Qwen2 SBO 已复用原生 shared 分支并通过辅助模型全词表对齐及实际 Decode 图节点重叠验证；prefill 图/shared TBO/标定仍未验收 | CUDA timeline 的计算/通信重叠量与 SBO 验证 |
 | §5.3 | 跨节点 P 同 local rank 转发，节点内 NVLink multicast/gather；无 P 节点走低优先级 IB VL | 单节点 MoE 路径为 NVLink；多节点 MoE RDMA/层次转发未实现 | 需要多节点与 IB 硬件；单机测试不能替代 |
 | §6.1–6.3 Eq.1–3 | 联合枚举 attention/MoE 并行、布局、overlap、q；内存过滤；SLO 二分批量；critical path 估计 | 当前优化器只覆盖部分布局与简化模型，需补齐可执行策略 | profile 拟合留出集误差、候选可执行性、预测/实测对比 |
 | §6.4 Eq.4 | q 随当前/预期 decode tile footprint 缩放，按 cluster 向上取整，Qmax 保证 P 进展；单 phase 借用全部资源 | CPU 对照及默认 SM100 调度器均使用实际 masked/packed tile footprint；仍需完整策略质量与饥饿上界验收 | 稀疏度变化、空闲借用、P/D 饥饿测试 |
@@ -159,7 +159,7 @@ HTTP 仅用于启动、独占槽位登记与退出释放，每层 activation 仍
 | torch.compile | 尚未完成严格验收；原生编译路径自身的重复性和 ExpertPlex 同模式对齐仍需分别验证。该差距不能解释为论文必然冲突，也不能通过放宽数值门槛消除。 |
 | DeepGEMM | 复用原生 TMA、TCGEN05、双 CTA multicast、STSM/TMA epilogue 和 BF16 舍入边界；新增的是长驻 operation 选择与合作阶段切换。负收益的替代实现不能替换已验证路径。 |
 | DeepEP | Decode combine 保持原生 low-latency 的 top-k 顺序 FP32 FMA 与最终 BF16 舍入；P 保持 normal 的每 rank BF16 gather 边界。普通 SGLang 基线继续调用原生 normal / low-latency dispatcher；ExpertPlex 的 attention-initiated M-to-N 不能直接套用要求 E 侧 receiver kernel 的原始 API。新的协议仍需继续对照 DeepEP 的路由布局、向量搬运和归并实现，不能据仅有功能通过宣称保留了全部性能优化。 |
-| Chunked prefill / SBO / TP | chunked prefill 有显式选项；SBO 与 attention TP>1 等当前尚未适配，不能以“论文冲突”代替实现与验证。默认整请求 P 是论文实验配置，不是 SGLang 能力被全局删除。 |
+| Chunked prefill / SBO / TP | chunked prefill 有显式选项；Qwen2 SBO 已通过辅助模型数值与 Decode 图重叠验证；prefill 图、shared TBO、共享分支标定及 attention TP>1 的完整验收仍待完成。默认整请求 P 是论文实验配置，不是 SGLang 能力被全局删除。 |
 
 基线启动器也应保留原生 overlap 与 autotune；PDMux 继续遵循其独立调度循环的约束。
 恢复这些默认值之后，旧的固定参数性能结果仍保留，但不能当成新配置的验收结果。
