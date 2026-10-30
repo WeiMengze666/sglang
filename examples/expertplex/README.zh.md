@@ -263,7 +263,19 @@ KV pool 默认沿用 SGLang 显存 profiling；以上命令不限制总 KV token
 仅用于显式的控制实验。原生 scheduler overlap、decode CUDA Graph、FlashInfer
 attention/sampling/autotune 和 Mooncake KV 移交继续使用。缓存行为遵循原生 PD 默认值
 （例如 decode radix cache 默认关闭），可以在已支持的原生选项范围内调整。
-`torch.compile`、SBO 等尚未通过对应验收的组合仍会明确拒绝。
+公开服务入口仍拒绝尚未完成组合验收的 `torch.compile`。已合入的编译兼容修复
+保留原生 CUDA TopK 的 padding 和专家映射处理，让异步远端 MoE 通信保持原有
+dispatch/combine 生命周期，同时允许相邻 dense 运算编译；确定性模式的
+`aten::mm.out` 继续使用已有 invariant GEMM，并固定归约配置。普通模式的编译调优保留。
+
+独立诊断已在固定 ptxas 13.3、各阶段使用新缓存的条件下，通过 Coder BF16 的
+编译原生参考、自重复以及默认 1P+3D+4E 三路 D 并发检查：每路相同的 16 组历史、
+256 个位置、151936 维全词表逐位一致，并核验实际编译重放。该诊断未启用 TBO，
+不构成编译 TBO、其他工具链或 goodput 的验收，也不会自动放开公开入口的组合限制。
+
+带 shared expert 的辅助 Qwen2 MoE 已接入原生 SBO，适用范围和独立验证见
+[Qwen2 SBO](QWEN2_SBO.md)。Coder 主模型没有 shared expert，不能用它证明 SBO；
+SBO 与 prefill graph 等尚未验证的组合仍会明确拒绝。
 
 ### Attention TP 组
 
