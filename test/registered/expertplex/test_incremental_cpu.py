@@ -265,6 +265,95 @@ class IncrementalCaptureTests(unittest.TestCase):
             self.assertTrue(saved["all_full_vocab_logprobs_exact"])
             self.assertTrue(saved["batched_request"])
 
+    def test_serial_capture_serializes_full_scores_only_at_completion(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            (root / "config.json").write_text('{"vocab_size": 4}')
+            histories = root / "histories.json"
+            histories.write_text(
+                json.dumps(
+                    {
+                        "model_path": str(root),
+                        "outputs": [
+                            {
+                                "prompt": [i],
+                                "meta_info": {
+                                    "output_token_logprobs": [[-0.1, 1], [-0.1, 2]]
+                                },
+                            }
+                            for i in range(3)
+                        ],
+                    }
+                )
+            )
+            output = root / "report.json"
+            argv = [
+                "check_incremental.py",
+                "--base-url",
+                "http://server",
+                "--model-path",
+                str(root),
+                "--histories",
+                str(histories),
+                "--capture-dir",
+                str(root / "capture"),
+                "--output",
+                str(output),
+                "--steps",
+                "2",
+                "--concurrency",
+                "1",
+                "--top-k",
+                "0",
+            ]
+            serialized = []
+            progress = []
+            dumps = json.dumps
+
+            def observe(value, *args, **kwargs):
+                if isinstance(value, dict) and "capture_dir" in value:
+                    if "outputs" in value:
+                        serialized.append(len(value["outputs"]))
+                    if "captured_positions" in value:
+                        progress.append(dict(value))
+                return dumps(value, *args, **kwargs)
+
+            def collect(directory, prompt, forced, vocab, top_k):
+                return [
+                    {
+                        "history": prompt + forced[:step],
+                        "logprobs": [-0.1, -2.0, -3.0, -4.0],
+                        "sampling_batch_size": 1,
+                    }
+                    for step in range(2)
+                ]
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(incremental, "make_processor", return_value="fixture"),
+                patch.object(
+                    incremental,
+                    "generate",
+                    return_value={
+                        "meta_info": {"output_token_logprobs": [[0, 1], [0, 2]]}
+                    },
+                ),
+                patch.object(incremental, "collect", side_effect=collect),
+                patch.object(json, "dumps", side_effect=observe),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                incremental.main()
+            self.assertEqual(serialized, [0, 6])
+            self.assertEqual([p["captured_positions"] for p in progress], [2, 4, 6, 6])
+            self.assertTrue(all("outputs" not in p for p in progress))
+            final = json.loads(output.read_text())
+            self.assertEqual(final["status"], "completed")
+            self.assertEqual(len(final["outputs"]), 6)
+            self.assertTrue(all(len(r["logprobs"]) == 4 for r in final["outputs"]))
+            sidecar = json.loads(output.with_suffix(".json.progress.json").read_text())
+            self.assertEqual(sidecar["status"], "completed")
+            self.assertEqual(sidecar["completed_cases"], 3)
+
     def test_native_batch_pd_uses_same_distinct_rooms_on_both_services(self):
         payload = incremental.batch_payload(
             [

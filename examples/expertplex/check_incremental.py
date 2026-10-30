@@ -6,6 +6,9 @@ Step zero uses prefill; later steps retain the generated KV history. Unlike
 check_teacher_forcing.py, this does not re-prefill every history. CPU copies and
 file writes deliberately perturb execution: never use this run for performance.
 Requires --enable-custom-logit-processor on the isolated diagnostic servers.
+During capture, <output>.progress.json contains counts and status; raw per-step
+captures remain available in --capture-dir. The final output report retains
+every captured score, including when numerical validation fails.
 """
 
 import argparse
@@ -400,6 +403,24 @@ def main():
         tmp.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
         tmp.replace(args.output)
 
+    def save_progress():
+        # Raw per-step captures are already durable. A small progress sidecar
+        # avoids rewriting every earlier vocabulary vector after each wave,
+        # which is quadratic when concurrency=1. Final reports keep all scores.
+        progress = {
+            "status": report["status"],
+            "completed_cases": len(report["cases"]),
+            "total_cases": len(cases),
+            "captured_positions": len(report["outputs"]),
+            "capture_dir": str(args.capture_dir),
+            "report_path": str(args.output),
+            "scope": "Capture progress only; numerical acceptance is in the final report",
+        }
+        target = args.output.with_suffix(args.output.suffix + ".progress.json")
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_text(json.dumps(progress, indent=2, allow_nan=False) + "\n")
+        tmp.replace(target)
+
     save()
 
     def prepare_case(index):
@@ -478,10 +499,7 @@ def main():
                 for summary, outputs in captured:
                     report["cases"].append(summary)
                     report["outputs"].extend(outputs)
-                # Each raw step is already durable. Checkpoint one completed
-                # wave instead of rewriting a growing full-vocabulary report
-                # once per request (quadratic serialization and disk traffic).
-                save()
+                save_progress()
         if args.reference:
             report["comparisons"] = compare_distributions(read(args.reference), report)
             exact = all(
@@ -510,6 +528,7 @@ def main():
         raise
     finally:
         save()
+        save_progress()
     print(json.dumps({k: v for k, v in report.items() if k != "outputs"}, indent=2))
 
 
