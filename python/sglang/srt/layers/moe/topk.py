@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from triton_kernels.tensor_details.ragged_tensor import RaggedTensorMetadata
 
 from sglang.srt.runtime_context import (
+    get_disagg,
     get_exec,
     get_forward,
     get_lora,
@@ -687,6 +688,23 @@ class TopK(BaseFusedOp):
         dynamic_expert_bias: Optional[torch.Tensor] = None,
         router_logits_partials: Optional[torch.Tensor] = None,
     ) -> TopKOutput:
+        # The bs=1 compiled PyTorch router does not support DP padding or
+        # physical expert remapping. Reuse the optimized CUDA route, including
+        # its metadata handling. ExpertPlex keeps that same route for numerical
+        # consistency with its native DeepEP reference while dense ops compile.
+        if _is_cuda and (
+            num_token_non_padded is not None
+            or expert_location_dispatch_info is not None
+            or get_disagg().enable_expertplex
+        ):
+            return self.forward_cuda(
+                hidden_states,
+                router_logits,
+                num_token_non_padded=num_token_non_padded,
+                expert_location_dispatch_info=expert_location_dispatch_info,
+                dynamic_expert_bias=dynamic_expert_bias,
+                router_logits_partials=router_logits_partials,
+            )
         if router_logits_partials is not None:
             rocm_router_reduce_partials(router_logits_partials, router_logits)
         self.topk_config.torch_native = True

@@ -6,6 +6,7 @@ expert computation between the two asynchronous operations.
 """
 
 from torch import nn
+from torch.compiler import disable
 
 from sglang.srt.layers.moe.token_dispatcher.expertplex import (
     ExpertPlexCombineInput,
@@ -23,6 +24,7 @@ class ExpertPlexMoE(nn.Module):
         self.num_local_experts = 0
         self.dispatcher = ExpertPlexDispatcher(layer_id)
 
+    @disable
     def forward(self, hidden_states, topk_output):
         dispatched = self.dispatcher.dispatch(hidden_states, topk_output)
         return self.dispatcher.combine(self.run_moe_core(dispatched))
