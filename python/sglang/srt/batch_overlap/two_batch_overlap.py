@@ -764,6 +764,13 @@ class TboForwardBatchPreparer:
                 f"{key=} {old_value=} {num_seqs=} {batch=}"
             )
             output_dict[key] = old_value[start_seq_index:end_seq_index]
+            if key == "extend_start_loc" and start_token_index:
+                # Q and out_cache_loc are already sliced to this child's token
+                # range. Triton attention consumes these starts directly, so
+                # parent-relative offsets would address past the child buffers.
+                # A split inside a sequence recomputes these starts below in
+                # derive_fields_related_to_seq_len_for_two_chunk.
+                output_dict[key] = output_dict[key] - start_token_index
 
         spec_info = getattr(batch, "spec_info")
         output_spec_info = split_spec_info(
