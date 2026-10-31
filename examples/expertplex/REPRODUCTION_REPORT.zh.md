@@ -32,3 +32,6 @@ CPU preflight 对每个候选均为 34 tests，且没有初始化 CUDA 或导入
 - 1P+2D+5E 的探索受当前 DeepEP build 限制：Python 配置表补充后，编译的 legacy/intranode.cu 仍以 Unsupported ranks 拒绝 rank 5。该布局没有严格 reference 或性能结论。
 
 因此当前公开代码保留经过验证的 1P+3D+4E 路径和原生 SGLang/DeepEP 兼容性；相对最强原生屏幕的约 1.5× goodput 目标仍未达成，以上负结果不被包装成性能通过。
+
+- 关闭 SGLANG_EXPERTPLEX_PIPELINED_STORES 的 job369 在 512 positions、2560 copies、151936 vocab 上保持 bit-exact，但没有产生要求的两个 fresh nonempty TBO child replay；因此该消融没有进入 serving 或性能路径。
+- 默认 ExpertPlex 使用 4 个 E ranks（每卡 40 个专家），最强 colocated DeepEP128 基线使用 8 个 E ranks（每卡 20 个专家）。这个布局差异解释了 E 卡长期满载的容量边界；它是当前比较的系统级约束，不能从有限 goodput 屏幕推出单 kernel slowdown。
