@@ -22,3 +22,13 @@ CPU preflight 对每个候选均为 34 tests，且没有初始化 CUDA 或导入
 公平屏幕固定 ShareGPT-24576、256 请求、seed 42/43、TTFT 1000 ms、TPOT 50 ms。已完成的最强原生屏幕为 DeepEP128 colocated，seed42 在 10 rps 达到 4.9972 observed SLO goodput。ExpertPlex NONE 为 seed42 0.9638 rps、seed43 1.0706 rps；TBO 为 seed42 0.4954 rps、seed43 0.4299 rps。该屏幕没有达到 1.5×，也没有把有限到达率结果解释成单 kernel slowdown。
 
 当前 decode coalescing 改动仍需要完整主模型 grouped witness、取消/错误清理、全词表和 on/off serving 对照，组件级证据不足以启用它或宣称性能收益。跨节点 RDMA、完整 optimizer held-out 校准和论文级 APK 端到端收益仍未通过验收。
+
+## 后续候选验证（2026-11-01）
+
+在不改变默认 1P+3D+4E 的前提下，追加了两项独立候选验证：
+
+- job334 将 P=TBO、D=NONE 的 decode SM budget 调到 128、expected tiles 调到 16。四个到达率的 observed SLO goodput 为 0.5040/0.9586/1.3148/0.7065 rps（0.5/1/1.5/2 rps），清理通过；与 job332 的 1.3160 rps（1.5 rps）基本持平，因此没有合入或宣称收益。
+- sm100_fused 在同一 Qwen3-Coder BF16 形状上完成了服务启动和 full-vocabulary capture，但严格比较出现明显 logprob 差异及少数 top-1 不一致，故拒绝进入性能屏幕，也不作为默认后端。
+- 1P+2D+5E 的探索受当前 DeepEP build 限制：Python 配置表补充后，编译的 legacy/intranode.cu 仍以 Unsupported ranks 拒绝 rank 5。该布局没有严格 reference 或性能结论。
+
+因此当前公开代码保留经过验证的 1P+3D+4E 路径和原生 SGLang/DeepEP 兼容性；相对最强原生屏幕的约 1.5× goodput 目标仍未达成，以上负结果不被包装成性能通过。
