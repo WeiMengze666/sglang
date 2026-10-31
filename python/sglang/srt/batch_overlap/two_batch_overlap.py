@@ -44,6 +44,8 @@ from sglang.srt.model_executor.forward_context import get_attn_backend
 from sglang.srt.runtime_context import (
     attention_backends,
     get_device,
+    get_exec,
+    get_model,
     get_parallel,
 )
 from sglang.srt.speculative.spec_info import SpecInput
@@ -414,6 +416,54 @@ class TboCudaGraphRunnerPlugin:
 
 
 class TboDPAttentionPreparer:
+    @staticmethod
+    def _prefill_split_is_compatible(local_batch, split_sequence):
+        """Vote before DP synchronization, never change overlap per rank later.
+
+        This matches the restricted eager FA2 split hook. Unsupported models,
+        other attention backends, decode and ordinary inference keep their
+        existing eligibility; only incompatible deterministic prefill batches
+        use the native single-batch path through the existing global vote.
+        """
+        model = getattr(local_batch, "model_config", None)
+        if (
+            local_batch.forward_mode != ForwardMode.EXTEND
+            or model is None
+            or not get_exec().deterministic.enable_deterministic_inference
+            or attention_backends()[0] != "flashinfer"
+            or get_model().kv_cache_dtype not in ("auto", "bfloat16")
+            or get_exec().features.enable_mis
+            or model.dtype != torch.bfloat16
+            or model.head_dim != 128
+            or model.v_head_dim != 128
+            or model.is_multimodal
+            or model.sliding_window_size not in (None, -1)
+            or getattr(model.hf_text_config, "model_type", None) != "qwen3_moe"
+        ):
+            return True
+        parallel = get_parallel()
+        heads = model.get_max_num_attention_heads() // parallel.attn_tp_size
+        kv_heads = model.get_num_kv_heads(parallel.attn_tp_size, parallel.attn_dcp_size)
+        if kv_heads <= 0 or heads != 12 * kv_heads:
+            return True
+        lengths = local_batch.extend_lens
+        if not lengths or any(n <= 0 for n in lengths):
+            return True
+        from sglang.srt.layers.attention.flashinfer_tbo import (
+            aligned_fa2_split,
+            fa2_split_is_compatible,
+        )
+
+        internal = _is_two_chunk_split_enabled(lengths)
+        split_token = (
+            aligned_fa2_split(lengths, split_sequence, sum(lengths) // 2, 12)
+            if internal
+            else sum(lengths[:split_sequence])
+        )
+        return fa2_split_is_compatible(
+            lengths, split_sequence, split_token, 12, internal=internal
+        )
+
     def prepare_all_gather(
         self,
         local_batch: ScheduleBatch,
@@ -462,6 +512,10 @@ class TboDPAttentionPreparer:
                 and enable_a2a_moe
                 and (resolved_deepep_mode.is_low_latency())
             )
+            if local_can_run_tbo:
+                local_can_run_tbo = self._prefill_split_is_compatible(
+                    local_batch, self.local_tbo_split_seq_index
+                )
         else:
             self.local_tbo_split_seq_index = 0
             local_can_run_tbo = True
@@ -611,6 +665,7 @@ class TboForwardBatchPreparer:
                 child_a=child_a,
                 child_b=child_b,
                 tbo_split_seq_index=batch.tbo_split_seq_index,
+                split_token_index=tbo_split_token_index,
             )
 
         assert batch.tbo_children is None
@@ -624,11 +679,16 @@ class TboForwardBatchPreparer:
         child_a: ForwardBatch,
         child_b: ForwardBatch,
         tbo_split_seq_index: int,
+        split_token_index: Optional[int] = None,
     ):
         extend_seq_lens_cpu = batch.extend_seq_lens_cpu
         overall_seq_lens_sum = sum(extend_seq_lens_cpu)
-        half_seq_lens_sum = overall_seq_lens_sum // 2
-        left_last_seq_token_num = half_seq_lens_sum - sum(
+        actual_split_token = (
+            overall_seq_lens_sum // 2
+            if split_token_index is None
+            else split_token_index
+        )
+        left_last_seq_token_num = actual_split_token - sum(
             extend_seq_lens_cpu[:tbo_split_seq_index]
         )
         right_first_seq_token_num = (
@@ -648,8 +708,8 @@ class TboForwardBatchPreparer:
                 sum_field="extend_num_tokens",
             )
 
-        assert child_a.extend_num_tokens == half_seq_lens_sum, (
-            f"{child_a.extend_num_tokens=}, {half_seq_lens_sum=}"
+        assert child_a.extend_num_tokens == actual_split_token, (
+            f"{child_a.extend_num_tokens=}, {actual_split_token=}"
         )
 
         child_a.seq_lens_cpu = copy.deepcopy(child_a.seq_lens_cpu)
@@ -940,12 +1000,21 @@ class TboForwardBatchPreparer:
         token_num_per_seq = get_token_num_per_seq(
             forward_mode=batch.forward_mode, spec_info=batch.spec_info
         )
-        return compute_split_token_index(
+        split_token = compute_split_token_index(
             split_seq_index=batch.tbo_split_seq_index,
             forward_mode=batch.forward_mode,
             extend_seq_lens=batch.extend_seq_lens_cpu,
             token_num_per_seq=token_num_per_seq,
         )
+        if batch.forward_mode == ForwardMode.EXTEND and _is_two_chunk_split_enabled(
+            batch.extend_seq_lens_cpu
+        ):
+            backend = get_attn_backend()
+            primary = getattr(backend, "primary", backend)
+            adjust = getattr(primary, "adjust_tbo_prefill_split", None)
+            if adjust is not None:
+                split_token = adjust(batch, split_token)
+        return split_token
 
 
 def _tbo_padded_token_count(num_tokens: int) -> int:

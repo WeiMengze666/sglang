@@ -309,6 +309,12 @@ class FlashInferAttnBackend(AttentionBackend):
         super().__init__()
         self.prefill_backend = "fa2"
         self.decode_backend = "fa2"
+        self.tbo_fa2_split_supported = (
+            getattr(model_runner.model_config.hf_text_config, "model_type", None)
+            == "qwen3_moe"
+            and model_runner.model_config.head_dim == 128
+            and model_runner.model_config.v_head_dim == 128
+        )
 
         self.req_to_token_pool = model_runner.req_to_token_pool
         self.token_to_kv_pool = model_runner.token_to_kv_pool
@@ -964,6 +970,42 @@ class FlashInferAttnBackend(AttentionBackend):
         if self.kv_cache_quant_method.needs_global_scale():
             return None, None
         return layer.k_scale, layer.v_scale
+
+    def adjust_tbo_prefill_split(self, batch: ForwardBatch, split_token: int) -> int:
+        """Keep eligible eager FA2 query tiles intact across an internal TBO cut.
+
+        KV layout and the selected sequence stay unchanged. Decode, other
+        attention backends and unsupported shapes retain their existing split.
+        This does not claim general batch invariance for the FA2 planner.
+        """
+        if (
+            not self.enable_deterministic
+            or not self.tbo_fa2_split_supported
+            or self.prefill_backend != "fa2"
+            or self.num_wrappers != 1
+            or self.dispatch_reason is not None
+            or self.is_dllm_model
+            or self.is_multimodal
+            or self.enable_mis
+            or batch.cross_attention_custom_mask is not None
+        ):
+            return split_token
+        updater = self.indices_updater_prefill
+        if (
+            updater.head_dim != 128
+            or updater.q_data_type != torch.bfloat16
+            or updater.data_type != torch.bfloat16
+            or updater.num_qo_heads != 12 * updater.num_kv_heads
+        ):
+            return split_token
+        from sglang.srt.layers.attention.flashinfer_tbo import aligned_fa2_split
+
+        return aligned_fa2_split(
+            batch.extend_seq_lens_cpu,
+            batch.tbo_split_seq_index,
+            split_token,
+            group_size=12,
+        )
 
     def init_forward_metadata(self, forward_batch: ForwardBatch):
         swa_out_cache_loc = None
