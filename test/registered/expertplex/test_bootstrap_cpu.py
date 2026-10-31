@@ -84,6 +84,59 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(self.server.route("/health", None)[0], 503)
         self.assertEqual(self.server.route("/register", self.registration())[0], 503)
 
+    def test_mixed_policy_discovery_and_lease_digest_are_consistent(self):
+        from dataclasses import replace
+
+        node = replace(
+            self.node,
+            overlap="tbo",
+            rendezvous_dir=str(Path(self.node.rendezvous_dir).parent / "mixed"),
+            clients=tuple(
+                replace(c, overlap="tbo" if c.phase == "prefill" else "none")
+                for c in self.node.clients
+            ),
+        )
+        manifest = rv.begin_run(node)
+        for rank, device in enumerate(node.expert_devices):
+            rv.atomic_json(
+                Path(node.rendezvous_dir) / f"expert-{rank}.json",
+                dict(
+                    run_id=manifest["run_id"],
+                    rank=rank,
+                    device=device,
+                    pid=os.getpid(),
+                    buffers={},
+                ),
+            )
+        server = bootstrap.BootstrapServer(node, manifest, "127.0.0.1", 0)
+        self.addCleanup(server.close)
+        address = f"http://127.0.0.1:{server.server.server_port}"
+        fetched, _ = bootstrap.fetch_config(address, 0.5)
+        self.assertEqual(fetched, node)
+        self.assertEqual(fetched.slot_count, 8)
+        self.assertEqual(
+            [fetched.client_overlap(c) for c in fetched.clients],
+            ["tbo", "none", "none", "none"],
+        )
+        manifest["state"] = "ready"
+        for client in node.clients:
+            body = self.registration(client.id) | dict(
+                run_id=manifest["run_id"], config_digest=rv.config_digest(node)
+            )
+            self.assertEqual(
+                len(bootstrap.request(address, "/register", body)["peers"]), 4
+            )
+            bootstrap.request(address, "/release", body | dict(drained=True))
+        # Identical slot geometry does not permit a different execution policy
+        # to register against this generation.
+        other = replace(
+            node, clients=tuple(replace(c, overlap="none") for c in node.clients)
+        )
+        bad = self.registration() | dict(
+            run_id=manifest["run_id"], config_digest=rv.config_digest(other)
+        )
+        self.assertEqual(server.route("/register", bad)[0], 409)
+
     def test_exclusive_registration_retry_and_clean_reconnect(self):
         self.ready()
         body = self.registration()

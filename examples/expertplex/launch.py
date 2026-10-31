@@ -80,9 +80,65 @@ def add_prefill_graph_args(parser):
     )
 
 
+def add_decode_compile_args(parser):
+    parser.add_argument("--enable-torch-compile", action="store_true")
+    parser.add_argument("--torch-compile-max-bs", type=int, default=16)
+    parser.add_argument("--enable-deterministic-inference", action="store_true")
+    parser.add_argument(
+        "--cuda-graph-bs-decode",
+        type=int,
+        nargs="+",
+        help="Explicit native decode graph buckets; overrides the maximum-size option",
+    )
+
+
+def execution_options(args, *, decode=True):
+    """Forward native opt-ins without changing scheduling, attention or precision."""
+    result = []
+    if getattr(args, "enable_deterministic_inference", False):
+        result.append("--enable-deterministic-inference")
+    if decode and getattr(args, "enable_torch_compile", False):
+        size = getattr(args, "torch_compile_max_bs", 16)
+        if type(size) is not int or size < 1:
+            raise ValueError("torch compile maximum batch size must be positive")
+        if not getattr(args, "cuda_graph", True):
+            raise ValueError("Decode torch.compile requires decode CUDA graphs")
+        result += ["--enable-torch-compile", "--torch-compile-max-bs", str(size)]
+    return result
+
+
+def decode_graph_options(args, capacity=None):
+    sizes = getattr(args, "cuda_graph_bs_decode", None)
+    if sizes is not None:
+        if (
+            not sizes
+            or any(type(n) is not int or n < 1 for n in sizes)
+            or list(sizes) != sorted(set(sizes))
+        ):
+            raise ValueError("Decode graph buckets must be positive, unique and sorted")
+        if capacity is not None and sizes[-1] > capacity:
+            raise ValueError(
+                "Decode graph buckets exceed the attention mailbox capacity"
+            )
+        if not getattr(args, "cuda_graph", True):
+            raise ValueError("Explicit graph buckets require decode CUDA graphs")
+        return ["--cuda-graph-bs-decode", *map(str, sizes)]
+    maximum = getattr(args, "graph_max_bs", None)
+    if maximum is None:
+        maximum = 32
+    if type(maximum) is not int or maximum < 1:
+        raise ValueError("Decode graph maximum batch size must be positive")
+    return [
+        "--cuda-graph-max-bs-decode",
+        str(min(maximum, capacity) if capacity is not None else maximum),
+    ]
+
+
 def commands(node, args):
     prefill_graph = prefill_graph_options(args, node.max_prefill_tokens)
-    if prefill_graph[1] != "disabled" and node.overlap == "tbo":
+    if prefill_graph[1] != "disabled" and any(
+        node.client_overlap(c) == "tbo" for c in node.clients if c.phase == "prefill"
+    ):
         raise ValueError("Prefill graph requires overlap=none; native TBO disables it")
     worker = [
         sys.executable,
@@ -107,6 +163,16 @@ def commands(node, args):
             if client.phase == "prefill"
             else node.max_decode_tokens
         )
+        running = min(node.max_decode_tokens, capacity)
+        if (
+            client.phase == "decode"
+            and getattr(args, "decode_max_running_requests", None) is not None
+        ):
+            running = args.decode_max_running_requests
+            if type(running) is not int or not 0 < running <= capacity:
+                raise ValueError(
+                    "Decode max running requests must fit its mailbox capacity"
+                )
         bootstrap = args.bootstrap_port + client.id
         command = [
             sys.executable,
@@ -155,11 +221,12 @@ def commands(node, args):
             "--max-prefill-tokens",
             str(capacity),
             "--max-running-requests",
-            str(min(node.max_decode_tokens, capacity)),
+            str(running),
             "--attention-backend",
             args.attention_backend,
             "--sampling-backend",
             args.sampling_backend,
+            *execution_options(args, decode=client.phase == "decode"),
         ]
         if args.kv_tokens is not None:
             command += ["--max-total-tokens", str(args.kv_tokens)]
@@ -176,8 +243,10 @@ def commands(node, args):
             command += ["--disable-overlap-schedule"]
         if getattr(args, "disable_flashinfer_autotune", False):
             command += ["--disable-flashinfer-autotune"]
-        if node.overlap == "tbo":
+        if node.client_overlap(client) == "tbo":
             command += ["--enable-two-batch-overlap"]
+        elif node.client_overlap(client) == "sbo":
+            command += ["--enable-single-batch-overlap"]
         if node.prefill_mailbox_tokens is not None:
             command += ["--tbo-token-distribution-threshold", "0.5"]
         if args.skip_tokenizer_init:
@@ -189,7 +258,9 @@ def commands(node, args):
         if getattr(args, "sequence_cap", None):
             command += ["--context-length", str(args.sequence_cap)]
         if args.cuda_graph:
-            command += ["--cuda-graph-max-bs-decode", str(min(32, capacity))]
+            command += decode_graph_options(args, capacity)
+        elif getattr(args, "cuda_graph_bs_decode", None) is not None:
+            raise ValueError("Explicit graph buckets require decode CUDA graphs")
         servers.append((client, command))
     router = [
         sys.executable,
@@ -240,6 +311,13 @@ def wait_http(url, children, deadline, expected_workers=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     add_prefill_graph_args(parser)
+    add_decode_compile_args(parser)
+    parser.add_argument("--graph-max-bs", type=int)
+    parser.add_argument(
+        "--decode-max-running-requests",
+        type=int,
+        help="Optional native D request limit; P batching and KV profiling keep their defaults",
+    )
     parser.add_argument("--config", required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=31000)

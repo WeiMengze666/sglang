@@ -54,12 +54,15 @@ class ClientConfig:
     device: int
     port: int
     tp_size: int = 1
+    overlap: str | None = None
 
     def __post_init__(self) -> None:
         _positive_integer("client id", self.id, allow_zero=True)
         _positive_integer("client device", self.device, allow_zero=True)
         _positive_integer("client port", self.port)
         _positive_integer("client tp_size", self.tp_size)
+        if self.overlap is not None and self.overlap not in ("none", "tbo", "sbo"):
+            raise ValueError("client overlap must be none, tbo, sbo or null")
         if self.port > 65535:
             raise ValueError("client port must be at most 65535")
         if self.phase not in ("prefill", "decode"):
@@ -374,7 +377,11 @@ class NodeConfig:
                 self.max_prefill_tokens,
                 max((self.max_prefill_tokens + 1) // 2, 2 * self.max_decode_tokens),
             )
-            if self.overlap != "tbo" or not (
+            if any(
+                self.client_overlap(c) != "tbo"
+                for c in self.clients
+                if c.phase == "prefill"
+            ) or not (
                 minimum <= self.prefill_mailbox_tokens <= self.max_prefill_tokens
             ):
                 raise ValueError(
@@ -409,14 +416,15 @@ class NodeConfig:
             )
 
         if model_spec is not None:
-            if self.overlap == "sbo" and not model_spec.shared_intermediate_size:
+            policies = {self.client_overlap(c) for c in self.clients}
+            if "sbo" in policies and not model_spec.shared_intermediate_size:
                 raise ValueError("SBO requires a model with a shared expert")
             if model_spec.architecture == "Qwen2MoeForCausalLM":
                 if self.weight_mode == "synthetic":
                     raise ValueError(
                         "Canonical dummy initialization is Qwen3-only; use a BF16 Qwen2 checkpoint"
                     )
-                if self.overlap == "tbo":
+                if "tbo" in policies:
                     raise ValueError(
                         "Qwen2 ExpertPlex TBO stage hooks are not yet validated"
                     )
@@ -439,13 +447,35 @@ class NodeConfig:
                 return client
         raise ValueError(f"unknown attention client ID: {client_id}")
 
+    def client_overlap(self, client: ClientConfig) -> str:
+        """Resolve the policy used by this independently launched native service."""
+        return self.overlap if client.overlap is None else client.overlap
+
     @property
     def mailboxes_per_client(self) -> int:
-        return 2 if self.overlap == "tbo" else 1
+        # Keep a uniform slot stride across every producer and expert. A global
+        # TBO reservation retains two slots even when clients override it, so a
+        # policy ablation need not also change the transport buffer geometry.
+        return (
+            2
+            if self.overlap == "tbo"
+            or any(self.client_overlap(c) == "tbo" for c in self.clients)
+            else 1
+        )
 
     @property
     def slot_count(self) -> int:
         return len(self.clients) * self.mailboxes_per_client
+
+    @property
+    def decode_slots(self) -> list[int]:
+        """Public D mailbox IDs; include each TBO microbatch independently."""
+        return [
+            client.id * self.mailboxes_per_client + index
+            for client in sorted(self.clients, key=lambda c: c.id)
+            if client.phase == "decode"
+            for index in range(self.mailboxes_per_client)
+        ]
 
     @property
     def prefill_mailbox_capacity(self) -> int:
@@ -466,6 +496,10 @@ class NodeConfig:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
+        # Absent overrides retain the existing topology digest and JSON schema.
+        for client in data["clients"]:
+            if client["overlap"] is None:
+                client.pop("overlap")
         data["expert_devices"] = list(self.expert_devices)
         return data
 
@@ -487,6 +521,8 @@ def default_config(
     expert_count: int = 4,
     prefill_tp_size: int = 1,
     decode_tp_size: int = 1,
+    prefill_overlap: str | None = None,
+    decode_overlap: str | None = None,
     **overrides: Any,
 ) -> NodeConfig:
     """Create a contiguous placement (the default is the paper's 1P3D4E)."""
@@ -514,6 +550,7 @@ def default_config(
                 + (i - prefill_count) * decode_tp_size,
                 30000 + i,
                 prefill_tp_size if i < prefill_count else decode_tp_size,
+                prefill_overlap if i < prefill_count else decode_overlap,
             )
             for i in range(attention_count)
         ),

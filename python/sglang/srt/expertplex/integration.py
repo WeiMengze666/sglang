@@ -172,6 +172,64 @@ def attention_weights_iterator(
                 yield name, tensor
 
 
+def compiled_attention_errors(cfg, client, config):
+    """Admit the bounded native decode compiler path without diagnostic switches.
+
+    These checks select the numerically validated configuration, not a separate
+    model executor. SGLang still owns compilation, CUDA graphs, scheduling and
+    attention; remote routed MoE retains its existing eager compiler boundary.
+    """
+    if not getattr(cfg, "enable_torch_compile", False):
+        return []
+    errors = []
+    overlap = getattr(client, "overlap", None) or config.overlap
+    if (
+        getattr(cfg, "disaggregation_mode", None) != "decode"
+        or not getattr(cfg, "enable_deterministic_inference", False)
+        or getattr(cfg, "torch_compile_max_bs", None) != 16
+    ):
+        errors.append(
+            "--enable-torch-compile requires deterministic decode with "
+            "--torch-compile-max-bs 16"
+        )
+    if client.tp_size != 1 or overlap not in ("none", "tbo"):
+        errors.append("ExpertPlex compiled decode requires TP1 and overlap none or tbo")
+    graph = getattr(cfg, "cuda_graph_config", None)
+    decode = (
+        graph.get("decode", {})
+        if isinstance(graph, dict)
+        else getattr(graph, "decode", None)
+    )
+    backend = (
+        decode.get("backend")
+        if isinstance(decode, dict)
+        else getattr(decode, "backend", None)
+    )
+    sizes = (
+        decode.get("bs") if isinstance(decode, dict) else getattr(decode, "bs", None)
+    )
+    supported = [[2, 4, 8, 12, 16]]
+    if overlap == "none":
+        supported.append([1, 2, 4, 8, 12, 16])
+    if backend != "full" or list(sizes or []) not in supported:
+        errors.append(
+            "ExpertPlex compiled decode requires full CUDA graph buckets "
+            "2,4,8,12,16 (an additional singleton bucket is supported without TBO)"
+        )
+    required_env = {
+        "SGLANG_TORCH_COMPILE_MODE": "default",
+        "TORCHINDUCTOR_BATCH_INVARIANT": "1",
+        "TORCHINDUCTOR_EMULATE_PRECISION_CASTS": "1",
+        "TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS": "ATEN",
+    }
+    for name, value in required_env.items():
+        if os.environ.get(name) != value:
+            errors.append(
+                f"ExpertPlex compiled decode requires {name}={value} before startup"
+            )
+    return errors
+
+
 def validate_server_args(cfg: Any) -> None:
     """Reject unsupported combinations before the engine spawns GPU processes."""
     policy_options = (
@@ -284,7 +342,8 @@ def validate_server_args(cfg: Any) -> None:
             "Use either bootstrap discovery or explicit config/client ID, not both"
         )
     config, client = attention_config(cfg)
-    errors = []
+    overlap = getattr(client, "overlap", None) or config.overlap
+    errors = compiled_attention_errors(cfg, client, config)
     if getattr(cfg, "tp_size", 1) != client.tp_size:
         errors.append(
             f"--tp-size must match attention client TP width {client.tp_size}"
@@ -309,7 +368,6 @@ def validate_server_args(cfg: Any) -> None:
         if getattr(cfg, name, 1) != 1:
             errors.append(f"--{name.replace('_', '-')} must be 1")
     for name in (
-        "enable_torch_compile",
         "enable_eplb",
         "enable_lora",
         "enable_pdmux",
@@ -322,15 +380,13 @@ def validate_server_args(cfg: Any) -> None:
             errors.append(f"--{name.replace('_', '-')} is not supported")
     if getattr(cfg, "lora_paths", None):
         errors.append("LoRA adapters are not supported")
-    if bool(getattr(cfg, "enable_two_batch_overlap", False)) != (
-        config.overlap == "tbo"
-    ):
-        errors.append("--enable-two-batch-overlap must match ExpertPlex config.overlap")
-    if bool(getattr(cfg, "enable_single_batch_overlap", False)) != (
-        config.overlap == "sbo"
-    ):
+    if bool(getattr(cfg, "enable_two_batch_overlap", False)) != (overlap == "tbo"):
         errors.append(
-            "--enable-single-batch-overlap must match ExpertPlex config.overlap"
+            "--enable-two-batch-overlap must match the ExpertPlex client overlap policy"
+        )
+    if bool(getattr(cfg, "enable_single_batch_overlap", False)) != (overlap == "sbo"):
+        errors.append(
+            "--enable-single-batch-overlap must match the ExpertPlex client overlap policy"
         )
     if config.prefill_mailbox_tokens is not None and (
         getattr(cfg, "tbo_token_distribution_threshold", None) != 0.5
@@ -419,11 +475,11 @@ def validate_server_args(cfg: Any) -> None:
         )
         if backend not in allowed:
             errors.append(f"--cuda-graph-backend-{phase} must be one of {allowed}")
-        if phase == "prefill" and backend != "disabled" and config.overlap == "sbo":
+        if phase == "prefill" and backend != "disabled" and overlap == "sbo":
             errors.append(
                 "Qwen2 SBO prefill graph overlap needs separate validation; use disabled"
             )
-        if phase == "prefill" and backend == "breakable" and config.overlap == "tbo":
+        if phase == "prefill" and backend == "breakable" and overlap == "tbo":
             errors.append(
                 "ExpertPlex prefill breakable graph with TBO is not yet validated; "
                 "use --cuda-graph-backend-prefill disabled with TBO"

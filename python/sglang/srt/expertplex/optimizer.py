@@ -1093,6 +1093,11 @@ def search(
     TBO is an analytical option for a measured TBO setup; selecting it here
     does not enable communication overlap in the runtime.
     """
+    if any(client.overlap is not None for client in config.clients):
+        raise ProfileCoverageError(
+            "Client-specific overlap requires separately calibrated phase policies; "
+            "the current search supports a uniform node policy only"
+        )
     if model.shared_intermediate_size:
         raise ProfileCoverageError(
             "Shared-expert placement requires independently validated shared-branch "

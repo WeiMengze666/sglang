@@ -30,6 +30,12 @@ def main():
     parser.add_argument("--max-decode-sm-fraction", type=float, default=0.75)
     parser.add_argument("--rendezvous-dir", required=True)
     parser.add_argument("--overlap", choices=("none", "tbo", "sbo"), default="none")
+    for phase in ("prefill", "decode"):
+        parser.add_argument(
+            f"--{phase}-overlap",
+            choices=("none", "tbo", "sbo"),
+            help="Override the overlap policy for this phase's native services",
+        )
     parser.add_argument(
         "--kernel",
         choices=("sm100", "sm100_cta1", "sm100_fused", "wmma"),
@@ -63,6 +69,8 @@ def main():
         rendezvous_dir=str(Path(args.rendezvous_dir).expanduser().resolve()),
         weight_mode="synthetic" if args.synthetic_weights else "checkpoint",
         overlap=args.overlap,
+        prefill_overlap=args.prefill_overlap,
+        decode_overlap=args.decode_overlap,
         kernel=args.kernel,
         prefill_preprocess=args.prefill_preprocess,
     )
