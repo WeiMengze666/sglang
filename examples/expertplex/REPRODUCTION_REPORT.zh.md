@@ -62,3 +62,9 @@ CPU preflight 对每个候选均为 34 tests，且没有初始化 CUDA 或导入
 all-decode 三个 D worker 均完成 512 positions，但在 `history_tokens=12287` 边界出现全词表差异：D1 的首个 `max_abs_logprob_difference` 为 0.656248，随后 12288 为 0.4375、12289 为 0.765629；top-1 仍相同。该配置因此被拒绝，未修改默认 split=4096，也未进入性能屏幕。已验证的 native-fa2-aligned + 默认 4096 路径 job282 仍是长上下文严格 gate 的权威证据。
 
 job428 之后用显式 PYTHONPATH 和 `CUDA_VISIBLE_DEVICES=999` 在发布树运行 `unittest discover`，257 项 ExpertPlex CPU 合约通过；没有 GPU 服务残留。当前缓存前缀、短尾和更广 query-partition gate 仍未全部通过，因此严格总验收与 1.5× goodput 目标保持未完成。
+
+### Cached-prefix / query-partition 严格门（job445，FA4 诊断后端）
+
+job442 先确认了配置边界：确定性推理使用 FlashInfer 时 SGLang 自动关闭 radix cache，因而不能用于缓存复用门。job445 保持默认 1P+3D+4E、split=4096、native-fa2 对齐覆盖、逐 token 全词表和三路 D/TBO/清理门禁，仅将 native 与 P/D attention backend 改为 B300 确定性兼容的 FA4；sampling backend 未改变，生产默认 FlashInfer 未修改。
+
+16 条顺序请求共享前 4097 个 token、尾部长度为 512 或 1024。每条请求的 `cached_tokens` 均为 4608；native 与 repeat、三路 D 的 512 positions × 151936 vocab 全词表 logprob 均严格 bit-exact，fresh TBO replay 为 29/29/30，gpuq 清理返回 0 且无残留 children。该结果关闭了“缓存门因配置导致未命中”的严格诊断缺口，但 FA4 只作为正确性诊断后端，没有替换默认 FlashInfer，也没有 goodput 或 1.5× 性能含义。
