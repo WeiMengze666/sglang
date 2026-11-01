@@ -67,6 +67,12 @@ job428 之后用显式 PYTHONPATH 和 `CUDA_VISIBLE_DEVICES=999` 在发布树运
 
 job418 的 native 参考在 warmup capture 申请约 7.25 GiB 的 batch_prefill_tmp_v，而候选只提供 4 GiB FlashInfer workspace，因而在 ExpertPlex 阶段前退出；这是 workspace 容量失败，不是 query-partition 数值结论。8 GiB/16 GiB workspace 的后续候选分别在 all-D harness、native graph capture 或同一边界再次失败；job428 是唯一到达三路 D 的 successor，已在上一节记录为 history_tokens=12287 全词表偏差。默认 split4096 和生产路径未改变。
 
+### APK propagation/receipt diagnostics（已完成历史组件证据）
+
+已有 warp-propagation 组件门对 raw 与 routed 两种路径都完成了严格 trace 检查：每条路径均覆盖 148 CTAs、cluster size 2、无截断 trace，并记录了 participating-warp receipt 与 conservative publication-to-receipt 上界。raw 路径为 485248 tiles、8026 phase switches、15 次 arrival，观测上界范围约 25.95–725.66 us；routed 路径为 427312 tiles、5114 phase switches、15 次 arrival，观测上界范围约 50.88–1778.53 us。policy-propagation 诊断进一步覆盖 routed/raw、D=128/1024 的四组实验，每组 25 个 policy versions，所有 decode-arrival recipient coverage 均完整，missing recipient 数为 0。
+
+这些结果使用同一 GPU 时钟和保守上界，明确排除跨设备时钟相减、universal all-warp/one-tile bound 和 serving goodput；它们作为组件证据保留，不提升全局验收状态。
+
 ### APK tile/preemption strict component gate（job489）
 
 为补充论文 §4.3 的 E 侧 tile 调度门，在不改变生产路径的情况下运行了独立 synthetic BF16 SM100 trace。配置为 148 CTAs、cluster size 2、prefill rows 512/2048/8192、decode rows 128，并开启 check-single-pending-compute。严格 gate 记录 215408 条 trace、0 个截断 CTA、107704 个决策、5654 次 phase switch，且每个 CTA 未观察到 ready 的 GEMM 数不超过 1；gpuq cleanup 返回 0 且无残留子进程。
