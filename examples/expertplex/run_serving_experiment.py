@@ -60,7 +60,7 @@ def main():
     )
     p.add_argument("--mem-fraction-static", type=memory_fraction)
     p.add_argument(
-        "--attention-backend", choices=("triton", "flashinfer"), default="flashinfer"
+        "--attention-backend", choices=("triton", "flashinfer", "fa3", "fa4"), default="flashinfer"
     )
     p.add_argument(
         "--sampling-backend", choices=("flashinfer", "pytorch"), default="flashinfer"
