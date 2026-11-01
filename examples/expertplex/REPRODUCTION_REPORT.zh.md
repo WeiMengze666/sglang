@@ -67,6 +67,12 @@ job428 之后用显式 PYTHONPATH 和 `CUDA_VISIBLE_DEVICES=999` 在发布树运
 
 job418 的 native 参考在 warmup capture 申请约 7.25 GiB 的 batch_prefill_tmp_v，而候选只提供 4 GiB FlashInfer workspace，因而在 ExpertPlex 阶段前退出；这是 workspace 容量失败，不是 query-partition 数值结论。8 GiB/16 GiB workspace 的后续候选分别在 all-D harness、native graph capture 或同一边界再次失败；job428 是唯一到达三路 D 的 successor，已在上一节记录为 history_tokens=12287 全词表偏差。默认 split4096 和生产路径未改变。
 
+### APK tile/preemption strict component gate（job489）
+
+为补充论文 §4.3 的 E 侧 tile 调度门，在不改变生产路径的情况下运行了独立 synthetic BF16 SM100 trace。配置为 148 CTAs、cluster size 2、prefill rows 512/2048/8192、decode rows 128，并开启 check-single-pending-compute。严格 gate 记录 215408 条 trace、0 个截断 CTA、107704 个决策、5654 次 phase switch，且每个 CTA 未观察到 ready 的 GEMM 数不超过 1；gpuq cleanup 返回 0 且无残留子进程。
+
+该结果只证明 E 侧 tile/单 pending compute 组件门。它不证明完整 attention publication 到 E admission 的跨设备传播 bound、完整模型逐 token 对齐或 serving goodput，生产代码和全局验收状态保持不变。
+
 ### Cached-prefix / query-partition 严格门（job445，FA4 诊断后端）
 
 job442 先确认了配置边界：确定性推理使用 FlashInfer 时 SGLang 自动关闭 radix cache，因而不能用于缓存复用门。job445 保持默认 1P+3D+4E、split=4096、native-fa2 对齐覆盖、逐 token 全词表和三路 D/TBO/清理门禁，仅将 native 与 P/D attention backend 改为 B300 确定性兼容的 FA4；sampling backend 未改变，生产默认 FlashInfer 未修改。
