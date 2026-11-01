@@ -18,6 +18,13 @@ def load_helper():
     return module.aligned_fa2_split
 
 
+def load_geometry_helper():
+    spec = importlib.util.spec_from_file_location("fa2_tbo_geometry", HELPER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.aligned_fa2_split, module.fa2_split_is_compatible
+
+
 def tile_for(tokens, sequences, group):
     average = tokens * group // sequences
     return 128 if average > 64 else 64 if average > 16 else 16
@@ -141,6 +148,21 @@ class FlashInferTboSplit(unittest.TestCase):
             ([512], 0, 512, 12),
         ]:
             self.assertEqual(choose(lengths, sequence, cut, group), cut)
+
+    def test_long_boundary_uses_phase_aligned_outer_cut(self):
+        choose, compatible = load_geometry_helper()
+        lengths = [12288, 12287, 12287]
+        desired = sum(lengths[:1]) + lengths[1] // 2
+        adjusted = choose(lengths, 1, desired, 12)
+        self.assertEqual(adjusted % 32, 0)
+        self.assertEqual(adjusted, 18432)
+        self.assertTrue(compatible(lengths, 1, adjusted, 12, internal=True))
+
+    def test_tiny_tail_geometry_is_fail_closed(self):
+        _, compatible = load_geometry_helper()
+        self.assertFalse(compatible([33], 0, 32, 12, internal=True))
+        self.assertFalse(compatible([8], 0, 4, 12, internal=True))
+        self.assertFalse(compatible([5], 0, 2, 12, internal=True))
 
     def test_native_dispatch_uses_hook_only_for_internal_extend(self):
         path = ROOT / "python/sglang/srt/batch_overlap/two_batch_overlap.py"
