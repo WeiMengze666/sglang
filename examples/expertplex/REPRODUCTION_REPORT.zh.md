@@ -35,3 +35,9 @@ CPU preflight 对每个候选均为 34 tests，且没有初始化 CUDA 或导入
 
 - 关闭 SGLANG_EXPERTPLEX_PIPELINED_STORES 的 job369 在 512 positions、2560 copies、151936 vocab 上保持 bit-exact，但没有产生要求的两个 fresh nonempty TBO child replay；因此该消融没有进入 serving 或性能路径。
 - 默认 ExpertPlex 使用 4 个 E ranks（每卡 40 个专家），最强 colocated DeepEP128 基线使用 8 个 E ranks（每卡 20 个专家）。这个布局差异解释了 E 卡长期满载的容量边界；它是当前比较的系统级约束，不能从有限 goodput 屏幕推出单 kernel slowdown。
+
+### Logical E8 capacity experiment（未发布候选）
+
+为检验上述 4E/8E 结构差异，候选 worktree 允许 E rank 与 P/D attention 物理重叠，但默认配置和公开源码保持不变。job387 在 P=NONE、D=NONE 下完成了 512 positions × 2560 copies、151936 全词表逐 token bit-exact 对齐，清理通过。
+
+端到端候选 job391 使用自动 KV profiling，在 E/P/D 重叠卡上因 P/D 初始化 FlashInfer 8 GiB workspace 时 OOM；job395 仅降低节点 `max_prefill_tokens` 仍触发自动 KV 池扩张，同样在 benchmark 前 OOM。job397 改为显式 aggregate KV cap 393216，使四服务启动并完成了 0.5 和 1.0 rps 的各 256 请求，但两点 joint-SLO 均为 0/256：0.5 rps 的 p90 TTFT/TPOT 为 1239/312 ms，1.0 rps 为 63264/312 ms。该候选随后通过 gpuq 终止并确认无残留进程。它没有性能收益，未进入公开源码或默认布局。
