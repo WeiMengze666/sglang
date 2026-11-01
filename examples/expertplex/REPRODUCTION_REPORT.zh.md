@@ -126,3 +126,7 @@ job525 在 FA4 attention backend 下重新运行长混合上下文 strict gate�
 ### Decode SM budget64/expected4 公平屏幕（job536）
 
 为补齐 q 搜索，job536 测试了 P=TBO/D=NONE、FlashInfer、decode SM budget=64、expected decode tiles=4。相同 ShareGPT-24576、256 请求、seed42、TTFT 1 s、TPOT 50 ms 和 0.5/1/1.5/2 rps 下，联合 SLO 通过数为 254/251/232/84，observed goodput 为 0.502125/0.962405/1.286626/0.594377 rps。1.5 rps 结果低于已有 q96/q128，候选被拒绝，SM budget 搜索不支持约 1.5x 性能目标。
+
+### Universal propagation component gate（job542，未通过）
+
+新增的 strict validator 要求所有配置 cluster 都出现 decode receipt、phase switch 的旧 tile/in-flight 前缀不超过一个，并要求保守 publication-to-all-warp 上界不超过观测 tile lifetime。job542 使用 D=1024、完整 CTA trace capacity 65536 和三次重复运行；trace 无截断且记录了大范围 cluster receipt，但 gate 在 phase switch 处发现超过一个 old tile in flight，因而拒绝 universal one-tile bound。该结果补充了论文 §4.3/§7.6 的负组件证据；未修改调度器，也不代表端到端性能或全局复现通过。
