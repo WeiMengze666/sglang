@@ -100,3 +100,9 @@ job442 先确认了配置边界：确定性推理使用 FlashInfer 时 SGLang �
 为区分早期 fused mismatch 是否来自 direct routed-row prefill，隔离候选允许 `sm100_fused` 使用 expert-side prefill preprocess，并修正 fused pipeline 的 `GATE -> DOWN` retire 转移。短 prompt job463 和长 prompt job474 的单 ExpertPlex 服务均通过 512 positions × 151936 vocab 全词表 exact；长 prompt 仍没有产生 TBO replay 元数据。job478 在显式跳过 TBO proof 的 all-D 诊断中，首个位置 exact，但从第二个 decode position 开始出现全词表差异，因此该候选没有进入性能屏幕或默认代码。
 
 这些结果只保留为隔离诊断：默认 `sm100`、FlashInfer、1P+3D+4E 和已通过的 P=TBO/D=NONE 路径保持不变。
+
+### Decode activation fixed-tile strict and fair screen (jobs 507/510)
+
+为验证 decode activation tile 由默认几何改为固定 32x256 BF16 tile 的候选，在隔离 worktree 中仅保留该 SM100 pipeline 改动，生产树的默认路径未改变。job507 使用默认 1P+3D+4E、native EP4 reference、16 条固定 prompt、每条 32 个 decode step，并对 512 个位置逐 token 比较完整 151936 词表 logprob。native 与 ExpertPlex 均通过，all_full_vocab_logprobs_exact 为 true，top-1 全部相同，cleanup_errors 为空。该结果是严格数值和组件证据，不是服务性能结果。
+
+严格门通过后，job510 运行同几何的公平服务屏幕：ShareGPT-24576、256 requests、seed42、TTFT 1000 ms、TPOT 50 ms、0.5/1/1.5/2 rps，仅测试 P=TBO、D=NONE。四个点均完成 256 请求；联合 SLO 通过数和 observed SLO goodput 分别为 248/256、0.489005 rps，155/256、0.587118 rps，32/256、0.173245 rps，10/256、0.066743 rps。0.5 rps 的 p90 TTFT/TPOT 为 228.12/43.68 ms，满足 90% joint-SLO；1.0、1.5、2.0 rps 的 p90 TPOT 分别为 57.16、71.76、88.19 ms，均未通过。该候选未达到约 1.5x goodput，未合入生产代码；默认 ExpertPlex 与最强原生基线的性能验收仍保持未通过。
