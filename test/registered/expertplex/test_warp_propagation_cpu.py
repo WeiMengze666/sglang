@@ -8,7 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
-validate = importlib.import_module("bench_preemption").validate_warp_propagation
+module = importlib.import_module("bench_preemption")
+validate = module.validate_warp_propagation
+validate_universal = module.validate_universal_propagation_bound
 
 
 class WarpPropagationTests(unittest.TestCase):
@@ -152,6 +154,18 @@ class WarpPropagationTests(unittest.TestCase):
         self.assertEqual(result["clusters_without_any_tile"], [1])
         self.assertEqual(result["arrivals"][0]["clusters_without_decode_work"], [1])
         self.assertEqual(len(result["arrivals"][0]["clusters"]), 1)
+
+
+    def test_universal_gate_requires_all_clusters(self):
+        warp = {"configured_clusters": 1, "clusters_without_any_tile": [], "arrivals": [{"clusters_without_decode_work": [], "clusters": [{"publication_to_all_warps_upper_bound_us": 2.0}]}]}
+        decisions = {"phase_switches": [{"old_tiles_in_flight_per_cta": 1, "unretired_sequence_upper_bound": 1}]}
+        self.assertEqual(validate_universal(warp, decisions, 3.0)["status"], "passed")
+        with self.assertRaises(ValueError):
+            validate_universal({**warp, "clusters_without_any_tile": [1]}, decisions, 3.0)
+        with self.assertRaises(ValueError):
+            validate_universal(warp, {"phase_switches": [{"old_tiles_in_flight_per_cta": 2, "unretired_sequence_upper_bound": 1}]}, 3.0)
+        with self.assertRaises(ValueError):
+            validate_universal(warp, decisions, 1.0)
 
     def test_missing_or_invalid_launch_inventory_fails(self):
         with self.assertRaises(TypeError):

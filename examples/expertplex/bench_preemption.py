@@ -372,6 +372,48 @@ def validate_warp_propagation(
     }
 
 
+def validate_universal_propagation_bound(warp_checks, decision_checks, max_tile_us):
+    """Require complete synthetic cluster receipts within one tile lifetime."""
+    import math
+    if not isinstance(warp_checks, dict) or not isinstance(decision_checks, dict):
+        raise ValueError("Propagation checks must be dictionaries")
+    if not isinstance(max_tile_us, (int, float)) or not math.isfinite(max_tile_us) or max_tile_us <= 0:
+        raise ValueError("max_tile_us must be finite and positive")
+    clusters = warp_checks.get("configured_clusters")
+    if type(clusters) is not int or clusters <= 0:
+        raise ValueError("Need a positive configured cluster inventory")
+    if warp_checks.get("clusters_without_any_tile"):
+        raise ValueError("Some configured clusters have no tile trace")
+    arrivals = warp_checks.get("arrivals")
+    switches = decision_checks.get("phase_switches")
+    if not isinstance(arrivals, list) or not arrivals:
+        raise ValueError("Need at least one decode arrival")
+    if not isinstance(switches, list) or not switches:
+        raise ValueError("Need at least one phase switch")
+    for switch in switches:
+        pending = switch.get("old_tiles_in_flight_per_cta")
+        prefix = switch.get("unretired_sequence_upper_bound")
+        if type(pending) is not int or pending < 0 or pending > 1:
+            raise ValueError("Phase switch has more than one old tile in flight")
+        if type(prefix) is not int or prefix < 0 or prefix > 1:
+            raise ValueError("Phase switch lacks a bounded retirement prefix")
+    max_bound = 0.0
+    for arrival in arrivals:
+        if arrival.get("clusters_without_decode_work"):
+            raise ValueError("Decode arrival does not reach every configured cluster")
+        bounds = arrival.get("clusters")
+        if not isinstance(bounds, list) or len(bounds) != clusters:
+            raise ValueError("Decode arrival lacks all cluster warp receipts")
+        for bound in bounds:
+            value = bound.get("publication_to_all_warps_upper_bound_us")
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError("Invalid publication-to-all-warp bound")
+            max_bound = max(max_bound, float(value))
+            if value > max_tile_us:
+                raise ValueError("Propagation bound exceeds one observed tile lifetime")
+    return {"status":"passed", "arrivals":len(arrivals), "configured_clusters":clusters, "phase_switches":len(switches), "max_publication_to_all_warps_upper_bound_us":max_bound, "max_observed_tile_lifetime_us":float(max_tile_us), "scope":"Synthetic full-cluster propagation component only; no serving or cross-device clock subtraction"}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -391,6 +433,11 @@ def main():
         "--check-single-pending-compute",
         action="store_true",
         help="Require at most one unfinished compute tile at E phase decisions; not a full propagation bound",
+    )
+    parser.add_argument(
+        "--require-universal-propagation-bound",
+        action="store_true",
+        help="Require every configured cluster to satisfy the synthetic one-tile propagation gate",
     )
     parser.add_argument(
         "--ctas", type=int, default=0, help="Zero uses all available SMs"
@@ -705,6 +752,11 @@ def main():
             report["trace_truncated_ctas"],
             ctas=report["executor"]["ctas"],
         )
+        if args.require_universal_propagation_bound:
+            max_tile_us = max((r["finish_ns"] - r["begin_ns"]) / 1000 for r in records)
+            report["universal_propagation_bound"] = validate_universal_propagation_bound(
+                report["warp_propagation_checks"], report["decision_trace_checks"], max_tile_us
+            )
         if args.check_single_pending_compute:
             report["pending_compute_checks"] = validate_single_pending_compute(
                 report["progress_trace_checks"]
