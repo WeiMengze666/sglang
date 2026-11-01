@@ -122,3 +122,7 @@ job525 在 FA4 attention backend 下重新运行长混合上下文 strict gate�
 ### P=TBO/D=TBO 额外公平屏幕（job534）
 
 为补齐已有 strict policy matrix 后缺少的 serving 点，job534 在 FlashInfer、ShareGPT-24576、256 请求、seed42、TTFT 1 s、TPOT 50 ms、90% joint-SLO 下测试 P=TBO/D=TBO。0.5/1/1.5/2 rps 的联合 SLO 通过数为 249/126/22/10，observed goodput 为 0.490804/0.476986/0.118764/0.066166 rps；只有 0.5 rps 通过 p90 gate。该策略性能被拒绝，不进入默认配置，也不能支持 1.5x 结论。
+
+### Decode SM budget64/expected4 公平屏幕（job536）
+
+为补齐 q 搜索，job536 测试了 P=TBO/D=NONE、FlashInfer、decode SM budget=64、expected decode tiles=4。相同 ShareGPT-24576、256 请求、seed42、TTFT 1 s、TPOT 50 ms 和 0.5/1/1.5/2 rps 下，联合 SLO 通过数为 254/251/232/84，observed goodput 为 0.502125/0.962405/1.286626/0.594377 rps。1.5 rps 结果低于已有 q96/q128，候选被拒绝，SM budget 搜索不支持约 1.5x 性能目标。
