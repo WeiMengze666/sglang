@@ -74,3 +74,9 @@ job442 先确认了配置边界：确定性推理使用 FlashInfer 时 SGLang �
 为降低每层 ExpertPlex decode 的 allocator bookkeeping，候选仅复用精确行数的 `row_map` 与 FP32 combine buffer，并保留逐次 BF16 输出转换。job449 的初版还复用了 BF16 输出，严格门在第二个 decode step 出现 hidden-state alias；该版本被拒绝。job451 修复 alias 后通过 FA4 严格门：native/repeat/all-D 全词表 exact、512 positions × 151936 vocab、TBO/缓存/清理均通过。
 
 随后 job454 在默认 FlashInfer 上做四次 ABBA paired serving（同一 ShareGPT-24576、256 请求、seed42、TTFT 1 s、TPOT 50 ms）：1/1.5/2 rps 的 baseline observed goodput 分别为 0.9605/1.1221/0.5123 与 0.9641/1.0605/0.4303，候选分别为 0.9593/0.9967/0.3895 与 0.9647/1.1094/0.4645。结果没有稳定收益，候选不合入默认路径，也不改变约 1.5× goodput 未通过的结论。
+
+### sm100_fused + prefill preprocess 隔离诊断（jobs 459–478）
+
+为区分早期 fused mismatch 是否来自 direct routed-row prefill，隔离候选允许 `sm100_fused` 使用 expert-side prefill preprocess，并修正 fused pipeline 的 `GATE -> DOWN` retire 转移。短 prompt job463 和长 prompt job474 的单 ExpertPlex 服务均通过 512 positions × 151936 vocab 全词表 exact；长 prompt 仍没有产生 TBO replay 元数据。job478 在显式跳过 TBO proof 的 all-D 诊断中，首个位置 exact，但从第二个 decode position 开始出现全词表差异，因此该候选没有进入性能屏幕或默认代码。
+
+这些结果只保留为隔离诊断：默认 `sm100`、FlashInfer、1P+3D+4E 和已通过的 P=TBO/D=NONE 路径保持不变。
