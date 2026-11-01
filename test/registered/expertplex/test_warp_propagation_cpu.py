@@ -157,7 +157,7 @@ class WarpPropagationTests(unittest.TestCase):
 
 
     def test_universal_gate_requires_all_clusters(self):
-        warp = {"configured_clusters": 1, "clusters_without_any_tile": [], "arrivals": [{"clusters_without_decode_work": [], "clusters": [{"publication_to_all_warps_upper_bound_us": 2.0}]}]}
+        warp = {"configured_clusters": 1, "clusters_without_any_tile": [], "phase_switches": [{"decision_to_all_warps_us": 2.0}], "arrivals": [{"clusters_without_decode_work": [], "clusters": [{"publication_to_all_warps_upper_bound_us": 2.0}]}]}
         decisions = {"phase_switches": [{"old_tiles_in_flight_per_cta": 1, "unretired_sequence_upper_bound": 1}]}
         self.assertEqual(validate_universal(warp, decisions, 3.0)["status"], "passed")
         with self.assertRaises(ValueError):
@@ -166,9 +166,12 @@ class WarpPropagationTests(unittest.TestCase):
             validate_universal(warp, {"phase_switches": [{"old_tiles_in_flight_per_cta": 2, "unretired_sequence_upper_bound": 1}]}, 3.0)
         with self.assertRaises(ValueError):
             validate_universal(warp, decisions, 1.0)
+        warp["phase_switches"][0]["decision_to_all_warps_us"] = 4.0
+        with self.assertRaisesRegex(ValueError, "Decision-to-warp"):
+            validate_universal(warp, decisions, 3.0)
 
     def test_universal_gate_counts_live_compute_not_submitted_store(self):
-        warp = {"configured_clusters": 1, "clusters_without_any_tile": [], "arrivals": [{"clusters_without_decode_work": [], "clusters": [{"publication_to_all_warps_upper_bound_us": 2.0}]}]}
+        warp = {"configured_clusters": 1, "clusters_without_any_tile": [], "phase_switches": [{"decision_to_all_warps_us": 2.0}], "arrivals": [{"clusters_without_decode_work": [], "clusters": [{"publication_to_all_warps_upper_bound_us": 2.0}]}]}
         decisions = {"phase_switches": [{"old_tiles_in_flight_per_cta": 2, "unretired_sequence_upper_bound": 1}]}
         progress = {"phase_switches": [{"ctas": [
             {"gemms_without_ready_observation": 1, "data_operations_before_submission": 0},

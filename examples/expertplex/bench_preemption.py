@@ -395,6 +395,9 @@ def validate_universal_propagation_bound(
         raise ValueError("Some configured clusters have no tile trace")
     arrivals = warp_checks.get("arrivals")
     switches = decision_checks.get("phase_switches")
+    local_switches = warp_checks.get("phase_switches")
+    if not isinstance(local_switches, list) or len(local_switches) != len(switches or []):
+        raise ValueError("Missing decision-to-warp propagation evidence")
     progress_switches = None
     if progress_checks is not None:
         if not isinstance(progress_checks, dict):
@@ -407,7 +410,14 @@ def validate_universal_propagation_bound(
     if not isinstance(switches, list) or not switches:
         raise ValueError("Need at least one phase switch")
     max_live = 0
+    max_local = 0.0
     for index, switch in enumerate(switches):
+        local = local_switches[index].get("decision_to_all_warps_us")
+        if not isinstance(local, (int, float)) or not math.isfinite(local) or local < 0:
+            raise ValueError("Invalid decision-to-warp propagation evidence")
+        max_local = max(max_local, float(local))
+        if local > max_tile_us:
+            raise ValueError("Decision-to-warp propagation exceeds one observed tile lifetime")
         pending = switch.get("old_tiles_in_flight_per_cta")
         if progress_switches is not None:
             live_counts = []
@@ -440,9 +450,7 @@ def validate_universal_propagation_bound(
             if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
                 raise ValueError("Invalid publication-to-all-warp bound")
             max_bound = max(max_bound, float(value))
-            if value > max_tile_us:
-                raise ValueError("Propagation bound exceeds one observed tile lifetime")
-    return {"status":"passed", "arrivals":len(arrivals), "configured_clusters":clusters, "phase_switches":len(switches), "max_live_tiles_in_flight_per_cta":max_live if progress_switches is not None else None, "max_retirement_prefix":max((s["unretired_sequence_upper_bound"] for s in switches), default=0), "max_publication_to_all_warps_upper_bound_us":max_bound, "max_observed_tile_lifetime_us":float(max_tile_us), "scope":"Synthetic full-cluster propagation and one-live-tile component only; submitted asynchronous stores and their retirement prefix remain separate evidence; no serving or cross-device clock subtraction"}
+    return {"status":"passed", "arrivals":len(arrivals), "configured_clusters":clusters, "phase_switches":len(switches), "max_live_tiles_in_flight_per_cta":max_live if progress_switches is not None else None, "max_retirement_prefix":max((s["unretired_sequence_upper_bound"] for s in switches), default=0), "max_decision_to_all_warps_upper_bound_us":max_local, "max_publication_to_all_warps_upper_bound_us":max_bound, "max_observed_tile_lifetime_us":float(max_tile_us), "scope":"Synthetic full-cluster propagation and one-live-tile component only; E-side decision propagation is compared with tile lifetime, while A-clock admission RTT and submitted asynchronous-store retirement remain separate diagnostics; no serving or cross-device clock subtraction"}
 
 
 def main():
