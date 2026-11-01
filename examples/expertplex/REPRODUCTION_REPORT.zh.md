@@ -41,3 +41,7 @@ CPU preflight 对每个候选均为 34 tests，且没有初始化 CUDA 或导入
 为检验上述 4E/8E 结构差异，候选 worktree 允许 E rank 与 P/D attention 物理重叠，但默认配置和公开源码保持不变。job387 在 P=NONE、D=NONE 下完成了 512 positions × 2560 copies、151936 全词表逐 token bit-exact 对齐，清理通过。
 
 端到端候选 job391 使用自动 KV profiling，在 E/P/D 重叠卡上因 P/D 初始化 FlashInfer 8 GiB workspace 时 OOM；job395 仅降低节点 `max_prefill_tokens` 仍触发自动 KV 池扩张，同样在 benchmark 前 OOM。job397 改为显式 aggregate KV cap 393216，使四服务启动并完成了 0.5 和 1.0 rps 的各 256 请求，但两点 joint-SLO 均为 0/256：0.5 rps 的 p90 TTFT/TPOT 为 1239/312 ms，1.0 rps 为 63264/312 ms。该候选随后通过 gpuq 终止并确认无残留进程。它没有性能收益，未进入公开源码或默认布局。
+
+### 3P+1D 长请求容量边界（CPU-only）
+
+论文长请求的 3P+1D+4E TBO 配置在当前 B300 BF16 Coder 内存门禁下于 GPU 启动前被拒绝（`configure.py` RC=2：expert weights and mailboxes exceed the configured GPU memory budget）。无 TBO 且较低 prefill 容量的几何配置可以通过，因此该结果只标记论文场景的容量边界，不把所有 3P+1D 配置判为不可用。
