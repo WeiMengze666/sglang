@@ -51,3 +51,5 @@ CPU preflight 对每个候选均为 34 tests，且没有初始化 CUDA 或导入
 冻结的 `loogle-24576-256.jsonl`（256 条，输入中位数 16736 token）在 TTFT 1 s、TPOT 50 ms、90% joint-SLO 下测试默认 1P+3D+4E。ExpertPlex 在 0.25 rps 完成 256 请求，joint-SLO 209/256（81.64%），observed SLO goodput 0.2116758 rps，p90 TTFT 1834.7 ms、p90 TPOT 23.3 ms，未通过 p90 gate。
 
 同一 workload 的 native DP8/EP8 baseline 在显式 aggregate KV cap 393216 后完成 256 请求，joint-SLO 99/256（38.67%），observed SLO goodput 0.1002781 rps，p90 gate 同样未通过。两者的有限低速率 observed ratio 为 2.111×，但由于双方均未达到 90% joint-SLO，不能作为最终 P90 goodput 验收；该结果只说明长上下文下的容量/TTFT边界。
+
+3P+1D+4E 论文长请求布局的 LooGLE screen 也在最低 0.25 rps 失败：256 请求中仅 137 个同时满足 TTFT/TPOT（53.52%），observed goodput 0.1387596 rps，p90 TTFT 1849.5 ms、p90 TPOT 26.3 ms。该布局随后清理退出，未进入更高负载或公开默认配置。
