@@ -73,6 +73,10 @@ job418 的 native 参考在 warmup capture 申请约 7.25 GiB 的 batch_prefill_
 
 这些结果使用同一 GPU 时钟和保守上界，明确排除跨设备时钟相减、universal all-warp/one-tile bound 和 serving goodput；它们作为组件证据保留，不提升全局验收状态。
 
+### Logical-E8 duplicate-rank reuse（jobs492/494，严格通过但性能拒绝）
+
+为检验 E 容量边界，隔离候选将 8 个逻辑 E rank 映射到四张物理 E 卡 `[4,4,5,5,6,6,7,7]`，P/D attention 仍在 0–3。job492 在 16 条固定轨迹、32 steps、512 positions × 151936 vocab 下通过 native EP8 对照和全词表严格门，清理通过。随后 job494 使用相同 ShareGPT-24576/256/seed42、0.5/1/1.5/2 rps、TTFT 1 s、TPOT 50 ms、90% joint SLO 进行 serving 屏幕；四个点均为 0/256 joint-SLO，0 observed goodput。最低速率 p90 TTFT 约 590 ms，但 p90 TPOT 约 178 ms，故候选从性能和生产路径拒绝。该结果保留为严格数值和负性能证据，不改变默认 1P+3D+4E。
+
 ### APK tile/preemption strict component gate（job489）
 
 为补充论文 §4.3 的 E 侧 tile 调度门，在不改变生产路径的情况下运行了独立 synthetic BF16 SM100 trace。配置为 148 CTAs、cluster size 2、prefill rows 512/2048/8192、decode rows 128，并开启 check-single-pending-compute。严格 gate 记录 215408 条 trace、0 个截断 CTA、107704 个决策、5654 次 phase switch，且每个 CTA 未观察到 ready 的 GEMM 数不超过 1；gpuq cleanup 返回 0 且无残留子进程。
