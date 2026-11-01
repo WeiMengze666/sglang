@@ -68,3 +68,9 @@ job428 之后用显式 PYTHONPATH 和 `CUDA_VISIBLE_DEVICES=999` 在发布树运
 job442 先确认了配置边界：确定性推理使用 FlashInfer 时 SGLang 自动关闭 radix cache，因而不能用于缓存复用门。job445 保持默认 1P+3D+4E、split=4096、native-fa2 对齐覆盖、逐 token 全词表和三路 D/TBO/清理门禁，仅将 native 与 P/D attention backend 改为 B300 确定性兼容的 FA4；sampling backend 未改变，生产默认 FlashInfer 未修改。
 
 16 条顺序请求共享前 4097 个 token、尾部长度为 512 或 1024。每条请求的 `cached_tokens` 均为 4608；native 与 repeat、三路 D 的 512 positions × 151936 vocab 全词表 logprob 均严格 bit-exact，fresh TBO replay 为 29/29/30，gpuq 清理返回 0 且无残留 children。该结果关闭了“缓存门因配置导致未命中”的严格诊断缺口，但 FA4 只作为正确性诊断后端，没有替换默认 FlashInfer，也没有 goodput 或 1.5× 性能含义。
+
+### Decode workspace reuse 候选（job449/451/454）
+
+为降低每层 ExpertPlex decode 的 allocator bookkeeping，候选仅复用精确行数的 `row_map` 与 FP32 combine buffer，并保留逐次 BF16 输出转换。job449 的初版还复用了 BF16 输出，严格门在第二个 decode step 出现 hidden-state alias；该版本被拒绝。job451 修复 alias 后通过 FA4 严格门：native/repeat/all-D 全词表 exact、512 positions × 151936 vocab、TBO/缓存/清理均通过。
+
+随后 job454 在默认 FlashInfer 上做四次 ABBA paired serving（同一 ShareGPT-24576、256 请求、seed42、TTFT 1 s、TPOT 50 ms）：1/1.5/2 rps 的 baseline observed goodput 分别为 0.9605/1.1221/0.5123 与 0.9641/1.0605/0.4303，候选分别为 0.9593/0.9967/0.3895 与 0.9647/1.1094/0.4645。结果没有稳定收益，候选不合入默认路径，也不改变约 1.5× goodput 未通过的结论。
