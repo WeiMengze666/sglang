@@ -106,3 +106,9 @@ job442 先确认了配置边界：确定性推理使用 FlashInfer 时 SGLang �
 为验证 decode activation tile 由默认几何改为固定 32x256 BF16 tile 的候选，在隔离 worktree 中仅保留该 SM100 pipeline 改动，生产树的默认路径未改变。job507 使用默认 1P+3D+4E、native EP4 reference、16 条固定 prompt、每条 32 个 decode step，并对 512 个位置逐 token 比较完整 151936 词表 logprob。native 与 ExpertPlex 均通过，all_full_vocab_logprobs_exact 为 true，top-1 全部相同，cleanup_errors 为空。该结果是严格数值和组件证据，不是服务性能结果。
 
 严格门通过后，job510 运行同几何的公平服务屏幕：ShareGPT-24576、256 requests、seed42、TTFT 1000 ms、TPOT 50 ms、0.5/1/1.5/2 rps，仅测试 P=TBO、D=NONE。四个点均完成 256 请求；联合 SLO 通过数和 observed SLO goodput 分别为 248/256、0.489005 rps，155/256、0.587118 rps，32/256、0.173245 rps，10/256、0.066743 rps。0.5 rps 的 p90 TTFT/TPOT 为 228.12/43.68 ms，满足 90% joint-SLO；1.0、1.5、2.0 rps 的 p90 TPOT 分别为 57.16、71.76、88.19 ms，均未通过。该候选未达到约 1.5x goodput，未合入生产代码；默认 ExpertPlex 与最强原生基线的性能验收仍保持未通过。
+
+### Long cross-batch strict gate with 8 GiB workspace (job514)
+
+对前一轮长上下文记录进行 provenance 审计后，确认 job262 在 all-D warmup 阶段因 FlashInfer 需要 5435817984 bytes 而 4 GiB workspace 不足退出，没有产生 all-D cross-batch 数值比较；排队中的 job268 也从未执行。随后只提交一次 8 GiB workspace successor job514，保持默认 split4096、deterministic torch compile、三路 D、全词表和 cleanup gates。
+
+job514 的 native/repeat 阶段均通过。三路 D 都完成了 16 条混合 12K/8K/4K 历史的 full-vocabulary capture，但在 history_tokens=12287 处首次出现非零差异；首个报告的 max-absolute logprob difference 为 1.25，所有非零差异中的最大值为 3.3437271118164062。首个差异位置 top-1 仍相同，完整 151936 词表 exact gate 失败；三个 D worker 在同一边界出现该行为，cleanup 无残留进程。该结果确认严格长跨批次/query-partition 门未通过，也没有证明 workspace-only 修复或性能收益。
