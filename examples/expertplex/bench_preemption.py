@@ -372,8 +372,17 @@ def validate_warp_propagation(
     }
 
 
-def validate_universal_propagation_bound(warp_checks, decision_checks, max_tile_us):
-    """Require complete synthetic cluster receipts within one tile lifetime."""
+def validate_universal_propagation_bound(
+    warp_checks, decision_checks, max_tile_us, progress_checks=None
+):
+    """Require complete receipts and one live tile at each phase switch.
+
+    ``finish_ns`` includes asynchronous global-store retirement.  A submitted
+    output can therefore remain in the tile trace after its accumulator/TMA
+    work has committed.  When progress evidence is available, count only the
+    still-live GEMM and data operations for the paper's one-tile bound; retain
+    the output-retirement count in the independent trace checks.
+    """
     import math
     if not isinstance(warp_checks, dict) or not isinstance(decision_checks, dict):
         raise ValueError("Propagation checks must be dictionaries")
@@ -386,16 +395,38 @@ def validate_universal_propagation_bound(warp_checks, decision_checks, max_tile_
         raise ValueError("Some configured clusters have no tile trace")
     arrivals = warp_checks.get("arrivals")
     switches = decision_checks.get("phase_switches")
+    progress_switches = None
+    if progress_checks is not None:
+        if not isinstance(progress_checks, dict):
+            raise ValueError("Progress checks must be a dictionary")
+        progress_switches = progress_checks.get("phase_switches")
+        if not isinstance(progress_switches, list) or len(progress_switches) != len(switches or []):
+            raise ValueError("Progress checks do not cover every phase switch")
     if not isinstance(arrivals, list) or not arrivals:
         raise ValueError("Need at least one decode arrival")
     if not isinstance(switches, list) or not switches:
         raise ValueError("Need at least one phase switch")
-    for switch in switches:
+    max_live = 0
+    for index, switch in enumerate(switches):
         pending = switch.get("old_tiles_in_flight_per_cta")
+        if progress_switches is not None:
+            live_counts = []
+            for cta in progress_switches[index].get("ctas", []):
+                gemms = cta.get("gemms_without_ready_observation")
+                data = cta.get("data_operations_before_submission")
+                if type(gemms) is not int or type(data) is not int or gemms < 0 or data < 0:
+                    raise ValueError("Invalid live-tile progress evidence")
+                live_counts.append(gemms + data)
+            if not live_counts:
+                raise ValueError("Missing live-tile progress evidence")
+            pending = max(live_counts)
+            max_live = max(max_live, pending)
         prefix = switch.get("unretired_sequence_upper_bound")
         if type(pending) is not int or pending < 0 or pending > 1:
-            raise ValueError("Phase switch has more than one old tile in flight")
-        if type(prefix) is not int or prefix < 0 or prefix > 1:
+            raise ValueError("Phase switch has more than one old live tile in flight")
+        if type(prefix) is not int or prefix < 0:
+            raise ValueError("Phase switch lacks a valid retirement prefix")
+        if progress_switches is None and prefix > 1:
             raise ValueError("Phase switch lacks a bounded retirement prefix")
     max_bound = 0.0
     for arrival in arrivals:
@@ -411,7 +442,7 @@ def validate_universal_propagation_bound(warp_checks, decision_checks, max_tile_
             max_bound = max(max_bound, float(value))
             if value > max_tile_us:
                 raise ValueError("Propagation bound exceeds one observed tile lifetime")
-    return {"status":"passed", "arrivals":len(arrivals), "configured_clusters":clusters, "phase_switches":len(switches), "max_publication_to_all_warps_upper_bound_us":max_bound, "max_observed_tile_lifetime_us":float(max_tile_us), "scope":"Synthetic full-cluster propagation component only; no serving or cross-device clock subtraction"}
+    return {"status":"passed", "arrivals":len(arrivals), "configured_clusters":clusters, "phase_switches":len(switches), "max_live_tiles_in_flight_per_cta":max_live if progress_switches is not None else None, "max_retirement_prefix":max((s["unretired_sequence_upper_bound"] for s in switches), default=0), "max_publication_to_all_warps_upper_bound_us":max_bound, "max_observed_tile_lifetime_us":float(max_tile_us), "scope":"Synthetic full-cluster propagation and one-live-tile component only; submitted asynchronous stores and their retirement prefix remain separate evidence; no serving or cross-device clock subtraction"}
 
 
 def main():
@@ -755,7 +786,10 @@ def main():
         if args.require_universal_propagation_bound:
             max_tile_us = max((r["finish_ns"] - r["begin_ns"]) / 1000 for r in records)
             report["universal_propagation_bound"] = validate_universal_propagation_bound(
-                report["warp_propagation_checks"], report["decision_trace_checks"], max_tile_us
+                report["warp_propagation_checks"],
+                report["decision_trace_checks"],
+                max_tile_us,
+                progress_checks=report["progress_trace_checks"],
             )
         if args.check_single_pending_compute:
             report["pending_compute_checks"] = validate_single_pending_compute(

@@ -167,6 +167,21 @@ class WarpPropagationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_universal(warp, decisions, 1.0)
 
+    def test_universal_gate_counts_live_compute_not_submitted_store(self):
+        warp = {"configured_clusters": 1, "clusters_without_any_tile": [], "arrivals": [{"clusters_without_decode_work": [], "clusters": [{"publication_to_all_warps_upper_bound_us": 2.0}]}]}
+        decisions = {"phase_switches": [{"old_tiles_in_flight_per_cta": 2, "unretired_sequence_upper_bound": 1}]}
+        progress = {"phase_switches": [{"ctas": [
+            {"gemms_without_ready_observation": 1, "data_operations_before_submission": 0},
+            {"gemms_without_ready_observation": 0, "data_operations_before_submission": 1},
+        ]}]}
+        decisions["phase_switches"][0]["unretired_sequence_upper_bound"] = 2
+        result = validate_universal(warp, decisions, 3.0, progress_checks=progress)
+        self.assertEqual(result["max_live_tiles_in_flight_per_cta"], 1)
+        self.assertEqual(result["max_retirement_prefix"], 2)
+        progress["phase_switches"][0]["ctas"][1]["data_operations_before_submission"] = 2
+        with self.assertRaisesRegex(ValueError, "live tile"):
+            validate_universal(warp, decisions, 3.0, progress_checks=progress)
+
     def test_missing_or_invalid_launch_inventory_fails(self):
         with self.assertRaises(TypeError):
             validate(*self.fixture())
