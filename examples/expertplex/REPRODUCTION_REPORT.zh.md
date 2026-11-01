@@ -118,3 +118,7 @@ job514 的 native/repeat 阶段均通过。三路 D 都完成了 16 条混合 12
 job525 在 FA4 attention backend 下重新运行长混合上下文 strict gate。native/repeat 和三路 D 均通过 512 positions、151936 全词表 exact、compiled replay/batch gate 与 cleanup；默认 FlashInfer 在 12287 边界的差异不再出现。该结果证明 FA4 是一个可验证的边界正确性候选，但尚未证明它适合默认性能路径。
 
 原生 launcher 已支持 fa4，而 run_serving_experiment.py 的实验 CLI 未暴露该选项；提交 8e9cb61231 补齐 fa3/fa4 choices。随后 job531 使用相同 ShareGPT-24576、256 请求、seed42、TTFT 1 s、TPOT 50 ms 和 0.5/1/1.5/2 rps 屏幕。P=TBO、D=NONE 的联合 SLO 通过数为 255/251/234/73，observed SLO goodput 为 0.503800/0.960556/1.296823/0.515997 rps；P=NONE、D=TBO 为 247/154/35/9 和 0.487159/0.585248/0.188880/0.059472 rps。FA4 在 1.5 rps 的 1.296823 rps 仍未达到相对最强原生基线约 1.5x，故不替换默认 FlashInfer，也不改变全局性能验收未通过结论。
+
+### P=TBO/D=TBO 额外公平屏幕（job534）
+
+为补齐已有 strict policy matrix 后缺少的 serving 点，job534 在 FlashInfer、ShareGPT-24576、256 请求、seed42、TTFT 1 s、TPOT 50 ms、90% joint-SLO 下测试 P=TBO/D=TBO。0.5/1/1.5/2 rps 的联合 SLO 通过数为 249/126/22/10，observed goodput 为 0.490804/0.476986/0.118764/0.066166 rps；只有 0.5 rps 通过 p90 gate。该策略性能被拒绝，不进入默认配置，也不能支持 1.5x 结论。
