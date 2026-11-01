@@ -61,7 +61,11 @@ CPU preflight 对每个候选均为 34 tests，且没有初始化 CUDA 或导入
 
 all-decode 三个 D worker 均完成 512 positions，但在 `history_tokens=12287` 边界出现全词表差异：D1 的首个 `max_abs_logprob_difference` 为 0.656248，随后 12288 为 0.4375、12289 为 0.765629；top-1 仍相同。该配置因此被拒绝，未修改默认 split=4096，也未进入性能屏幕。已验证的 native-fa2-aligned + 默认 4096 路径 job282 仍是长上下文严格 gate 的权威证据。
 
-job428 之后用显式 PYTHONPATH 和 `CUDA_VISIBLE_DEVICES=999` 在发布树运行 `unittest discover`，257 项 ExpertPlex CPU 合约通过；没有 GPU 服务残留。当前缓存前缀、短尾和更广 query-partition gate 仍未全部通过，因此严格总验收与 1.5× goodput 目标保持未完成。
+job428 之后用显式 PYTHONPATH 和 `CUDA_VISIBLE_DEVICES=999` 在发布树运行 `unittest discover`，259 项 ExpertPlex CPU 合约通过；没有 GPU 服务残留。当前缓存前缀、短尾和更广 query-partition gate 仍未全部通过，因此严格总验收与 1.5× goodput 目标保持未完成。
+
+### Split2048 workspace follow-up（jobs 418/421/423/425/427，未发布优化）
+
+job418 的 native 参考在 warmup capture 申请约 7.25 GiB 的 batch_prefill_tmp_v，而候选只提供 4 GiB FlashInfer workspace，因而在 ExpertPlex 阶段前退出；这是 workspace 容量失败，不是 query-partition 数值结论。8 GiB/16 GiB workspace 的后续候选分别在 all-D harness、native graph capture 或同一边界再次失败；job428 是唯一到达三路 D 的 successor，已在上一节记录为 history_tokens=12287 全词表偏差。默认 split4096 和生产路径未改变。
 
 ### Cached-prefix / query-partition 严格门（job445，FA4 诊断后端）
 
