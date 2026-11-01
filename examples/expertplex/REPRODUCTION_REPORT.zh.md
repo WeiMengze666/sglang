@@ -53,3 +53,12 @@ CPU preflight 对每个候选均为 34 tests，且没有初始化 CUDA 或导入
 同一 workload 的 native DP8/EP8 baseline 在显式 aggregate KV cap 393216 后完成 256 请求，joint-SLO 99/256（38.67%），observed SLO goodput 0.1002781 rps，p90 gate 同样未通过。两者的有限低速率 observed ratio 为 2.111×，但由于双方均未达到 90% joint-SLO，不能作为最终 P90 goodput 验收；该结果只说明长上下文下的容量/TTFT边界。
 
 3P+1D+4E 论文长请求布局的 LooGLE screen 也在最低 0.25 rps 失败：256 请求中仅 137 个同时满足 TTFT/TPOT（53.52%），observed goodput 0.1387596 rps，p90 TTFT 1849.5 ms、p90 TPOT 26.3 ms。该布局随后清理退出，未进入更高负载或公开默认配置。
+
+
+### Split tile 严格诊断（job428，未发布优化）
+
+为区分 FlashInfer 内部 KV split 与外层 TBO query cut，使用独立 gpuq job428 将 `SGLANG_FLASHINFER_PREFILL_SPLIT_TILE_SIZE` 从默认 4096 改为 2048。native/repeat 阶段使用 8 GiB workspace，all-decode 阶段使用 16 GiB workspace；两阶段均完成 512 positions × 151936 vocab 的 native/repeat exact gate。
+
+all-decode 三个 D worker 均完成 512 positions，但在 `history_tokens=12287` 边界出现全词表差异：D1 的首个 `max_abs_logprob_difference` 为 0.656248，随后 12288 为 0.4375、12289 为 0.765629；top-1 仍相同。该配置因此被拒绝，未修改默认 split=4096，也未进入性能屏幕。已验证的 native-fa2-aligned + 默认 4096 路径 job282 仍是长上下文严格 gate 的权威证据。
+
+job428 之后用显式 PYTHONPATH 和 `CUDA_VISIBLE_DEVICES=999` 在发布树运行 `unittest discover`，257 项 ExpertPlex CPU 合约通过；没有 GPU 服务残留。当前缓存前缀、短尾和更广 query-partition gate 仍未全部通过，因此严格总验收与 1.5× goodput 目标保持未完成。
