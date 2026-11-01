@@ -788,6 +788,12 @@ trace 会扰动时序，不应拿启用 trace 的延迟当作正常服务性能�
 `--check-single-pending-compute` 要求每次已观察到的 phase 决策处，每 CTA 未完成的
 GEMM 与未提交的数据/激活 tile 合计不超过一；没有发生切换也不能通过此检查。
 该检查不把已提交但尚未退役的异步输出误算成执行中的 GEMM，也不认证完整传播上界。
+启用 `--require-universal-propagation-bound` 后，检查器还要求每次 decode arrival
+覆盖配置中的全部 cluster，并把 progress trace 中的未完成 GEMM 与未提交数据 tile
+作为“至多一个 live tile”证据；已提交但等待异步 store 退役的输出和退休前缀单独
+记录，不再混入该门槛。E 时钟的 decision→all-warp 收敛时间与观测 tile lifetime
+比较；A 时钟 admission RTT 只作诊断，不能跨时钟直接充当 one-tile 传播上界。该门
+槛仍是 synthetic 组件证据，不代表 serving correctness 或 goodput。
 
 `bench_preemption.py --prefill-preprocess` 进一步覆盖原始 P 数据路径的 Scatter1、
 Scatter2 和 Gather。该单 E 诊断将逻辑 expert world 中 rank 0 的路由映射为本地 ID，
