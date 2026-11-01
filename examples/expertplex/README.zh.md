@@ -339,6 +339,12 @@ KV pool，应计入显存预算；4 GiB 是配置示例，仍需按实际 batch 
 数值对照应记录双方的工作区配置，并保持 attention backend、split tile、精度和
 验收门槛一致。扩大工作区只解决容量问题，不代表数值或性能验收通过。
 
+#### 长上下文边界的 FA4 正确性候选
+
+默认 FlashInfer 在混合 12K/8K/4K strict 轨迹的 `history_tokens=12287` 边界出现全词表差异；job514 的最大绝对 logprob 差异为 3.343727。将 attention backend 显式设置为 `fa4` 后，job525 在默认 1P+3D+4E、三路 D、512 positions/worker 和完整 151936 词表下通过严格对齐。FA4 只是经过验证的候选 fallback，尚未成为默认 backend，也没有带来 1.5× goodput；对应公平屏幕 job531 的 P=TBO/D=NONE 最高通过点为 1.296823 rps。
+
+需要复现该候选时，在 P、D attention 服务命令中传入 `--attention-backend fa4`，并保持 workspace、split tile、dtype、compile 和 SLO 设置一致。不要把 FA4 strict 结果与默认 FlashInfer 性能结果混合，也不要把该候选当作论文全局验收通过。
+
 启用 ExpertPlex 后，attention 本地 EP=1 的普通 MoE 路径也会保留原生
 `num_token_non_padded` 图缓冲区，并把 `ForwardBatch.moe_num_token_non_padded()`
 返回的安全边界传给 TopK，避免图补齐行产生无效的远端专家工作。计数随原生图重放
