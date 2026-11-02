@@ -221,6 +221,12 @@ class RemoteGroup:
         self._impl.dispatch(hidden, ids, row_map, layer, phase, weights, publish)
 
     def combine(self, output, ids, weights, row_map, timeout_ms=30000):
+        """Combine into FP32 or directly into BF16 for fully covered group modes.
+
+        BF16 is supported for masked decode and raw preprocessing. It preserves
+        FP32 reduction order and rounds once on store. Routed packed prefill
+        retains the original zero-initialized FP32 accumulation interface.
+        """
         self._impl.combine(output, ids, weights, row_map, timeout_ms)
 
 

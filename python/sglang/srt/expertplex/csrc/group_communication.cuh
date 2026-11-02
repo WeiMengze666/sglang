@@ -2,6 +2,8 @@
 // imported pointers are fixed before graph capture. No E-side receive kernel.
 #pragma once
 
+#include <type_traits>
+
 struct GroupBuffers {
   DeviceBuffers local[8], peer[8];
   int *status[8];
@@ -79,7 +81,31 @@ __global__ void group_raw_size(const GroupBuffers *g, int n) {
   b.raw_n[g->slot] = n;
   __threadfence_system();
 }
-__global__ void group_combine_raw(const GroupBuffers *g, float *output, int n) {
+// Both kernels own all eight output elements. Keep FP32 accumulation until
+// here; BF16 output performs the same single RN conversion as output.to(BF16).
+template <typename Output>
+__device__ __forceinline__ void store_group_combine(Output *output, size_t i,
+                                                  const float (&value)[8]) {
+  if constexpr (std::is_same_v<Output, float>) {
+    auto *destination = reinterpret_cast<float4 *>(output + i * 8);
+    destination[0] = make_float4(value[0], value[1], value[2], value[3]);
+    destination[1] = make_float4(value[4], value[5], value[6], value[7]);
+  } else {
+    static_assert(std::is_same_v<Output, BF16>);
+    uint32_t words[4];
+#pragma unroll
+    for (int pair = 0; pair < 4; ++pair)
+      words[pair] =
+          static_cast<uint32_t>(__bfloat16_as_ushort(
+              __float2bfloat16_rn(value[2 * pair]))) |
+          (static_cast<uint32_t>(__bfloat16_as_ushort(
+               __float2bfloat16_rn(value[2 * pair + 1]))) << 16);
+    *reinterpret_cast<uint4 *>(output + i * 8) =
+        make_uint4(words[0], words[1], words[2], words[3]);
+  }
+}
+template <typename Output>
+__global__ void group_combine_raw(const GroupBuffers *g, Output *output, int n) {
   const int hidden = g->peer[0].hidden;
   // Match the eight-BF16 transfer granularity of routed combine. Keep each
   // element's rank-major FP32 addition order and bypass stale peer-data L1.
@@ -104,9 +130,7 @@ __global__ void group_combine_raw(const GroupBuffers *g, float *output, int n) {
             __bfloat162float(__ushort_as_bfloat16(words[pair] >> 16));
       }
     }
-    auto *destination = reinterpret_cast<float4 *>(output + i * 8);
-    destination[0] = make_float4(value[0], value[1], value[2], value[3]);
-    destination[1] = make_float4(value[4], value[5], value[6], value[7]);
+    store_group_combine(output, i, value);
   }
 }
 __global__ void group_publish(const GroupBuffers *g, bool publish) {
@@ -131,16 +155,18 @@ __global__ void group_wait(const GroupBuffers *g, U64 timeout_ns) {
                    g->status[rank]);
   }
 }
-template <typename Id>
-__global__ void group_combine_rows(const GroupBuffers *g, float *output,
+template <typename Id, typename Output>
+__global__ void group_combine_rows(const GroupBuffers *g, Output *output,
                                    const Id *ids, const float *weights,
                                    const int *rows, int n, int k) {
   if (g->local[0].packed[g->slot]) {
     // The routed-prefill ablation retains its rank-major contract. Normal
     // serving uses group_combine_raw after E-side BF16 per-rank gather.
-    for (int rank = 0; rank < g->world; ++rank)
-      combine_rows_body(g->local[rank], g->slot, output, ids, weights, rows, n, k,
-                        rank, g->world, g->status[rank]);
+    if constexpr (std::is_same_v<Output, float>) {
+      for (int rank = 0; rank < g->world; ++rank)
+        combine_rows_body(g->local[rank], g->slot, output, ids, weights, rows, n, k,
+                          rank, g->world, g->status[rank]);
+    }
     return;
   }
   // DeepEP v1 low-latency combine reduces BF16 expert outputs in top-k order,
@@ -184,9 +210,7 @@ __global__ void group_combine_rows(const GroupBuffers *g, float *output,
             value[2 * pair + 1]);
       }
     }
-    auto *destination = reinterpret_cast<float4 *>(output + i * 8);
-    destination[0] = make_float4(value[0], value[1], value[2], value[3]);
-    destination[1] = make_float4(value[4], value[5], value[6], value[7]);
+    store_group_combine(output, i, value);
   }
 }
 
@@ -321,7 +345,14 @@ public:
                torch::Tensor rows, int timeout_ms) {
     check_open();
     auto &first = *peers[0];
-    check_tensor(output, first, at::kFloat, 2, "output");
+    const bool output_bf16 = output.scalar_type() == at::kBFloat16;
+    check_tensor(output, first, output_bf16 ? at::kBFloat16 : at::kFloat, 2,
+                 "output");
+    TORCH_CHECK(!output_bf16 || preprocess || !packed,
+                "BF16 group output requires raw preprocessing or masked decode");
+    TORCH_CHECK(!output_bf16 ||
+                    reinterpret_cast<uintptr_t>(output.data_ptr()) % alignof(uint4) == 0,
+                "BF16 group output must be 16-byte aligned");
     check_routes(ids, rows, first, 0, world);
     check_tensor(weights, first, at::kFloat, 2, "topk_weights");
     TORCH_CHECK(output.size(0) == ids.size(0) &&
@@ -335,14 +366,31 @@ public:
                                     static_cast<U64>(timeout_ms) * 1000000ULL);
     int blocks = std::min<int64_t>(65535, (output.numel() / 8 + 255) / 256);
     if (preprocess) {
-      if (blocks)
-        group_combine_raw<<<blocks, 256, 0, stream>>>(
-            gpu, output.data_ptr<float>(), ids.size(0));
+      if (blocks) {
+        if (output_bf16)
+          group_combine_raw<<<blocks, 256, 0, stream>>>(
+              gpu, reinterpret_cast<BF16 *>(output.data_ptr<at::BFloat16>()),
+              ids.size(0));
+        else
+          group_combine_raw<<<blocks, 256, 0, stream>>>(
+              gpu, output.data_ptr<float>(), ids.size(0));
+      }
       C10_CUDA_CHECK(cudaGetLastError());
       return;
     }
     if (blocks) {
-      if (ids.scalar_type() == at::kInt)
+      if (output_bf16) {
+        auto *out =
+            reinterpret_cast<BF16 *>(output.data_ptr<at::BFloat16>());
+        if (ids.scalar_type() == at::kInt)
+          group_combine_rows<<<blocks, 256, 0, stream>>>(
+              gpu, out, ids.data_ptr<int>(), weights.data_ptr<float>(),
+              rows.data_ptr<int>(), ids.size(0), ids.size(1));
+        else
+          group_combine_rows<<<blocks, 256, 0, stream>>>(
+              gpu, out, ids.data_ptr<int64_t>(), weights.data_ptr<float>(),
+              rows.data_ptr<int>(), ids.size(0), ids.size(1));
+      } else if (ids.scalar_type() == at::kInt)
         group_combine_rows<<<blocks, 256, 0, stream>>>(
             gpu, output.data_ptr<float>(), ids.data_ptr<int>(),
             weights.data_ptr<float>(), rows.data_ptr<int>(), ids.size(0),
