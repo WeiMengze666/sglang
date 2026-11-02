@@ -22,6 +22,17 @@
 
 重建环境的 gpuq shell 未默认激活 conda `bin`，导致 job566 在 CUDA 启动前找不到 Ninja；源代码已在 commit `2eb27d8201` 中让 `native.load_extension()` 自动发现解释器或 `sys.prefix/bin/ninja`，并新增 CPU 回归测试。修复后 CPU 合同测试为 261，optimizer/unit 测试为 59；`PATH=/usr/bin` 的实际发现检查也通过。
 
-唯一的 D 容量因果候选 job569 将 `max_decode_tokens` 和 D 服务并发上限从 16 提到 32，其他配置与 cap16 fair screen 对齐。它已清理成功但被性能门拒绝：goodput 为 `[0.488163, 0.488895, 0.114876, 0.061253]` rps（到达率 `[0.5, 1.0, 1.5, 2.0]`），只有 0.5 rps 通过 p90 joint-SLO，故不修改默认配置，也没有严格数值结论。
+job569、job572 和 job576 均完成并清理成功，其完整配置只在 0.5 rps 达到 p90 joint-SLO。但配置审计发现，它们不是相对 job555 的单变量 D 容量实验：三者均省略 D 的 `overlap=none` 覆盖，继承全局 TBO，同时修改 P 服务并发上限、D graph bucket 等参数。此前“扩大/缩小 D mailbox 导致性能恶化”和“cap32 容量整体拒绝”的因果结论撤回；观测到的 SLO 失败与原始记录保留。
 
-job572 进一步固定 D extend chunk 为 16，同时保持 `max_decode_tokens=32`，仍未通过 fair gate（goodput `[0.492103, 0.473900, 0.140294, 0.060501]` rps；仅 0.5 rps 通过）。因此 cap32 容量候选整体拒绝，默认 cap16 保持不变。
+| 实验 | P/D overlap | P max running | D max running | D extend chunk | D max prefill tokens | D graph max batch |
+|---|---|---:|---:|---:|---:|---:|
+| job555 | TBO/NONE | 16 | 16 | 16 | 16 | 16 |
+| job569 | TBO/TBO | 32 | 32 | 32 | 32 | 32 |
+| job572 | TBO/TBO | 32 | 32 | 16 | 32 | 32 |
+| job576 | TBO/TBO | 8 | 8 | 8 | 8 | 8 |
+
+上表根据各实验冻结的 `run/node.json` 和 `run/service/{prefill-0,decode-1}.log` 中实际 `server_args` 核验。job569 的 goodput 为 `[0.488163, 0.488895, 0.114876, 0.061253]`，job572 为 `[0.492103, 0.473900, 0.140294, 0.060501]`，job576 为 `[0.490654, 0.487353, 0.086525, 0.049752]` rps，对应到达率 `[0.5, 1.0, 1.5, 2.0]`。这些结果只能评价各自的完整配置，不能独立归因于 mailbox 容量或 D extend chunk。默认 cap16 配置保留，后续诊断须先比较冻结配置与实际启动参数。
+
+## 本地电脑发布
+
+已遵照用户要求从本地 Mac 推送 GitHub；`feat/expertplex-b300` 的 `abcaa6d564b64b1231ca574b205fa16753345044` 已通过 `git ls-remote` 核验。仅推送源码、测试和文档，未上传原始实验数据。本地电脑的 HEAD、未暂存差异和暂存区均保持原样；后续已验证修改继续从本地电脑发布。
