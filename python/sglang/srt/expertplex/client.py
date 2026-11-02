@@ -183,8 +183,20 @@ class ExpertPlexClient:
                 topk_ids = topk_ids.to(dtype=torch.int32).contiguous()
                 topk_weights = topk_weights.float().contiguous()
                 row_map = torch.empty_like(topk_ids)
-                output = torch.zeros(
-                    (rows, hidden), dtype=torch.float32, device=hidden_states.device
+                # These group modes cover every output element, including
+                # padding/error rows; keep the FP32 reduction inside
+                # combine and round once at the final BF16 vector store.
+                direct_bf16 = bool(self.groups) and (
+                    self.client.phase == "decode" or self.config.prefill_preprocess
+                )
+                output = (
+                    torch.empty(
+                        (rows, hidden), dtype=torch.bfloat16, device=hidden_states.device
+                    )
+                    if direct_bf16
+                    else torch.zeros(
+                        (rows, hidden), dtype=torch.float32, device=hidden_states.device
+                    )
                 )
                 if self.groups:
                     self.groups[mailbox].dispatch(
@@ -227,7 +239,8 @@ class ExpertPlexClient:
                             timeout_ms=int(self.config.operation_timeout_s * 1000),
                             synchronize=False,
                         )
-                output = output.to(dtype=hidden_states.dtype)
+                if not direct_bf16:
+                    output = output.to(dtype=hidden_states.dtype)
                 done = torch.cuda.Event()
                 done.record(comm_stream)
             pending = PendingMoE(
