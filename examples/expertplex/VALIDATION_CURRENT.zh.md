@@ -17,3 +17,9 @@
 性能 fair screen 固定 ShareGPT-24576、256 requests、seed42、TTFT 1000ms、TPOT 50ms 和 90% joint-SLO。不能把 strict numerical pass、组件 pass 或有限到达率结果提升为论文完整性能结论。
 
 已排除的候选包括 q/SM budget、E8 duplicate-rank、coalescing、DecodeM=32、FA4/FlashInfer backend/fraction 的重复盲测；DecodeM=32 在 job559 的全词表比较出现大幅 logprob 与 top-1 mismatch，未进入性能路径。后续代码或 GPU 实验必须有新的可证伪假设，并经 gpuq 与 cleanup gate。
+
+## 2026-11-02 环境恢复与 D 容量候选
+
+重建环境的 gpuq shell 未默认激活 conda `bin`，导致 job566 在 CUDA 启动前找不到 Ninja；源代码已在 commit `2eb27d8201` 中让 `native.load_extension()` 自动发现解释器或 `sys.prefix/bin/ninja`，并新增 CPU 回归测试。修复后 CPU 合同测试为 261，optimizer/unit 测试为 59；`PATH=/usr/bin` 的实际发现检查也通过。
+
+唯一的 D 容量因果候选 job569 将 `max_decode_tokens` 和 D 服务并发上限从 16 提到 32，其他配置与 cap16 fair screen 对齐。它已清理成功但被性能门拒绝：goodput 为 `[0.488163, 0.488895, 0.114876, 0.061253]` rps（到达率 `[0.5, 1.0, 1.5, 2.0]`），只有 0.5 rps 通过 p90 joint-SLO，故不修改默认配置，也没有严格数值结论。
