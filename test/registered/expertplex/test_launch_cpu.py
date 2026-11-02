@@ -118,6 +118,7 @@ class LaunchPlanTests(unittest.TestCase):
             skip_tokenizer_init=True,
             tokenizer_path=None,
             sequence_cap=2048,
+            decode_chunked_prefill_size=16,
             host="127.0.0.1",
             port=31000,
         )
@@ -137,6 +138,11 @@ class LaunchPlanTests(unittest.TestCase):
                 prefill_mailbox_tokens=1024,
             )
             _, servers, router = launch.commands(node, args)
+            for client, command in servers:
+                if client.phase == "decode":
+                    self.assertEqual(
+                        command[command.index("--chunked-prefill-size") + 1], "16"
+                    )
             for _, command in servers:
                 self.assertEqual(command.count("--tp-size"), 1)
                 self.assertEqual(command[command.index("--tp-size") + 1], str(tp))

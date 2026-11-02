@@ -174,6 +174,17 @@ def commands(node, args):
                     "Decode max running requests must fit its mailbox capacity"
                 )
         bootstrap = args.bootstrap_port + client.id
+        decode_chunk = getattr(args, "decode_chunked_prefill_size", None)
+        if client.phase == "decode" and decode_chunk is not None:
+            if type(decode_chunk) is not int or not 0 < decode_chunk <= capacity:
+                raise ValueError(
+                    "Decode chunked prefill size must be in [1, decode mailbox capacity]"
+                )
+        chunked_prefill_size = (
+            decode_chunk
+            if client.phase == "decode" and decode_chunk is not None
+            else capacity if client.phase == "decode" or args.chunked_prefill else -1
+        )
         command = [
             sys.executable,
             "-m",
@@ -217,7 +228,7 @@ def commands(node, args):
                 else ["--cuda-graph-backend-prefill", "disabled"]
             ),
             "--chunked-prefill-size",
-            str(capacity if client.phase == "decode" or args.chunked_prefill else -1),
+            str(chunked_prefill_size),
             "--max-prefill-tokens",
             str(capacity),
             "--max-running-requests",
@@ -317,6 +328,11 @@ def main():
         "--decode-max-running-requests",
         type=int,
         help="Optional native D request limit; P batching and KV profiling keep their defaults",
+    )
+    parser.add_argument(
+        "--decode-chunked-prefill-size",
+        type=int,
+        help="Optional D extend chunk size; defaults to the D mailbox capacity",
     )
     parser.add_argument("--config", required=True)
     parser.add_argument("--host", default="127.0.0.1")
