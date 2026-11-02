@@ -84,6 +84,11 @@ def main():
         help="ChunkedPrefill tuning parameter; freeze before held-out evaluation",
     )
     p.add_argument(
+        "--decode-chunked-prefill-size",
+        type=int,
+        help="ExpertPlex-only D extend chunk size forwarded to launch.py",
+    )
+    p.add_argument(
         "--disable-tbo",
         action="store_true",
         help="Baseline ablation; ExpertPlex uses config.overlap",
@@ -214,6 +219,11 @@ def main():
             "--cuda-graph",
             *common,
         ]
+        if args.decode_chunked_prefill_size is not None:
+            launch += [
+                "--decode-chunked-prefill-size",
+                str(args.decode_chunked_prefill_size),
+            ]
     else:
         launch = [
             sys.executable,
