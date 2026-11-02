@@ -10,8 +10,41 @@ from __future__ import annotations
 import functools
 import hashlib
 import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
+
+
+def _ensure_ninja_on_path() -> None:
+    """Expose the environment's Ninja binary to torch cpp_extension.
+
+    Rebuilt serving environments may invoke the symlinked venv Python without
+    activating its conda prefix. PyTorch checks the executable (not the
+    importable ninja module), so add the interpreter/prefix bin only
+    when PATH lookup fails.
+    """
+    if shutil.which("ninja"):
+        return
+    candidates = []
+    executable = Path(sys.executable).resolve()
+    candidates.append(executable.parent)
+    if sys.prefix:
+        candidates.append(Path(sys.prefix) / "bin")
+    seen = set()
+    for directory in candidates:
+        directory = directory.resolve()
+        if directory in seen:
+            continue
+        seen.add(directory)
+        candidate = directory / "ninja"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            os.environ["PATH"] = str(directory) + os.pathsep + os.environ.get("PATH", "")
+            return
+    raise RuntimeError(
+        "Ninja executable is required to build ExpertPlex; install ninja or "
+        "activate the serving environment before launch"
+    )
 
 
 def source_fingerprint() -> str:
@@ -89,6 +122,7 @@ def load_extension() -> Any:
     import torch
     from torch.utils.cpp_extension import load
 
+    _ensure_ninja_on_path()
     if not torch.cuda.is_available():
         raise RuntimeError("ExpertPlex native executor requires a CUDA deployment host")
     # Supplying an explicit architecture also prevents cpp_extension from
