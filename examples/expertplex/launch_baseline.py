@@ -190,7 +190,7 @@ def main():
         help="Enable fixed-trajectory score capture on isolated diagnostic servers only",
     )
     p.add_argument(
-        "--attention-backend", choices=("triton", "flashinfer"), default="flashinfer"
+        "--attention-backend", choices=("triton", "flashinfer", "fa4"), default="flashinfer"
     )
     p.add_argument(
         "--sampling-backend", choices=("flashinfer", "pytorch"), default="flashinfer"
