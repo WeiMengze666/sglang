@@ -339,6 +339,100 @@ with (root/'order').open('a') as f: f.write(name+'-parent\\n')
                 for p in procs:
                     p.wait(timeout=2)
 
+    def test_flat_inventory_preserves_supervisor_shutdown_and_ignores_duplicates(self):
+        import psutil
+
+        child_code = """
+import sys,time
+from pathlib import Path
+root,name=Path(sys.argv[1]),sys.argv[2]
+(root/(name+'.child-ready')).touch()
+while not (root/(name+'.release')).exists(): time.sleep(.005)
+with (root/'order').open('a') as f: f.write(name+'-child\\n')
+"""
+        parent_code = """
+import signal,subprocess,sys,time
+from pathlib import Path
+root,name,code=Path(sys.argv[1]),sys.argv[2],sys.argv[3]
+stopping=False
+def stop(*args):
+ global stopping
+ stopping=True
+signal.signal(signal.SIGTERM,stop)
+child=subprocess.Popen([sys.executable,'-c',code,str(root),name])
+while not stopping: time.sleep(.005)
+(root/(name+'.release')).touch()
+child.wait(timeout=5)
+with (root/'order').open('a') as f: f.write(name+'-parent\\n')
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            procs = [
+                subprocess.Popen(
+                    [sys.executable, "-c", parent_code, temp, role, child_code]
+                )
+                for role in ("expert", "decode")
+            ]
+            roots = [psutil.Process(p.pid) for p in procs]
+            try:
+                deadline = time.monotonic() + 5
+                while len(list(Path(temp).glob("*.child-ready"))) < 2:
+                    if time.monotonic() > deadline:
+                        self.fail("Fixture children did not become ready")
+                    time.sleep(.01)
+                flat = []
+                for root in roots:
+                    flat.extend([root, root, *root.children(recursive=True)])
+                self.assertEqual(check.stop_owned_services(flat, 2, .2), [])
+                self.assertEqual(
+                    (Path(temp) / "order").read_text().splitlines(),
+                    ["decode-child", "decode-parent", "expert-child", "expert-parent"],
+                )
+            finally:
+                check.stop_owned_services(roots, 1, 1)
+                for p in procs:
+                    p.wait(timeout=2)
+
+    def test_unreaped_foreign_child_zombie_does_not_consume_supervisor_grace(self):
+        import psutil
+
+        code = """
+import subprocess,sys,time
+from pathlib import Path
+child=subprocess.Popen([sys.executable,'-c','pass'])
+Path(sys.argv[1]).write_text(str(child.pid))
+time.sleep(60)
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            ready = Path(temp) / "ready"
+            parent = subprocess.Popen([sys.executable, "-c", code, str(ready)])
+            root = psutil.Process(parent.pid)
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists():
+                    if time.monotonic() > deadline:
+                        self.fail("Fixture child PID missing")
+                    time.sleep(.01)
+                child = psutil.Process(int(ready.read_text()))
+                while child.status() != psutil.STATUS_ZOMBIE:
+                    if time.monotonic() > deadline:
+                        self.fail("Fixture child did not exit")
+                    time.sleep(.01)
+                # Fail if the unowned-by-this-process zombie is given the
+                # normal supervisor wait, independently of wall-clock jitter.
+                original_wait = psutil.Process.wait
+                waits = []
+                def observe_wait(process, timeout=None):
+                    if process.pid == child.pid:
+                        waits.append(timeout)
+                    return original_wait(process, timeout=timeout)
+                with patch.object(psutil.Process, "wait", observe_wait):
+                    self.assertEqual(check.stop_owned_services([child], 2, .2), [])
+                self.assertEqual(waits, [0])
+                self.assertTrue(root.is_running(), "Only supplied processes may be stopped")
+            finally:
+                check.stop_owned_services([root], .1, .1)
+                parent.wait(timeout=2)
+
     def test_unresponsive_owned_tree_is_bounded_and_reaped(self):
         import psutil
 

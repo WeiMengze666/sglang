@@ -23,11 +23,29 @@ def stop_owned_services(
     import psutil
 
     trees = []
+    seen = set()
     for proc in processes:
+        if proc.pid in seen:
+            continue
+        seen.add(proc.pid)
         try:
+            if proc.status() == psutil.STATUS_ZOMBIE:
+                # Reap a direct child if possible. An unreaped descendant
+                # cannot run a shutdown protocol or retain a CUDA context.
+                try:
+                    proc.wait(timeout=0)
+                except psutil.TimeoutExpired:
+                    pass
+                continue
             trees.append((proc, proc.children(recursive=True)))
         except psutil.NoSuchProcess:
-            trees.append((proc, []))
+            continue
+    # Callers may retain a flat inventory to catch orphaned workers. When a
+    # supervisor is still present, let it release/reap its own descendants
+    # before using the fallback. Otherwise reversing that inventory kills
+    # workers first and can wait a full supervisor grace period per zombie.
+    descendants = {child.pid for _, children in trees for child in children}
+    trees = [(proc, children) for proc, children in trees if proc.pid not in descendants]
     remaining = []
     for proc, descendants in reversed(trees):
         try:
