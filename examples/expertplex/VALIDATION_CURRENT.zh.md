@@ -23,3 +23,5 @@
 重建环境的 gpuq shell 未默认激活 conda `bin`，导致 job566 在 CUDA 启动前找不到 Ninja；源代码已在 commit `2eb27d8201` 中让 `native.load_extension()` 自动发现解释器或 `sys.prefix/bin/ninja`，并新增 CPU 回归测试。修复后 CPU 合同测试为 261，optimizer/unit 测试为 59；`PATH=/usr/bin` 的实际发现检查也通过。
 
 唯一的 D 容量因果候选 job569 将 `max_decode_tokens` 和 D 服务并发上限从 16 提到 32，其他配置与 cap16 fair screen 对齐。它已清理成功但被性能门拒绝：goodput 为 `[0.488163, 0.488895, 0.114876, 0.061253]` rps（到达率 `[0.5, 1.0, 1.5, 2.0]`），只有 0.5 rps 通过 p90 joint-SLO，故不修改默认配置，也没有严格数值结论。
+
+job572 进一步固定 D extend chunk 为 16，同时保持 `max_decode_tokens=32`，仍未通过 fair gate（goodput `[0.492103, 0.473900, 0.140294, 0.060501]` rps；仅 0.5 rps 通过）。因此 cap32 容量候选整体拒绝，默认 cap16 保持不变。
