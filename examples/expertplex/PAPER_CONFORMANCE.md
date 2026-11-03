@@ -11,7 +11,8 @@ InfiniBand 流量隔离暂缓；保留这些原文要求以供后续多节点验
 当前验收边界：真实 Coder BF16 权重在确定性模式下，已通过固定历史、并发请求的
 全词表逐位对照，覆盖三路 D 同时活动、实际 decode 批处理和非空 TBO 重放完成。
 三路 D 重复使用同一组参考轨迹；这不代表更多独立提示，也不是完整模型质量评估。
-数值捕获关闭 CPU 调度重叠，不作为性能证据。APK 的算子开销、完整传播上界、
+数值捕获用于正确性检查，不作为性能证据；调度重叠等运行配置以具体验证记录为准。
+APK 的算子开销、完整传播上界、
 优化器搜索与预测质量、SBO、attention TP 和编译路径的严格数值验收仍有缺口；
 尚未达到相对最强原生基线的端到端 1.5× P90 goodput 要求。
 
@@ -34,9 +35,14 @@ TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
    使用原生 Qwen3 P/D operation 顺序和完整的 dispatch A/B、experts、combine A/B
    接口。`begin` 在 COMM stream 等待 COMPUTE 的路由结果，
    调用 `csrc/group_communication.cuh::RemoteGroup` 的 dispatch/combine 接口。
-   raw P 路径由 `group_dispatch_raw` 写入最终 raw buffers，`group_publish` 在 payload
-   fence 后发布 READY。D 使用 routed rows 路径。WaitDone 在 attention GPU 上等待，
-   `finish` 向 COMPUTE stream 加入完成 event；E 不启动配对的接收通信 kernel。
+   raw P 路径（`prefill_preprocess=True`）由 `group_dispatch_raw` 写入固定的
+   transport 接收张量 `raw_input` 及路由元数据，`group_publish` 在 payload fence 后
+   发布 READY。APK 随后执行 Scatter1 计数、计算 expert offsets，再由 Scatter2
+   将行写入 expert-packed GEMM 输入 `b.input`；Gather 生成 per-rank BF16
+   `raw_output`，attention 再 pull 该结果。D 使用直接写 GEMM 输入的 routed rows 路径。
+   WaitDone 在 attention GPU 上等待，`finish` 向 COMPUTE stream 加入完成 event。
+   E 不启动配对的独立接收通信 kernel，也不使用中间 receiver-ring 的 drain/credit-return
+   协议，但 APK 内仍有本地数据整理；mailbox 仍按 READY/DONE 轮次防止覆盖在途操作。
 3. **长驻执行与传播（§4.2–4.3）**：`csrc/sm100_pipeline.cuh::executor` 的 CTA0 调用
    `update_policy`，经 system-scope READY、device-scope policy、cluster DSMEM Task、
    CTA 内 `task_full` mbarrier 传播。`claim` 是 cluster leader 的唯一 tile 领取入口；
@@ -81,12 +87,18 @@ TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
 | §4.3 Fig.4 | system P → CTA0 → device p_i → cluster DSMEM → warp broadcast → mbarrier | 默认后端已实现该传播链；GPU 定时发布和 tile trace 已采集，尚未证明完整上界 | 可控时刻注入 urgent decode，记录各级 epoch/timestamp |
 | §4.3 | 决策在 check epoch 内固定；观察切换后不得再领取旧 phase tile | leader 是唯一领取者并向所有成员分发同一 Task；CAS 竞争不会被当成 phase 空闲；trace validator 检查成员决策与阶段退役，但完整传播上界仍待验证 | 有预取、多 warp、多 CTA 的长时间压力测试 |
 | §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 双 accumulator，延迟 store 退休与 Task ring 元数据复用已分离；跨 mailbox 回归通过，配对汇总仍慢约 0.73%。完整 SM100 后端默认开启，可显式关闭做消融 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
-| §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | NVLink IPC 路径已验证全部 56 个有向 GPU 对 | 多发送方、重复 epoch、容量边界、故障路径 |
-| §5.2 | E 无通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 默认服务路径已实现，E 侧预处理直接读取最终 raw buffer；通信微基准的 identity echo 仅为计时外诊断 | kernel trace、并发 P/D 数值验证 |
+| §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | NVLink IPC 路径已验证全部 56 个有向 GPU 对；raw P 的最终 transport 接收张量与 expert-packed GEMM 张量不同，后者的 offsets 由 E 生成；与原文 sender-final-expert-offset 的字面一致性尚未证明 | 最终张量定义与 offset 所有权审计；多发送方、重复 epoch、容量边界、故障路径 |
+| §5.2 | E 无独立通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 默认 raw P 没有 receiver-ring/credit-return，但 APK 执行 Scatter1/Scatter2/Gather；attention pull Gather 的最终 per-rank BF16 结果；通信微基准的 identity echo 仅为计时外诊断 | kernel trace、并发 P/D 数值验证；通信与本地数据整理边界分别计时 |
 | §5.2 Fig.5 | 单线程 WaitDone 位于 COMM stream；COMPUTE stream 可继续 TBO/SBO | 独立 COMM stream 和双 mailbox 已实现；真实模型三路 D 已验证非空双 microbatch 图重放及所有 E 的 epoch 完成，Qwen2 SBO 已复用原生 shared 分支并通过辅助模型全词表对齐及实际 Decode 图节点重叠验证；prefill 图/shared TBO/标定仍未验收 | CUDA timeline 的计算/通信重叠量与 SBO 验证 |
 | §5.3 | 跨节点 P 同 local rank 转发，节点内 NVLink multicast/gather；无 P 节点走低优先级 IB VL | 单节点 MoE 路径为 NVLink；多节点 MoE RDMA/层次转发未实现 | 需要多节点与 IB 硬件；单机测试不能替代 |
 | §6.1–6.3 Eq.1–3 | 联合枚举 attention/MoE 并行、布局、overlap、q；内存过滤；SLO 二分批量；critical path 估计 | 当前优化器只覆盖部分布局与简化模型，需补齐可执行策略 | profile 拟合留出集误差、候选可执行性、预测/实测对比 |
 | §6.4 Eq.4 | q 随当前/预期 decode tile footprint 缩放，按 cluster 向上取整，Qmax 保证 P 进展；单 phase 借用全部资源 | CPU 对照及默认 SM100 调度器均使用实际 masked/packed tile footprint；仍需完整策略质量与饥饿上界验收 | 稀疏度变化、空闲借用、P/D 饥饿测试 |
+
+论文 §7.1、§7.6 本身包含 APK 内的 MoE 预处理/后处理和 EP Scatter/Gather，不能仅因
+存在本地 scatter 就判定与论文不一致，也不能据此把两种“最终 buffer”视为已经等同。
+§5.2 的逐细节验收仍需确认论文最终张量的布局与 sender/E 的 offset 所有权；若采用
+sender 直接写 expert-packed 输入的路径，须保留并重新验证原生 normal 模式的 per-rank
+BF16 gather 舍入边界，再完成并发、epoch/容量/错误路径与数值、通信重叠验收。
 
 ## 论文实验逐项对应
 
