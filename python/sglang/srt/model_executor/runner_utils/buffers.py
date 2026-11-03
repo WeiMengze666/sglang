@@ -127,6 +127,7 @@ class DecodeInputBuffers(ForwardInputBuffers):
     ngram_embedding_info: Optional[NgramEmbeddingInfo]
     rids_int: Optional[torch.Tensor]
     bootstrap_room_ids_int: Optional[torch.Tensor]
+    expertplex_dp_real_num_tokens_gpu: Optional[torch.Tensor] = None
 
     @classmethod
     def create(
@@ -153,6 +154,7 @@ class DecodeInputBuffers(ForwardInputBuffers):
         pp_proxy_residual_num_blocks: Optional[int] = None,
         pp_proxy_dspark_hidden_size: int = 0,
         aux_hidden_states_width: int = 0,
+        expertplex_dp_num_ranks: int = 1,
     ) -> DecodeInputBuffers:
         with torch.device(device):
             input_ids = torch.zeros((max_num_token,), dtype=torch.int64)
@@ -260,6 +262,10 @@ class DecodeInputBuffers(ForwardInputBuffers):
             mamba_track_indices=mamba_track_indices,
             mamba_track_mask=mamba_track_mask,
             encoder_lens=encoder_lens,
+            expertplex_dp_real_num_tokens_gpu=(
+                torch.zeros((expertplex_dp_num_ranks,), dtype=torch.int32, device=device)
+                if expertplex_dp_num_ranks > 1 else None
+            ),
             global_num_tokens_gpu=global_num_tokens_gpu,
             global_num_tokens_for_logprob_gpu=global_num_tokens_for_logprob_gpu,
             pp_proxy_tensors=pp_proxy_tensors,

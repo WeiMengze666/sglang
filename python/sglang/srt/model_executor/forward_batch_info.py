@@ -665,6 +665,8 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     _original_num_tokens: Optional[int] = None
     global_num_tokens_cpu: Optional[List[int]] = None
     global_num_tokens_gpu: Optional[torch.Tensor] = None
+    # Explicit external-MoE attention DP only; native padded buffers stay unchanged.
+    expertplex_dp_real_num_tokens_gpu: Optional[torch.Tensor] = None
     # Has to be None when cuda graph is captured.
     global_num_tokens_for_logprob_cpu: Optional[List[int]] = None
     global_num_tokens_for_logprob_gpu: Optional[torch.Tensor] = None
@@ -1829,6 +1831,15 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             global_num_tokens_pinned, non_blocking=self.use_pin_memory
         )
 
+        if get_parallel().attn_dp_size > 1:
+            from sglang.srt.expertplex.attention_dp import (
+                grouped_attention_dp_size, make_eager_real_dp_counts,
+            )
+            remote_dp_size = grouped_attention_dp_size()
+            if remote_dp_size > 1:
+                self.expertplex_dp_real_num_tokens_gpu = make_eager_real_dp_counts(
+                    self, remote_dp_size
+                )
         TboForwardBatchPreparer.prepare(
             batch=self, is_draft_worker=model_runner.is_draft_worker
         )

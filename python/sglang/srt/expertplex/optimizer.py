@@ -288,10 +288,10 @@ def estimate_memory(
     )
     return MemoryEstimate(
         attention_weights_bytes=max(
-            model.attention_rank_weight_bytes(c.tp_size) for c in config.clients
+            model.attention_rank_weight_bytes(c.attention_tp_size) for c in config.clients
         ),
         attention_kv_bytes=max(
-            model.attention_rank_kv_bytes_per_token(c.tp_size) for c in config.clients
+            model.attention_rank_kv_bytes_per_token(c.attention_tp_size) for c in config.clients
         )
         * kv_tokens_per_attention_gpu,
         attention_buffers_bytes=attention_buffers,
@@ -1093,6 +1093,10 @@ def search(
     TBO is an analytical option for a measured TBO setup; selecting it here
     does not enable communication overlap in the runtime.
     """
+    if any(client.attention_dp_size != 1 for client in config.clients):
+        raise ProfileCoverageError(
+            "Attention-DP clients require independently measured DP/gather latency profiles"
+        )
     if any(client.overlap is not None for client in config.clients):
         raise ProfileCoverageError(
             "Client-specific overlap requires separately calibrated phase policies; "

@@ -55,12 +55,24 @@ class ClientConfig:
     port: int
     tp_size: int = 1
     overlap: str | None = None
+    attention_dp_size: int = 1
+
+    @property
+    def attention_tp_size(self) -> int:
+        return self.tp_size // self.attention_dp_size
 
     def __post_init__(self) -> None:
         _positive_integer("client id", self.id, allow_zero=True)
         _positive_integer("client device", self.device, allow_zero=True)
         _positive_integer("client port", self.port)
         _positive_integer("client tp_size", self.tp_size)
+        _positive_integer("client attention_dp_size", self.attention_dp_size)
+        if self.tp_size % self.attention_dp_size:
+            raise ValueError("client physical TP span must divide by attention DP")
+        if self.attention_dp_size > 1 and (
+            self.phase != "decode" or self.attention_tp_size != 1
+        ):
+            raise ValueError("attention DP currently requires decode with attention TP1")
         if self.overlap is not None and self.overlap not in ("none", "tbo", "sbo"):
             raise ValueError("client overlap must be none, tbo, sbo or null")
         if self.port > 65535:
@@ -360,6 +372,12 @@ class NodeConfig:
             raise ValueError(
                 "attention and expert devices must be distinct ranks within 0..7"
             )
+        for client in self.clients:
+            if client.attention_dp_size > 1:
+                if self.client_overlap(client) != "none":
+                    raise ValueError("grouped attention DP currently requires D overlap none")
+                if self.max_decode_tokens % client.attention_dp_size:
+                    raise ValueError("global D capacity must divide by attention DP")
         if len({client.port for client in self.clients}) != len(self.clients):
             raise ValueError("attention client ports must be unique")
         for name in (
@@ -429,14 +447,19 @@ class NodeConfig:
                         "Qwen2 ExpertPlex TBO stage hooks are not yet validated"
                     )
             for client in self.clients:
-                if model_spec.shared_intermediate_size % client.tp_size:
+                if client.attention_dp_size > 1 and (
+                    model_spec.architecture != "Qwen3MoeForCausalLM"
+                    or model_spec.shared_intermediate_size
+                ):
+                    raise ValueError("attention DP requires routed-only Qwen3 MoE")
+                if model_spec.shared_intermediate_size % client.attention_tp_size:
                     raise ValueError(
                         "shared expert width must divide across attention TP ranks"
                     )
-                if model_spec.num_attention_heads % client.tp_size:
+                if model_spec.num_attention_heads % client.attention_tp_size:
                     raise ValueError("attention TP width must divide query head count")
                 kv_heads = model_spec.num_key_value_heads
-                if kv_heads % client.tp_size and client.tp_size % kv_heads:
+                if kv_heads % client.attention_tp_size and client.attention_tp_size % kv_heads:
                     raise ValueError(
                         "attention TP and KV head counts must divide one another"
                     )
@@ -498,6 +521,8 @@ class NodeConfig:
         data = asdict(self)
         # Absent overrides retain the existing topology digest and JSON schema.
         for client in data["clients"]:
+            if client["attention_dp_size"] == 1:
+                client.pop("attention_dp_size")
             if client["overlap"] is None:
                 client.pop("overlap")
         data["expert_devices"] = list(self.expert_devices)

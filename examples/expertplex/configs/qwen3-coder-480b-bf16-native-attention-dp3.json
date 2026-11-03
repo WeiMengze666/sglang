@@ -1,0 +1,38 @@
+{
+  "model_path": "/data/models/Qwen3-Coder-480B-A35B-Instruct",
+  "clients": [
+    {
+      "id": 0,
+      "phase": "prefill",
+      "device": 0,
+      "port": 30000,
+      "tp_size": 1,
+      "overlap": "tbo"
+    },
+    {
+      "id": 1,
+      "phase": "decode",
+      "device": 1,
+      "port": 30001,
+      "tp_size": 3,
+      "overlap": "none",
+      "attention_dp_size": 3
+    }
+  ],
+  "expert_devices": [
+    4,
+    5,
+    6,
+    7
+  ],
+  "max_prefill_tokens": 49152,
+  "max_decode_tokens": 48,
+  "decode_sm_budget": 96,
+  "expected_decode_tiles": 8,
+  "max_decode_sm_fraction": 0.99,
+  "rendezvous_dir": "/tmp/sglang-expertplex-attn-dp3-run001",
+  "cta_count": 148,
+  "overlap": "tbo",
+  "kernel": "sm100",
+  "prefill_preprocess": true
+}

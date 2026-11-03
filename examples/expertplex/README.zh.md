@@ -284,6 +284,11 @@ dispatch/combine 生命周期，同时允许相邻 dense 运算编译；确定�
 [Qwen2 SBO](QWEN2_SBO.md)。Coder 主模型没有 shared expert，不能用它证明 SBO；
 SBO 与 prefill graph 等尚未验证的组合仍会明确拒绝。
 
+### 可选原生 Attention DP Decode 组
+
+默认三个独立 D 服务保持不变。可选的单前端、三 attention DP 副本布局、独立 P/D/E
+启动命令、全局与本地容量边界以及验证范围见 [Attention DP](ATTENTION_DP.zh.md)。
+
 ### Attention TP 组
 
 默认 1P+3D+4E 使用四个 TP1 attention 组。若要使用 TP2，可在上面的独立服务命令中

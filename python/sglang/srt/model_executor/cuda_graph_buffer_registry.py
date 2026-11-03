@@ -532,6 +532,7 @@ def build_decode_registry(
     attn_tp_sharded_fn: Callable[[int], bool] = lambda num_tokens: False,
     num_dp_ranks: int = 1,
     register_global_num_tokens: bool = True,
+    enable_expertplex_attention_dp: bool = False,
     share_pool: bool = True,
     source: Optional[Any] = None,
 ) -> CudaGraphBufferRegistry:
@@ -718,6 +719,20 @@ def build_decode_registry(
                     post_fill=_global_num_tokens_post_fill,
                 )
             )
+
+    if enable_expertplex_attention_dp:
+        if num_dp_ranks < 2 or not require_mlp_tp_gather:
+            raise ValueError("external attention DP requires a native global gather")
+        from sglang.srt.expertplex.attention_dp import copy_real_dp_counts_
+
+        def _expertplex_raw_dp_counts_post_fill(buf, fb, ctx):
+            copy_real_dp_counts_(buf, fb, ctx.padded_num_tokens)
+
+        slots.append(GraphSlot(
+            "expertplex_dp_real_num_tokens_gpu", lambda _bs, _mt: (num_dp_ranks,),
+            torch.int32, axis="none", copy_from_fb=False,
+            post_fill=_expertplex_raw_dp_counts_post_fill,
+        ))
 
     for slot in slots:
         bind = None

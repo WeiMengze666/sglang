@@ -250,6 +250,9 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         self.ep_size = get_parallel().moe_ep_size
         self.layer_id = layer_id
         self._expertplex = expertplex_enabled()
+        self._expertplex_attention_dp_size = (
+            getattr(get_parallel(), "attn_dp_size", 1) if self._expertplex else 1
+        )
         if self._expertplex and quant_config is not None:
             raise ValueError("ExpertPlex attention supports unquantized BF16 only")
         if self.tp_size > config.num_experts:
@@ -361,6 +364,12 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                 else {}
             )
             topk_output = self.topk(hidden_states, router_logits, **routing_kwargs)
+            attention_dp_size = getattr(self, "_expertplex_attention_dp_size", 1)
+            if self._expertplex and attention_dp_size > 1:
+                from sglang.srt.expertplex.attention_dp import mask_topk_padding
+                topk_output = mask_topk_padding(
+                    topk_output, forward_batch, attention_dp_size
+                )
         else:
             topk_output = self.topk.empty_topk_output(hidden_states.device)
         final_hidden_states = self.experts(hidden_states, topk_output)

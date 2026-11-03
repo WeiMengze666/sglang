@@ -163,6 +163,14 @@ def commands(node, args):
             if client.phase == "prefill"
             else node.max_decode_tokens
         )
+        local_capacity = capacity // client.attention_dp_size
+        if client.attention_dp_size > 1 and (
+            getattr(args, "enable_torch_compile", False)
+            or not args.cuda_graph
+            or getattr(args, "disable_overlap_schedule", False)
+            or getattr(args, "diagnostic_logit_processor", False)
+        ):
+            raise ValueError("grouped attention DP requires CPU overlap, full D graphs and no compile")
         running = min(node.max_decode_tokens, capacity)
         if (
             client.phase == "decode"
@@ -173,6 +181,8 @@ def commands(node, args):
                 raise ValueError(
                     "Decode max running requests must fit its mailbox capacity"
                 )
+        if running % client.attention_dp_size:
+            raise ValueError("global request limit must divide by attention DP")
         bootstrap = args.bootstrap_port + client.id
         decode_chunk = getattr(args, "decode_chunked_prefill_size", None)
         if client.phase == "decode" and decode_chunk is not None:
@@ -180,6 +190,9 @@ def commands(node, args):
                 raise ValueError(
                     "Decode chunked prefill size must be in [1, decode mailbox capacity]"
                 )
+        if client.attention_dp_size > 1 and decode_chunk is not None:
+            if decode_chunk % client.attention_dp_size:
+                raise ValueError("global D chunk must divide by attention DP")
         chunked_prefill_size = (
             decode_chunk
             if client.phase == "decode" and decode_chunk is not None
@@ -230,7 +243,7 @@ def commands(node, args):
             "--chunked-prefill-size",
             str(chunked_prefill_size),
             "--max-prefill-tokens",
-            str(capacity),
+            str(local_capacity),
             "--max-running-requests",
             str(running),
             "--attention-backend",
@@ -239,6 +252,9 @@ def commands(node, args):
             args.sampling_backend,
             *execution_options(args, decode=client.phase == "decode"),
         ]
+        if client.attention_dp_size > 1:
+            command += ["--attn-dp-size", str(client.attention_dp_size),
+                        "--dp-size", "1", "--enable-dp-lm-head"]
         if args.kv_tokens is not None:
             command += ["--max-total-tokens", str(args.kv_tokens)]
         if getattr(args, "mem_fraction_static", None) is not None:
@@ -269,7 +285,7 @@ def commands(node, args):
         if getattr(args, "sequence_cap", None):
             command += ["--context-length", str(args.sequence_cap)]
         if args.cuda_graph:
-            command += decode_graph_options(args, capacity)
+            command += decode_graph_options(args, local_capacity)
         elif getattr(args, "cuda_graph_bs_decode", None) is not None:
             raise ValueError("Explicit graph buckets require decode CUDA graphs")
         servers.append((client, command))

@@ -212,6 +212,8 @@ def build_replay_fb_view(
         ),
         can_run_decode_cuda_graph=forward_batch.can_run_decode_cuda_graph,
         global_num_tokens_cpu=global_num_tokens_cpu,
+        original_global_num_tokens_cpu=getattr(forward_batch, "original_global_num_tokens_cpu", None),
+        expertplex_dp_real_num_tokens_gpu=getattr(buffers, "expertplex_dp_real_num_tokens_gpu", None),
         dp_padding_mode=DpPaddingMode.get_default_mode_in_cuda_graph(),
     )
 
@@ -419,6 +421,8 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         logits_buffer_rows = self._next_token_logits_buffer_capacity_rows(
             self.max_num_token
         )
+        from sglang.srt.expertplex.attention_dp import grouped_attention_dp_size
+        remote_dp_size = grouped_attention_dp_size()
         self.buffers: DecodeInputBuffers = DecodeInputBuffers.create(
             device=self.device,
             max_bs=self.max_bs,
@@ -453,6 +457,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                 self.model_runner.get_pp_proxy_dspark_hidden_size()
             ),
             aux_hidden_states_width=self.model_runner.get_aux_hidden_states_width(),
+            expertplex_dp_num_ranks=remote_dp_size,
         )
         self.buffers.share_buffers()
         # FB-shared slot registry adopting DecodeInputBuffers storage (same
@@ -473,6 +478,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             require_mlp_tp_gather=self.require_mlp_tp_gather,
             attn_tp_sharded_fn=self.model_runner.attn_tp_sequence_sharded,
             num_dp_ranks=self.num_dp_ranks,
+            enable_expertplex_attention_dp=remote_dp_size > 1,
             source=self.buffers,
         )
         if self.dllm_input_preparation is not None:
@@ -1030,6 +1036,8 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             )
             buffers.global_num_tokens_gpu.copy_(num_tokens_tensor)
             buffers.global_num_tokens_for_logprob_gpu.copy_(num_tokens_tensor)
+            if buffers.expertplex_dp_real_num_tokens_gpu is not None:
+                buffers.expertplex_dp_real_num_tokens_gpu.fill_(num_tokens)
         else:
             global_dp_buffer_len = None
 
@@ -1085,6 +1093,11 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             dp_padding_mode=DpPaddingMode.get_default_mode_in_cuda_graph(),
             global_dp_buffer_len=global_dp_buffer_len,
             global_num_tokens_cpu=global_num_tokens_cpu,
+            original_global_num_tokens_cpu=(
+                global_num_tokens_cpu
+                if buffers.expertplex_dp_real_num_tokens_gpu is not None else None
+            ),
+            expertplex_dp_real_num_tokens_gpu=buffers.expertplex_dp_real_num_tokens_gpu,
             can_run_decode_cuda_graph=True,
             mrope_positions=mrope_positions,
             spec_algorithm=self.model_runner.spec_algorithm,

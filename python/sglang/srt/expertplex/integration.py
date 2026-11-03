@@ -342,6 +342,7 @@ def validate_server_args(cfg: Any) -> None:
             "Use either bootstrap discovery or explicit config/client ID, not both"
         )
     config, client = attention_config(cfg)
+    attention_dp_size = getattr(client, "attention_dp_size", 1)
     overlap = getattr(client, "overlap", None) or config.overlap
     errors = compiled_attention_errors(cfg, client, config)
     if getattr(cfg, "tp_size", 1) != client.tp_size:
@@ -358,7 +359,6 @@ def validate_server_args(cfg: Any) -> None:
         "pp_size",
         "ep_size",
         "dp_size",
-        "attn_dp_size",
         "attn_cp_size",
         "moe_dp_size",
         "dcp_size",
@@ -367,6 +367,15 @@ def validate_server_args(cfg: Any) -> None:
     ):
         if getattr(cfg, name, 1) != 1:
             errors.append(f"--{name.replace('_', '-')} must be 1")
+    if getattr(cfg, "attn_dp_size", 1) != attention_dp_size:
+        errors.append(f"--attn-dp-size must be {attention_dp_size}")
+    if attention_dp_size > 1:
+        if getattr(cfg, "disable_overlap_schedule", False):
+            errors.append("grouped attention DP requires CPU overlap")
+        if getattr(cfg, "enable_torch_compile", False):
+            errors.append("grouped attention DP compile is not validated")
+        if not getattr(cfg, "enable_dp_lm_head", False):
+            errors.append("grouped attention DP requires --enable-dp-lm-head")
     for name in (
         "enable_eplb",
         "enable_lora",
@@ -447,6 +456,10 @@ def validate_server_args(cfg: Any) -> None:
     running = getattr(cfg, "max_running_requests", None)
     if running is None or not 0 < running <= capacity:
         errors.append(f"--max-running-requests must be in [1, {capacity}]")
+    if attention_dp_size > 1 and (
+        not isinstance(running, int) or running % attention_dp_size
+    ):
+        errors.append("global request limit must divide by attention DP")
     # P may run without chunking: tp_worker advertises a hard input bound.
     # D warmup/extend still uses its own smaller mailbox chunk capacity.
     chunk = getattr(cfg, "chunked_prefill_size", None)
@@ -456,6 +469,12 @@ def validate_server_args(cfg: Any) -> None:
     prefill = getattr(cfg, "max_prefill_tokens", None)
     if prefill is None or not 0 < prefill <= capacity:
         errors.append(f"--max-prefill-tokens must be in [1, {capacity}]")
+    if attention_dp_size > 1:
+        local_capacity = capacity // attention_dp_size
+        if chunk is None or not 0 < chunk <= local_capacity:
+            errors.append("grouped D resolved chunk must fit the per-DP capacity")
+        if prefill is None or not 0 < prefill <= local_capacity:
+            errors.append("grouped D max prefill tokens must fit the per-DP capacity")
     graph_config = getattr(cfg, "cuda_graph_config", None)
     for phase in ("decode", "prefill"):
         phase_config = (
@@ -473,6 +492,14 @@ def validate_server_args(cfg: Any) -> None:
             if phase == "decode"
             else ("disabled", "breakable")
         )
+        if phase == "decode" and attention_dp_size > 1:
+            sizes = (phase_config.get("bs") if isinstance(phase_config, dict)
+                     else getattr(phase_config, "bs", None))
+            if backend != "full" or not sizes or any(
+                type(n) is not int or not 0 < n <= capacity // attention_dp_size
+                for n in sizes
+            ):
+                errors.append("grouped attention DP requires full per-rank graph buckets within global capacity")
         if backend not in allowed:
             errors.append(f"--cuda-graph-backend-{phase} must be one of {allowed}")
         if phase == "prefill" and backend != "disabled" and overlap == "sbo":
