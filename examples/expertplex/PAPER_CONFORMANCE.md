@@ -178,3 +178,26 @@ HTTP 仅用于启动、独占槽位登记与退出释放，每层 activation 仍
 
 基线启动器也应保留原生 overlap 与 autotune；PDMux 继续遵循其独立调度循环的约束。
 恢复这些默认值之后，旧的固定参数性能结果仍保留，但不能当成新配置的验收结果。
+
+
+## 2026-11-09 本地开发状态
+
+当前 B300 不可用。本轮 CPU 回归共 108 项，107 项通过，实际 CUDA IPC 归并测试
+1 项因缺少 GPU 跳过。已在原生参数生成链路修复 P/D 独立请求上限、显存比例和
+exact Decode graph bank 的转发，并将显式全局 Decode KV cap 按 attention-DP
+rank 分配。优化器能够搜索并导出 P=TBO、D=NONE；导出的请求上限遵循当前
+compact P 的原生 admission 约束。
+
+packed Prefill 的 attention-side combine 已补每个 EP rank 的 BF16 RN 边界，
+位置在该 rank 的 top-k FP32 累加完成之后、跨 rank FP32 累加之前。CPU 算术反例
+通过；实际 `group` / `per-peer` IPC、raw-versus-packed、CUDA Graph、并发和主模型
+逐 token 全词表验证等待 B300。`test_packed_combine.py` 已包含实际 CUDA 回归入口。
+默认 transport 选择沿用既有配置。
+
+SM100 的 Eq.4 预算计算已在整数转换前饱和，并与 WMMA 共用 `sm_budget.h`。
+主机 C++/UBSan 回归覆盖普通公式值与极值，实际 CUDA 编译及调度行为等待验证。
+这两项 CUDA 改动保存在开发提交中，GPU 验收后再发布。
+
+后续硬件验证仍需覆盖全部操作和参与 warp 的抢占传播、严格数值范围、布局模型的
+实测预测误差，以及同数据、TTFT 1s / TPOT 50ms / 90% joint SLO 下的公平基线。
+完整论文复现与约 1.5× goodput 尚未验收。

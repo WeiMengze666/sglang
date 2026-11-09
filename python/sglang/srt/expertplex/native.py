@@ -225,7 +225,8 @@ class RemoteGroup:
 
         BF16 is supported for masked decode and raw preprocessing. It preserves
         FP32 reduction order and rounds once on store. Routed packed prefill
-        retains the original zero-initialized FP32 accumulation interface.
+        rounds each rank's weighted sum to BF16 before adding ranks, and
+        retains the zero-initialized FP32 accumulation interface.
         """
         self._impl.combine(output, ids, weights, row_map, timeout_ms)
 
@@ -372,7 +373,9 @@ def combine(
     """Wait with a bounded GPU poll, then add this peer's routed results.
 
     output is contiguous FP32[N,H] and must be zeroed once before the first
-    peer; routing weights are FP32[N,K]. Synchronizes the attention stream to
+    peer; routing weights are FP32[N,K]. Packed prefill materializes each
+    rank's sum in BF16 before rank-major FP32 accumulation, matching normal
+    DeepEP gather. Synchronizes the attention stream to
     report timeout/protocol errors before returning.
     """
     load_extension().combine(

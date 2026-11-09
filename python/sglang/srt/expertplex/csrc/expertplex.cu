@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "sm_budget.h"
+
 namespace py = pybind11;
 using U64 = unsigned long long;
 using BF16 = __nv_bfloat16;
@@ -765,6 +767,15 @@ combine_rows_body(const DeviceBuffers &b, int slot, float *output,
         sum[2 * pair + 1] += weight * high;
       }
     }
+    if (b.packed[slot]) {
+      // Sender-packed prefill bypasses the E-side GATHER stage, but must
+      // preserve normal DeepEP's per-rank BF16 materialization boundary.
+      // Round after this rank's route-ordered FP32 sum, before adding ranks.
+      // Masked decode has no intermediate BF16 gather boundary.
+#pragma unroll
+      for (int j = 0; j < 8; ++j)
+        sum[j] = __bfloat162float(__float2bfloat16_rn(sum[j]));
+    }
     auto *destination = reinterpret_cast<float4 *>(output + i * 8);
     float4 first = destination[0], second = destination[1];
     first.x += sum[0];
@@ -1046,12 +1057,8 @@ __global__ void persistent_executor(const __grid_constant__ DeviceBuffers b,
                                 ? s->gate_tiles / ((b.intermediate + 127) / 128)
                                 : s->down_tiles / ((b.hidden + 127) / 128);
         }
-        float requested = ceilf(
-            decode_budget * static_cast<float>(decode_tiles) / expected_tiles);
-        int budget = decode_tiles == 0 ? 0
-                     : requested >= max_decode_ctas
-                         ? max_decode_ctas
-                         : max(1, static_cast<int>(requested));
+        const int budget = expertplex::adaptive_decode_budget<1>(
+            decode_budget, decode_tiles, expected_tiles, max_decode_ctas);
         int preferred = blockIdx.x < budget ? 1 : 0;
         Stage stage = IDLE;
         unsigned task = 0;

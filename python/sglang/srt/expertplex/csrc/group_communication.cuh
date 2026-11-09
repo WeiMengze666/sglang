@@ -160,8 +160,8 @@ __global__ void group_combine_rows(const GroupBuffers *g, Output *output,
                                    const Id *ids, const float *weights,
                                    const int *rows, int n, int k) {
   if (g->local[0].packed[g->slot]) {
-    // The routed-prefill ablation retains its rank-major contract. Normal
-    // serving uses group_combine_raw after E-side BF16 per-rank gather.
+    // Sender-packed prefill reproduces the E-side BF16 per-rank gather
+    // boundary in combine_rows_body before rank-major FP32 accumulation.
     if constexpr (std::is_same_v<Output, float>) {
       for (int rank = 0; rank < g->world; ++rank)
         combine_rows_body(g->local[rank], g->slot, output, ids, weights, rows, n, k,

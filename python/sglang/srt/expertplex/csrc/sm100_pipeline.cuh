@@ -5,6 +5,7 @@
 #pragma once
 
 #include "phase_activation.cuh"
+#include "sm_budget.h"
 
 #include <cute/atom/copy_traits_sm100.hpp>
 #include <deep_gemm/common/tma_copy.cuh>
@@ -367,13 +368,8 @@ __device__ __forceinline__ void update_policy(const DeviceBuffers &b,
                    ((operation_columns<Fused>(b, GATE) + N * Cluster - 1) /
                     (N * Cluster));
   }
-  int budget =
-      footprint
-          ? min(cap, max(1, static_cast<int>(ceilf(
-                                decode_budget * static_cast<float>(footprint) /
-                                expected))))
-          : 0;
-  budget = min(cap, (budget + Cluster - 1) / Cluster * Cluster);
+  const int budget = expertplex::adaptive_decode_budget<Cluster>(
+      decode_budget, footprint, expected, cap);
   // The device policy describes a phase preference, not a task generation.
   // Re-publish only when that preference changes; readiness/operation queues
   // are independently acquired on every check epoch.
