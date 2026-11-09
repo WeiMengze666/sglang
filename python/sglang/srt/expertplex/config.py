@@ -56,6 +56,8 @@ class ClientConfig:
     tp_size: int = 1
     overlap: str | None = None
     attention_dp_size: int = 1
+    # Scheduler request cap; independent of fixed transport mailbox capacity.
+    max_running_requests: int | None = None
 
     @property
     def attention_tp_size(self) -> int:
@@ -72,9 +74,13 @@ class ClientConfig:
         if self.attention_dp_size > 1 and (
             self.phase != "decode" or self.attention_tp_size != 1
         ):
-            raise ValueError("attention DP currently requires decode with attention TP1")
+            raise ValueError(
+                "attention DP currently requires decode with attention TP1"
+            )
         if self.overlap is not None and self.overlap not in ("none", "tbo", "sbo"):
             raise ValueError("client overlap must be none, tbo, sbo or null")
+        if self.max_running_requests is not None:
+            _positive_integer("client max_running_requests", self.max_running_requests)
         if self.port > 65535:
             raise ValueError("client port must be at most 65535")
         if self.phase not in ("prefill", "decode"):
@@ -375,7 +381,9 @@ class NodeConfig:
         for client in self.clients:
             if client.attention_dp_size > 1:
                 if self.client_overlap(client) != "none":
-                    raise ValueError("grouped attention DP currently requires D overlap none")
+                    raise ValueError(
+                        "grouped attention DP currently requires D overlap none"
+                    )
                 if self.max_decode_tokens % client.attention_dp_size:
                     raise ValueError("global D capacity must divide by attention DP")
         if len({client.port for client in self.clients}) != len(self.clients):
@@ -459,7 +467,10 @@ class NodeConfig:
                 if model_spec.num_attention_heads % client.attention_tp_size:
                     raise ValueError("attention TP width must divide query head count")
                 kv_heads = model_spec.num_key_value_heads
-                if kv_heads % client.attention_tp_size and client.attention_tp_size % kv_heads:
+                if (
+                    kv_heads % client.attention_tp_size
+                    and client.attention_tp_size % kv_heads
+                ):
                     raise ValueError(
                         "attention TP and KV head counts must divide one another"
                     )
@@ -525,6 +536,8 @@ class NodeConfig:
                 client.pop("attention_dp_size")
             if client["overlap"] is None:
                 client.pop("overlap")
+            if client["max_running_requests"] is None:
+                client.pop("max_running_requests")
         data["expert_devices"] = list(self.expert_devices)
         return data
 
@@ -548,6 +561,8 @@ def default_config(
     decode_tp_size: int = 1,
     prefill_overlap: str | None = None,
     decode_overlap: str | None = None,
+    prefill_max_running_requests: int | None = None,
+    decode_max_running_requests: int | None = None,
     **overrides: Any,
 ) -> NodeConfig:
     """Create a contiguous placement (the default is the paper's 1P3D4E)."""
@@ -576,6 +591,9 @@ def default_config(
                 30000 + i,
                 prefill_tp_size if i < prefill_count else decode_tp_size,
                 prefill_overlap if i < prefill_count else decode_overlap,
+                max_running_requests=prefill_max_running_requests
+                if i < prefill_count
+                else decode_max_running_requests,
             )
             for i in range(attention_count)
         ),

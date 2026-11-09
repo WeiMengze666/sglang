@@ -17,18 +17,31 @@ import time
 from pathlib import Path
 
 from launch import (
+    add_attention_capacity_args,
+    add_decode_compile_args,
     add_prefill_graph_args,
+    attention_capacity_options,
     kv_token_limit,
     memory_fraction,
     prefill_graph_options,
 )
-
+from launch import (
+    config as node_config,
+)
 from process_lifecycle import service_shutdown_budget
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     add_prefill_graph_args(p)
+    add_attention_capacity_args(p)
+    add_decode_compile_args(p)
+    p.add_argument("--graph-max-bs", type=int)
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Save and print commands for CPU inspection",
+    )
     p.add_argument(
         "--variant",
         choices=("expertplex", "colocated", "chunked", "pdd", "pdmux"),
@@ -60,7 +73,9 @@ def main():
     )
     p.add_argument("--mem-fraction-static", type=memory_fraction)
     p.add_argument(
-        "--attention-backend", choices=("triton", "flashinfer", "fa3", "fa4"), default="flashinfer"
+        "--attention-backend",
+        choices=("triton", "flashinfer", "fa3", "fa4"),
+        default="flashinfer",
     )
     p.add_argument(
         "--sampling-backend", choices=("flashinfer", "pytorch"), default="flashinfer"
@@ -117,6 +132,15 @@ def main():
         prefill_graph_options(args, args.sequence_cap)
     except ValueError as exc:
         p.error(str(exc))
+    phase_options = attention_capacity_options(args)
+    if args.variant != "expertplex" and (
+        phase_options
+        or args.cuda_graph_bs_decode is not None
+        or args.enable_torch_compile
+    ):
+        p.error(
+            "Phase capacity, exact decode graph banks and compile options require --variant expertplex"
+        )
     if args.deepep_config and args.variant == "expertplex":
         p.error("--deepep-config applies to native baselines")
     if args.enable_dp_lm_head and args.variant in ("expertplex", "pdmux"):
@@ -185,6 +209,10 @@ def main():
         common += ["--prefill-graph-max-tokens", str(args.prefill_graph_max_tokens)]
     if args.mem_fraction_static is not None:
         common += ["--mem-fraction-static", str(args.mem_fraction_static)]
+    if args.graph_max_bs is not None:
+        common += ["--graph-max-bs", str(args.graph_max_bs)]
+    if args.enable_deterministic_inference:
+        common += ["--enable-deterministic-inference"]
     shutdown_timeout = 90
     if args.variant == "expertplex":
         node = json.loads(Path(args.config).read_text())
@@ -194,9 +222,17 @@ def main():
             or node["weight_mode"] != args.weight_mode
         ):
             p.error("Node config must match model path and weight mode")
-        decode_count = sum(c["phase"] == "decode" for c in node["clients"])
-        if args.decode_kv_tokens is not None and args.decode_kv_tokens % decode_count:
-            p.error("Aggregate KV capacity must divide across D workers")
+        deployment = node_config.NodeConfig.from_dict(node)
+        decode_rank_count = sum(
+            client.attention_dp_size
+            for client in deployment.clients
+            if client.phase == "decode"
+        )
+        if (
+            args.decode_kv_tokens is not None
+            and args.decode_kv_tokens % decode_rank_count
+        ):
+            p.error("Aggregate KV capacity must divide across D attention-DP ranks")
         if node["max_prefill_tokens"] < args.sequence_cap:
             p.error("P mailbox must cover the common input+output length cap")
         if (
@@ -213,12 +249,21 @@ def main():
             "--config",
             str(node_path.resolve()),
             "--kv-tokens",
-            str(args.decode_kv_tokens // decode_count)
+            str(args.decode_kv_tokens // decode_rank_count)
             if args.decode_kv_tokens is not None
             else "auto",
             "--cuda-graph",
             *common,
         ]
+        launch += phase_options
+        if args.cuda_graph_bs_decode is not None:
+            launch += ["--cuda-graph-bs-decode", *map(str, args.cuda_graph_bs_decode)]
+        if args.enable_torch_compile:
+            launch += [
+                "--enable-torch-compile",
+                "--torch-compile-max-bs",
+                str(args.torch_compile_max_bs),
+            ]
         if args.decode_chunked_prefill_size is not None:
             launch += [
                 "--decode-chunked-prefill-size",
@@ -286,6 +331,12 @@ def main():
         "--output-dir",
         str(args.output_dir / "sweep"),
     ]
+    if args.dry_run:
+        plan = {"launch": launch, "benchmark": bench, "settings": vars(args)}
+        encoded = json.dumps(plan, indent=2, default=str) + "\n"
+        (args.output_dir / "commands.json").write_text(encoded)
+        print(encoded, end="")
+        return
     repo = scripts.parents[1]
     source_paths = (
         list((repo / "python/sglang/srt/expertplex").rglob("*.py"))

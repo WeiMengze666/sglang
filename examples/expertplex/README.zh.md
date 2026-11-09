@@ -571,10 +571,34 @@ python examples/expertplex/profile_full_moe.py \
 非正预测、相对误差和超出训练 footprint 范围的样本，并拒绝混用不同运行时代码。
 
 当前关键路径模型是近似，未计入完整排队、KV 迁移和服务 CPU 开销。`--overlap auto`
-同时比较 sequential/TBO，按候选策略计算双 mailbox 内存及独立 microbatch padding。
+独立枚举 P/D 的 sequential/TBO 组合；可用 `--prefill-overlap tbo --decode-overlap sequential`
+固定 P=TBO、D=NONE。旧的 `--overlap tbo` 仍固定两阶段 TBO。客户端已经显式设置的
+同 phase 策略会保留，单个 phase 内不同客户端的异构策略仍缺少对应模型。每个候选
+都按实际策略计算双 mailbox 内存及独立 microbatch padding，并保留 profile 覆盖检查。
 TBO 假设 token 均衡切分，实际序列边界会影响预测，需要实测校准。
-`--write-config` 在有 profile 时导出搜索胜出的布局、overlap、q 和预期 decode footprint；
-预测 batch 仍在 JSON 中单独报告，容量上限不等同于服务调度器的实际 batch。
+
+二分搜索使用每个同类服务相同的整数 local batch，再乘服务数量计算 Eq.1；不会将
+全局 batch 向上取整后允许超过预测的 routed 工作量。`--write-config` 在有 profile 时
+导出布局、P/D 策略、q、预期 decode footprint，以及每个 client 的
+`max_running_requests`。这是原生调度器的请求上限，不改变 `max_prefill_tokens` /
+`max_decode_tokens`、mailbox/TMA 几何和容量估算；实际 batch 仍由运行时负载决定。
+`configure.py` 也支持 `--prefill-max-running` / `--decode-max-running`；不填写时保留
+已有默认行为。输入配置内显式的 phase 请求上限也会约束搜索。
+`launch.py` 使用导出的 client 上限；`--prefill-max-running-requests` 和
+`--decode-max-running-requests` 可分别覆盖它。手动独立启动原生 P/D 服务时，把对应值
+传给 `--max-running-requests`。请求上限在一个 attention-DP 服务内是全局量，Decode
+图的 bank 是每 rank 大小。compact P 仍受当前原生入口的 request cap ≤ D mailbox
+容量约束。
+
+压测入口 `run_serving_experiment.py` 透传上述两个请求上限、
+`--prefill-mem-fraction-static` / `--decode-mem-fraction-static`、
+`--cuda-graph-bs-decode` 与确定性选项。阶段显存比例覆盖公共
+`--mem-fraction-static`。`--dry-run` 保存 `commands.json` 并输出启动及压测命令，
+可在 CPU 机器上检查参数。显式 `--decode-kv-tokens` 按所有 D attention-DP rank
+分摊，因此独立 3D 和 grouped DP3 的逻辑 KV 总额一致；默认仍使用原生自动容量探测。
+使用 compact P mailbox 时，
+当前运行时要求 P 请求上限不超过 `max_decode_tokens`，以覆盖 TBO 的序列边界回退；
+优化器也遵守这一支持范围。完整容量 P mailbox 可独立搜索更大的 P 并发。
 当前可搜索显式提供实测 profile 的 attention TP 宽度与 EP 专家布局，尚未覆盖
 SBO、专家内部 TP 和论文的全部跨栈候选。
 profile 搜索结果要在 B300 上用同配置的端到端 sweep 重新验收。

@@ -6,16 +6,18 @@ Artificial latency data below tests algebra only; it is never shipped as a
 hardware profile or used to claim B300 performance.
 """
 
+import contextlib
 import copy
 import importlib.util
+import io
 import json
 import math
 import sys
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[4]
 PACKAGE = ROOT / "python/sglang/srt/expertplex"
@@ -86,6 +88,21 @@ def profiles_dict(model):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_scheduler_caps_are_optional_and_do_not_resize_mailboxes(self):
+        original = config.default_config("/model")
+        self.assertTrue(
+            all("max_running_requests" not in c for c in original.to_dict()["clients"])
+        )
+        capped = config.default_config(
+            "/model", prefill_max_running_requests=3, decode_max_running_requests=8
+        )
+        self.assertEqual([c.max_running_requests for c in capped.clients], [3, 8, 8, 8])
+        self.assertEqual(capped.buffer_layout(), original.buffer_layout())
+        self.assertEqual(config.NodeConfig.from_dict(capped.to_dict()), capped)
+        for invalid in (True, 0, -1, 1.5):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                config.default_config("/model", decode_max_running_requests=invalid)
+
     def test_attention_tp_placement_reserves_every_rank(self):
         node = config.default_config(
             "/model",
@@ -342,10 +359,10 @@ class OptimizerTests(unittest.TestCase):
         seen = []
 
         def memory(candidate, *args, **kwargs):
-            seen.append(candidate.overlap)
+            seen.append(candidate.mailboxes_per_client)
             estimate = original(candidate, *args, **kwargs)
             # A constrained device can admit sequential but reject doubled TBO buffers.
-            if candidate.overlap == "tbo":
+            if candidate.mailboxes_per_client == 2:
                 return type(estimate)(
                     **{**estimate.__dict__, "available_bytes_per_gpu": 0}
                 )
@@ -366,13 +383,228 @@ class OptimizerTests(unittest.TestCase):
             result = optimizer.search(
                 node, model, profiles, overlap="auto", **arguments
             )
-        self.assertEqual(set(seen), {"none", "tbo"})
+        self.assertEqual(set(seen), {1, 2})
         self.assertEqual(result.overlap, "sequential")
         selected = result.config(node)
         self.assertEqual(len(selected.expert_devices), result.layout.expert_count)
         self.assertEqual(selected.decode_sm_budget, result.decode_sm_budget)
         self.assertEqual(selected.expected_decode_tiles, result.expected_decode_tiles)
         selected.validate(model)
+
+    def test_auto_selects_mixed_phase_policy_and_exports_deployable_batches(self):
+        # Artificial algebra: P benefits from overlap, D suffers twice as many
+        # sparse mailbox tiles. The best policy is absent from the old search.
+        model = config.ModelSpec.from_dict(model_config() | {"num_hidden_layers": 1})
+        data = profiles_dict(model)
+        data["nvlink_bytes_per_second"] = 1e30
+        for phase in ("prefill", "decode"):
+            data[phase]["expert_probabilities"] = [1.0] * 8 + [0.0] * 120
+            data[phase]["attention"] = {
+                "alpha": 1e-6,
+                "beta": 0.2 if phase == "prefill" else 0,
+            }
+            data[phase]["moe_by_sm_count"] = {
+                str(s): {
+                    "alpha": 1e-6 if phase == "prefill" else 0.001,
+                    "beta": 0.05 if phase == "prefill" else 0.00001,
+                }
+                for s in (2, 4, 6)
+            }
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        node = config.default_config(
+            "/model", max_prefill_tokens=256, max_decode_tokens=4
+        )
+        layout = optimizer.Layout(1, 3, 4)
+        arguments = {
+            "input_length": 64,
+            "average_output_length": 5000,
+            "context_length": 128,
+            "prefill_slo_s": 1.81,
+            "decode_slo_s": 0.1,
+            "kv_tokens_per_attention_gpu": 1024,
+        }
+        with patch.object(optimizer, "enumerate_layouts", return_value=[layout]):
+            result = optimizer.search(
+                node, model, profiles, overlap="auto", **arguments
+            )
+            explicit_node = config.default_config(
+                "/model",
+                max_prefill_tokens=256,
+                max_decode_tokens=4,
+                prefill_overlap="tbo",
+                decode_overlap="none",
+            )
+            explicit = optimizer.search(explicit_node, model, profiles, **arguments)
+            limited_node = config.default_config(
+                "/model",
+                max_prefill_tokens=256,
+                max_decode_tokens=4,
+                prefill_max_running_requests=2,
+                decode_max_running_requests=3,
+            )
+            limited = optimizer.search(
+                limited_node, model, profiles, overlap="auto", **arguments
+            )
+        self.assertEqual((limited.prefill_batch, limited.decode_batch), (2, 9))
+        # Capacity preview must not pin the other phase to NONE before the
+        # profile-backed CLI search. Explicit D=TBO still leaves P on auto.
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "config.json").write_text(
+                json.dumps(model_config() | {"num_hidden_layers": 1})
+            )
+            (directory / "profiles.json").write_text(json.dumps(data))
+            with (
+                patch.object(optimizer, "enumerate_layouts", return_value=[layout]),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                optimizer.main(
+                    [
+                        "--model-path",
+                        str(directory),
+                        "--profiles",
+                        str(directory / "profiles.json"),
+                        "--max-prefill-tokens",
+                        "256",
+                        "--max-decode-tokens",
+                        "4",
+                        "--input-length",
+                        "64",
+                        "--average-output-length",
+                        "5000",
+                        "--context-length",
+                        "128",
+                        "--prefill-slo-s",
+                        "1.81",
+                        "--decode-slo-s",
+                        ".1",
+                        "--kv-tokens-per-attention-gpu",
+                        "1024",
+                        "--no-prefill-preprocess",
+                        "--decode-overlap",
+                        "tbo",
+                    ]
+                )
+            prediction = json.loads(output.getvalue())["prediction"]
+            self.assertEqual(
+                (prediction["prefill_overlap"], prediction["decode_overlap"]),
+                ("tbo", "tbo"),
+            )
+        self.assertEqual(
+            (result.prefill_overlap, result.decode_overlap), ("tbo", "sequential")
+        )
+        self.assertEqual(result.overlap, "mixed")
+        self.assertEqual(result, explicit)
+        self.assertEqual((result.prefill_batch, result.decode_batch), (4, 12))
+        self.assertEqual(result.expected_decode_tiles, 6)
+        selected = result.config(node)
+        self.assertEqual(
+            [selected.client_overlap(c) for c in selected.clients],
+            ["tbo", "none", "none", "none"],
+        )
+        self.assertEqual(
+            [c.max_running_requests for c in selected.clients], [4, 4, 4, 4]
+        )
+        self.assertEqual(
+            (selected.max_prefill_tokens, selected.max_decode_tokens), (256, 4)
+        )
+        self.assertEqual(selected.mailboxes_per_client, 2)
+        self.assertEqual(selected.buffer_layout()[0], [256, 256, 4, 4, 4, 4, 4, 4])
+        selected.validate(model)
+        # Replay the exported limits through the modeled paths, without using
+        # result latencies as inputs, to verify the deployment matches the probe.
+        for phase, sms, expected in (
+            (
+                "prefill",
+                profiles.total_sms - result.decode_sm_budget,
+                result.predicted_prefill_latency_s,
+            ),
+            ("decode", result.decode_sm_budget, result.predicted_decode_latency_s),
+        ):
+            clients = [c for c in selected.clients if c.phase == phase]
+            self.assertAlmostEqual(
+                optimizer._iteration_latency(
+                    model,
+                    profiles,
+                    layout,
+                    phase,
+                    sum(c.max_running_requests for c in clients),
+                    64,
+                    128,
+                    sms,
+                    "tbo"
+                    if selected.client_overlap(clients[0]) == "tbo"
+                    else "sequential",
+                ),
+                expected,
+            )
+
+    def test_compact_prefill_search_respects_runtime_request_cap(self):
+        model = config.ModelSpec.from_dict(model_config(coder=True))
+        profiles = optimizer.MeasuredProfiles.from_dict(profiles_dict(model), model)
+        common = {
+            "max_prefill_tokens": 1024,
+            "max_decode_tokens": 8,
+            "prefill_overlap": "tbo",
+            "decode_overlap": "none",
+        }
+        full = config.default_config("/model", **common)
+        compact = config.default_config("/model", prefill_mailbox_tokens=512, **common)
+        arguments = {
+            "input_length": 64,
+            "average_output_length": 16,
+            "context_length": 128,
+            "prefill_slo_s": 1,
+            "decode_slo_s": 0.05,
+            "kv_tokens_per_attention_gpu": 4096,
+        }
+        with patch.object(
+            optimizer, "enumerate_layouts", return_value=[optimizer.Layout(1, 3, 4)]
+        ):
+            full_result = optimizer.search(full, model, profiles, **arguments)
+            compact_result = optimizer.search(compact, model, profiles, **arguments)
+        self.assertEqual(full_result.prefill_batch, 16)
+        self.assertEqual(compact_result.prefill_batch, 8)
+        selected = compact_result.config(compact)
+        self.assertEqual(
+            selected.client(0).max_running_requests, selected.max_decode_tokens
+        )
+        self.assertEqual(selected.max_prefill_tokens, compact.max_prefill_tokens)
+        self.assertEqual(
+            selected.prefill_mailbox_tokens, compact.prefill_mailbox_tokens
+        )
+        self.assertEqual(selected.buffer_layout(), compact.buffer_layout())
+        # The noncompact transport has full-capacity P slots and accepts P>D.
+        self.assertGreater(
+            full_result.config(full).client(0).max_running_requests,
+            full.max_decode_tokens,
+        )
+
+    def test_phase_policy_keeps_profile_coverage_checks(self):
+        model = config.ModelSpec.from_dict(model_config())
+        data = profiles_dict(model)
+        data["decode"]["attention_domain"]["training_points"] = [
+            [1, 1],
+            [4, 1],
+            [1, 128],
+            [4, 128],
+        ]
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        node = config.default_config(
+            "/model", prefill_overlap="tbo", decode_overlap="none"
+        )
+        with self.assertRaisesRegex(optimizer.ProfileCoverageError, "Sequence"):
+            optimizer.search(
+                node,
+                model,
+                profiles,
+                input_length=64,
+                average_output_length=16,
+                context_length=256,
+                prefill_slo_s=1,
+                decode_slo_s=0.05,
+                kv_tokens_per_attention_gpu=1024,
+            )
 
     def test_tbo_partial_tiles_cannot_merge_across_mailboxes(self):
         model = config.ModelSpec.from_dict(model_config())

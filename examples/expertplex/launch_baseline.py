@@ -85,6 +85,8 @@ def commands(args):
         "--host",
         "127.0.0.1",
     ]
+    if getattr(args, "enable_deterministic_inference", False):
+        common += ["--enable-deterministic-inference"]
     if kv is not None:
         common += ["--max-total-tokens", str(kv)]
     if getattr(args, "mem_fraction_static", None) is not None:
@@ -190,7 +192,9 @@ def main():
         help="Enable fixed-trajectory score capture on isolated diagnostic servers only",
     )
     p.add_argument(
-        "--attention-backend", choices=("triton", "flashinfer", "fa4"), default="flashinfer"
+        "--attention-backend",
+        choices=("triton", "flashinfer", "fa4"),
+        default="flashinfer",
     )
     p.add_argument(
         "--sampling-backend", choices=("flashinfer", "pytorch"), default="flashinfer"
@@ -214,6 +218,7 @@ def main():
     p.add_argument("--graph-max-bs", type=int, default=32)
     p.add_argument("--chunk-size", type=int, default=2048)
     p.add_argument("--disable-tbo", action="store_true")
+    p.add_argument("--enable-deterministic-inference", action="store_true")
     p.add_argument(
         "--enable-dp-lm-head",
         action="store_true",

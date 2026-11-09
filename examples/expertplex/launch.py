@@ -134,6 +134,51 @@ def decode_graph_options(args, capacity=None):
     ]
 
 
+def add_attention_capacity_args(parser):
+    """Independent admission and KV budgets for native P and D services."""
+    for phase in ("prefill", "decode"):
+        parser.add_argument(
+            f"--{phase}-max-running-requests",
+            type=int,
+            help=f"Explicit {phase} request limit per service (aggregate across attention DP)",
+        )
+        parser.add_argument(
+            f"--{phase}-mem-fraction-static",
+            type=memory_fraction,
+            help=f"Native {phase} weight+KV budget, overriding --mem-fraction-static",
+        )
+
+
+def attention_capacity_options(args):
+    result = []
+    for phase in ("prefill", "decode"):
+        for suffix in ("max_running_requests", "mem_fraction_static"):
+            name = f"{phase}_{suffix}"
+            value = getattr(args, name, None)
+            if value is not None:
+                result += ["--" + name.replace("_", "-"), str(value)]
+    return result
+
+
+def attention_request_limit(node, client, args, capacity):
+    limit = getattr(args, f"{client.phase}_max_running_requests", None)
+    if limit is None:
+        limit = getattr(client, "max_running_requests", None)
+    if limit is None:
+        limit = min(node.max_decode_tokens, capacity)
+    if type(limit) is not int or not 0 < limit <= capacity:
+        raise ValueError(
+            f"{client.phase} max running requests must fit its mailbox capacity"
+        )
+    if limit % client.attention_dp_size:
+        raise ValueError("global request limit must divide by attention DP")
+    if node.prefill_mailbox_tokens is not None and limit > node.max_decode_tokens:
+        raise ValueError(
+            "compact P mailboxes require max running requests <= max_decode_tokens"
+        )
+    return limit
+
+
 def commands(node, args):
     prefill_graph = prefill_graph_options(args, node.max_prefill_tokens)
     if prefill_graph[1] != "disabled" and any(
@@ -170,19 +215,10 @@ def commands(node, args):
             or getattr(args, "disable_overlap_schedule", False)
             or getattr(args, "diagnostic_logit_processor", False)
         ):
-            raise ValueError("grouped attention DP requires CPU overlap, full D graphs and no compile")
-        running = min(node.max_decode_tokens, capacity)
-        if (
-            client.phase == "decode"
-            and getattr(args, "decode_max_running_requests", None) is not None
-        ):
-            running = args.decode_max_running_requests
-            if type(running) is not int or not 0 < running <= capacity:
-                raise ValueError(
-                    "Decode max running requests must fit its mailbox capacity"
-                )
-        if running % client.attention_dp_size:
-            raise ValueError("global request limit must divide by attention DP")
+            raise ValueError(
+                "grouped attention DP requires CPU overlap, full D graphs and no compile"
+            )
+        running = attention_request_limit(node, client, args, capacity)
         bootstrap = args.bootstrap_port + client.id
         decode_chunk = getattr(args, "decode_chunked_prefill_size", None)
         if client.phase == "decode" and decode_chunk is not None:
@@ -196,7 +232,9 @@ def commands(node, args):
         chunked_prefill_size = (
             decode_chunk
             if client.phase == "decode" and decode_chunk is not None
-            else capacity if client.phase == "decode" or args.chunked_prefill else -1
+            else capacity
+            if client.phase == "decode" or args.chunked_prefill
+            else -1
         )
         command = [
             sys.executable,
@@ -253,12 +291,20 @@ def commands(node, args):
             *execution_options(args, decode=client.phase == "decode"),
         ]
         if client.attention_dp_size > 1:
-            command += ["--attn-dp-size", str(client.attention_dp_size),
-                        "--dp-size", "1", "--enable-dp-lm-head"]
+            command += [
+                "--attn-dp-size",
+                str(client.attention_dp_size),
+                "--dp-size",
+                "1",
+                "--enable-dp-lm-head",
+            ]
         if args.kv_tokens is not None:
             command += ["--max-total-tokens", str(args.kv_tokens)]
-        if getattr(args, "mem_fraction_static", None) is not None:
-            command += ["--mem-fraction-static", str(args.mem_fraction_static)]
+        fraction = getattr(args, f"{client.phase}_mem_fraction_static", None)
+        if fraction is None:
+            fraction = getattr(args, "mem_fraction_static", None)
+        if fraction is not None:
+            command += ["--mem-fraction-static", str(memory_fraction(fraction))]
         if args.ib_device:
             command += ["--disaggregation-ib-device", args.ib_device]
         # Ordinary serving retains SGLang's CPU/GPU overlap. The diagnostic
@@ -340,11 +386,7 @@ def main():
     add_prefill_graph_args(parser)
     add_decode_compile_args(parser)
     parser.add_argument("--graph-max-bs", type=int)
-    parser.add_argument(
-        "--decode-max-running-requests",
-        type=int,
-        help="Optional native D request limit; P batching and KV profiling keep their defaults",
-    )
+    add_attention_capacity_args(parser)
     parser.add_argument(
         "--decode-chunked-prefill-size",
         type=int,

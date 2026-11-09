@@ -25,6 +25,16 @@ def main():
         help="Opt-in TBO mailbox capacity; requires equal-token splitting",
     )
     parser.add_argument("--max-decode-tokens", type=int, default=256)
+    parser.add_argument(
+        "--prefill-max-running",
+        type=int,
+        help="Native P scheduler cap; does not resize mailboxes",
+    )
+    parser.add_argument(
+        "--decode-max-running",
+        type=int,
+        help="Native D scheduler cap; does not resize mailboxes",
+    )
     parser.add_argument("--decode-sm-budget", type=int, default=32)
     parser.add_argument("--expected-decode-tiles", type=int, default=128)
     parser.add_argument("--max-decode-sm-fraction", type=float, default=0.75)
@@ -71,6 +81,8 @@ def main():
         overlap=args.overlap,
         prefill_overlap=args.prefill_overlap,
         decode_overlap=args.decode_overlap,
+        prefill_max_running_requests=args.prefill_max_running,
+        decode_max_running_requests=args.decode_max_running,
         kernel=args.kernel,
         prefill_preprocess=args.prefill_preprocess,
     )

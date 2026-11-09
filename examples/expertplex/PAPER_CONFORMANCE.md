@@ -61,8 +61,11 @@ TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
 5. **离线选择（Eq.1–3、Algorithm 1）**：`optimizer.py::search` 枚举单节点布局，调用
    `estimate_memory` 过滤容量，再为已有 profile 的互补 SM 预算二分可行 P/D batch。
    `expected_rank_footprint` 保留各 client/mailbox 的独立 tile padding，
-   `_iteration_latency` 计算 sequential 或 TBO critical path。它当前要求 attention TP=1、
-   E-only EP，并没有原文的完整 parallelism、跨节点 placement、SBO 搜索空间。
+   `_iteration_latency` 为 P/D 独立计算 sequential 或 TBO critical path；auto 枚举四种
+   phase 组合，导出的原生服务配置保留策略和均衡 local batch 请求上限，不改变 mailbox
+   容量。attention TP 宽度需有包含 collective 的独立实测 profile；缺少 DP/gather、
+   SBO 的 profile 时仍拒绝搜索。当前没有专家内 TP、跨节点 placement 的完整搜索空间。
+   CPU 算法/配置回归不等于模型预测误差或端到端 goodput 验收。
 
 原论文的 SM90 FP8 tile 参数不能直接作为 SM103 BF16 的实现参数。当前 B300 后端使用
 所固定 DeepGEMM BF16 原生几何的双 CTA/2SM MMA、每 CTA M128/N128/K64、9 个 TMA stage。

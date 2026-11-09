@@ -12,8 +12,9 @@ import argparse
 import json
 import math
 from dataclasses import asdict, dataclass, replace
-from functools import lru_cache
 from fractions import Fraction
+from functools import lru_cache
+from itertools import product
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -288,10 +289,12 @@ def estimate_memory(
     )
     return MemoryEstimate(
         attention_weights_bytes=max(
-            model.attention_rank_weight_bytes(c.attention_tp_size) for c in config.clients
+            model.attention_rank_weight_bytes(c.attention_tp_size)
+            for c in config.clients
         ),
         attention_kv_bytes=max(
-            model.attention_rank_kv_bytes_per_token(c.attention_tp_size) for c in config.clients
+            model.attention_rank_kv_bytes_per_token(c.attention_tp_size)
+            for c in config.clients
         )
         * kv_tokens_per_attention_gpu,
         attention_buffers_bytes=attention_buffers,
@@ -836,6 +839,8 @@ class SearchResult:
     decode_sm_bracket: tuple[int, int] | None = None
     searched_attention_tp_sizes: tuple[int, ...] = (1,)
     attention_profile_provenance: tuple[str, str] | None = None
+    prefill_overlap: str | None = None
+    decode_overlap: str | None = None
 
     def config(self, source: NodeConfig) -> NodeConfig:
         """Export the selected placement and contention policy, not the input."""
@@ -844,14 +849,64 @@ class SearchResult:
             for key, value in source.to_dict().items()
             if key not in ("model_path", "clients", "expert_devices")
         }
+        prefill_overlap = self.prefill_overlap or self.overlap
+        decode_overlap = self.decode_overlap or self.overlap
         overrides.update(
-            overlap="tbo" if self.overlap == "tbo" else "none",
             decode_sm_budget=self.decode_sm_budget,
             expected_decode_tiles=self.expected_decode_tiles,
+            **_overlap_config(prefill_overlap, decode_overlap),
         )
-        if self.overlap != "tbo":
+        if prefill_overlap != "tbo":
             overrides["prefill_mailbox_tokens"] = None
-        return self.layout.config(source.model_path, **overrides)
+        node = self.layout.config(source.model_path, **overrides)
+        batches = {"prefill": self.prefill_batch, "decode": self.decode_batch}
+        counts = {
+            "prefill": self.layout.prefill_count,
+            "decode": self.layout.decode_count,
+        }
+        if any(batches[p] % counts[p] for p in batches):
+            raise ValueError("Selected batch must divide across its attention services")
+        return replace(
+            node,
+            clients=tuple(
+                replace(c, max_running_requests=batches[c.phase] // counts[c.phase])
+                for c in node.clients
+            ),
+        )
+
+
+def _overlap_config(prefill: str, decode: str) -> dict[str, Any]:
+    """Runtime policies, preserving the legacy uniform-node JSON when possible."""
+    if prefill not in ("sequential", "tbo") or decode not in ("sequential", "tbo"):
+        raise ValueError("Supported phase policies are sequential and tbo")
+    if prefill == decode:
+        return {"overlap": "tbo" if prefill == "tbo" else "none"}
+    return {
+        "overlap": "none",
+        "prefill_overlap": "tbo" if prefill == "tbo" else "none",
+        "decode_overlap": "tbo" if decode == "tbo" else "none",
+    }
+
+
+def _phase_overlap_choices(config, phase, requested, fallback):
+    if requested is None:
+        clients = [c for c in config.clients if c.phase == phase]
+        if any(c.overlap is not None for c in clients):
+            policies = {config.client_overlap(c) for c in clients}
+            if len(policies) != 1:
+                raise ProfileCoverageError(
+                    "Different overlap policies within one phase require per-client profiles"
+                )
+            requested = policies.pop()
+            if requested == "none":
+                requested = "sequential"
+        else:
+            requested = fallback
+    if requested == "auto":
+        return ("sequential", "tbo")
+    if requested not in ("sequential", "tbo"):
+        raise ValueError("phase overlap must be sequential, tbo or auto")
+    return (requested,)
 
 
 def expected_rank_footprints(profiles, layout, phase, batch, input_length, overlap):
@@ -1085,22 +1140,20 @@ def search(
     kv_tokens_per_attention_gpu: int,
     reserve_gib: float = 16.0,
     overlap: str = "sequential",
+    prefill_overlap: str | None = None,
+    decode_overlap: str | None = None,
     attention_tp_sizes: Sequence[int] = (1,),
 ) -> SearchResult | None:
     """Algorithm 1, using only explicitly profiled contention SM budgets.
 
     Routing probabilities are an expectation, not a worst-case distribution.
-    TBO is an analytical option for a measured TBO setup; selecting it here
-    does not enable communication overlap in the runtime.
+    Each phase independently selects its critical path and mailbox footprint.
+    The returned config enables the selected policies in the native services;
+    modeled overlap still requires independent end-to-end GPU calibration.
     """
     if any(client.attention_dp_size != 1 for client in config.clients):
         raise ProfileCoverageError(
             "Attention-DP clients require independently measured DP/gather latency profiles"
-        )
-    if any(client.overlap is not None for client in config.clients):
-        raise ProfileCoverageError(
-            "Client-specific overlap requires separately calibrated phase policies; "
-            "the current search supports a uniform node policy only"
         )
     if model.shared_intermediate_size:
         raise ProfileCoverageError(
@@ -1115,7 +1168,13 @@ def search(
         )
     if profiles.components_by_world and config.cta_count not in (0, profiles.total_sms):
         raise ValueError("Component search requires matching total SMs")
-    if overlap == "auto":
+    if overlap not in ("sequential", "tbo", "auto"):
+        raise ValueError("overlap must be sequential, tbo or auto")
+    prefill_choices = _phase_overlap_choices(
+        config, "prefill", prefill_overlap, overlap
+    )
+    decode_choices = _phase_overlap_choices(config, "decode", decode_overlap, overlap)
+    if len(prefill_choices) * len(decode_choices) > 1:
         candidates = [
             search(
                 config,
@@ -1128,25 +1187,39 @@ def search(
                 decode_slo_s=decode_slo_s,
                 kv_tokens_per_attention_gpu=kv_tokens_per_attention_gpu,
                 reserve_gib=reserve_gib,
-                overlap=choice,
+                overlap="sequential",
+                prefill_overlap=p,
+                decode_overlap=d,
                 attention_tp_sizes=attention_tp_sizes,
             )
-            for choice in ("sequential", "tbo")
+            for p, d in product(prefill_choices, decode_choices)
         ]
         return max(
             (c for c in candidates if c is not None),
             key=lambda c: c.predicted_goodput_requests_per_second,
             default=None,
         )
-    if overlap not in ("sequential", "tbo"):
-        raise ValueError("overlap must be sequential, tbo or auto")
-    # FitsMemory must account for the strategy being evaluated: TBO reserves
-    # two complete mailboxes even when the input config uses sequential mode.
+    policies = {"prefill": prefill_choices[0], "decode": decode_choices[0]}
+    running_limits = {}
+    for phase in policies:
+        limits = {c.max_running_requests for c in config.clients if c.phase == phase}
+        if len(limits) != 1:
+            raise ValueError(
+                "Balanced search requires a uniform request cap within each phase"
+            )
+        running_limits[phase] = limits.pop()
+    overlap_fields = _overlap_config(policies["prefill"], policies["decode"])
+    # FitsMemory uses the selected policies: either TBO phase reserves two
+    # mailboxes per client, including the idle second slot of the other phase.
     config = replace(
         config,
-        overlap="tbo" if overlap == "tbo" else "none",
+        overlap=overlap_fields["overlap"],
+        clients=tuple(
+            replace(c, overlap=overlap_fields.get(c.phase + "_overlap"))
+            for c in config.clients
+        ),
         prefill_mailbox_tokens=config.prefill_mailbox_tokens
-        if overlap == "tbo"
+        if policies["prefill"] == "tbo"
         else None,
     )
     for name, value in (
@@ -1187,6 +1260,8 @@ def search(
                 for key, value in config.to_dict().items()
                 if key not in ("model_path", "clients", "expert_devices")
             },
+            prefill_overlap=overlap_fields.get("prefill_overlap"),
+            decode_overlap=overlap_fields.get("decode_overlap"),
         )
         if not estimate_memory(
             candidate_config,
@@ -1265,22 +1340,33 @@ def search(
                     q,
                 ),
             ):
-                low = max_feasible_batch(
-                    count * maximum,
+                # Native compact-P validation bounds sequence-boundary TBO
+                # fallback by the configured D capacity. Search the same
+                # supported request range before exporting scheduler caps.
+                if phase == "prefill" and config.prefill_mailbox_tokens is not None:
+                    maximum = min(maximum, config.max_decode_tokens)
+                # Search deployable balanced per-service batches. Rounding a
+                # global result up afterwards could admit more routed work than
+                # the SLO-tested footprint. Scheduler caps do not resize buffers.
+                local_batch = max_feasible_batch(
+                    min(maximum, running_limits[phase] or maximum),
                     slo,
-                    lambda batch: _iteration_latency(
-                        model,
-                        profiles,
-                        layout,
-                        phase,
-                        batch,
-                        input_length,
-                        context_length,
-                        sms,
-                        overlap,
-                        config.prefill_preprocess,
+                    lambda batch, count=count, layout=layout, phase=phase, sms=sms: (
+                        _iteration_latency(
+                            model,
+                            profiles,
+                            layout,
+                            phase,
+                            count * batch,
+                            input_length,
+                            context_length,
+                            sms,
+                            policies[phase],
+                            config.prefill_preprocess,
+                        )
                     ),
                 )
+                low = count * local_batch
                 batches[phase] = low
                 if low:
                     latencies[phase] = _iteration_latency(
@@ -1292,7 +1378,7 @@ def search(
                         input_length,
                         context_length,
                         sms,
-                        overlap,
+                        policies[phase],
                         config.prefill_preprocess,
                     )
             if not all(batches.values()):
@@ -1310,7 +1396,9 @@ def search(
                 latencies["decode"],
                 goodput,
                 profiles.provenance,
-                overlap,
+                policies["prefill"]
+                if policies["prefill"] == policies["decode"]
+                else "mixed",
                 max(
                     1,
                     math.ceil(
@@ -1320,7 +1408,7 @@ def search(
                             "decode",
                             batches["decode"],
                             input_length,
-                            overlap,
+                            policies["decode"],
                         )
                     ),
                 ),
@@ -1334,6 +1422,8 @@ def search(
                 if profiles.components_by_world
                 else (q, q),
                 searched_attention_tp_sizes=attention_tp_sizes,
+                prefill_overlap=policies["prefill"],
+                decode_overlap=policies["decode"],
                 attention_profile_provenance=(
                     profiles.attention_profile(
                         "prefill", layout.prefill_tp_size
@@ -1369,6 +1459,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--overlap", choices=("sequential", "tbo", "auto"), default="auto"
     )
+    for phase in ("prefill", "decode"):
+        parser.add_argument(
+            f"--{phase}-overlap",
+            choices=("sequential", "tbo", "auto"),
+            help="Override --overlap for this phase; auto searches it independently",
+        )
     parser.add_argument(
         "--attention-tp-sizes",
         type=int,
@@ -1389,7 +1485,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         max_prefill_tokens=args.max_prefill_tokens,
         max_decode_tokens=args.max_decode_tokens,
         gpu_memory_gib=args.gpu_memory_gib,
-        overlap="tbo" if args.overlap == "tbo" else "none",
+        **_overlap_config(
+            args.prefill_overlap
+            if args.prefill_overlap not in (None, "auto")
+            else "tbo"
+            if args.overlap == "tbo"
+            else "sequential",
+            args.decode_overlap
+            if args.decode_overlap not in (None, "auto")
+            else "tbo"
+            if args.overlap == "tbo"
+            else "sequential",
+        ),
         prefill_preprocess=args.prefill_preprocess,
     )
     memory = estimate_memory(
@@ -1417,6 +1524,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             kv_tokens_per_attention_gpu=args.kv_tokens_per_attention_gpu,
             reserve_gib=args.reserve_gib,
             overlap=args.overlap,
+            prefill_overlap=args.prefill_overlap or args.overlap,
+            decode_overlap=args.decode_overlap or args.overlap,
             attention_tp_sizes=args.attention_tp_sizes,
         )
         output["prediction"] = asdict(result) if result is not None else None
