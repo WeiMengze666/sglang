@@ -38,6 +38,30 @@ GEMM 直接复用原生 DeepGEMM 的 STSM/TMA epilogue。
 评估或性能验收。相对最强原生基线的 1.5× P90 goodput 仍未达到。
 推测解码、LoRA、EPLB、CPU offload、量化、多节点、动态 P/D 切换均未支持。
 
+### 2026-11-10 主模型配对质量检查
+
+新机器上的两套服务使用 `ac1ded0256`、Torch 2.14.1+cu130 和相同 BF16 权重。
+ExpertPlex 使用 1P+3D+4E、P=TBO/D=NONE；原生对照使用 TP8/EP8/attention-DP8、
+DeepEP/DeepGEMM 和单节点 NVLink。两边均使用 FA4 和 FlashInfer sampling。
+温度为 0、top-p 为 1、seed 为 42、最大生成长度为 8192，并发为 12。
+相同提示词的 542 个请求全部完成，错误和长度截断均为 0。
+
+| 数据集 | ExpertPlex 通过题数 | 原生 SGLang 通过题数 |
+| --- | ---: | ---: |
+| HumanEval | 158 / 164 | 157 / 164 |
+| HumanEval+ | 150 / 164 | 148 / 164 |
+| MBPP | 349 / 378 | 349 / 378 |
+| MBPP+ | 296 / 378 | 297 / 378 |
+
+使用 HumanEvalPlus v0.1.10 和 MbppPlus v0.2.0，并在同一受限 Docker 镜像中
+执行生成代码。固定评分器通过全部官方 canonical solutions 检查，资源限制与
+默认测试时限在两组模型答案评分前确定。HumanEval+ 有两题仅 ExpertPlex 通过；
+MBPP+ 有一题仅 ExpertPlex 通过、两题仅原生通过。
+
+这是一次固定条件配对观察。MBPP+ 少一题的差异仍需定位与复测，模型质量不降低
+尚未验收。逐位数值对齐用于定位浮点误差及运算顺序差异；验收要求推理算法正确、
+模型质量保持，以及独立测得的性能目标。
+
 ## 权重与显存
 
 [官方模型配置](https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct/blob/main/config.json)
@@ -1017,14 +1041,14 @@ python examples/expertplex/launch_baseline.py \
 CPU 命令传递测试覆盖默认配置、标准通信和 FlashInfer A2A。各后端的主模型质量、
 兼容 overlap 策略及 goodput 仍须实测，并在相同调优预算下选择最强原生基线。
 
-严格增量验收在 `check_incremental.py` 上同时指定 `--reference REF.json`、
+逐位增量诊断在 `check_incremental.py` 上同时指定 `--reference REF.json`、
 `--top-k 0` 和 `--require-exact-logprobs`。任一位置的任一词表项不同，或参考记录
 缺少完整词表，都会保存失败报告并返回非零状态；默认诊断模式仅记录差异。
 
-### 有界 operation 记录
+### 有界 MoE 请求记录
 
 `PersistentExecutor(operation_trace_capacity=N)` 可为每个 mailbox 保存前 N 次
-operation 的 epoch、layer、phase、开始与结束时间，以及三个计算阶段的 tile 数。
+MoE 请求的 epoch、layer、phase、开始与结束时间，以及三个计算阶段的 tile 数。
 默认容量为 0，启用时每条记录占 64 bytes，另需每个 mailbox 8 bytes 的接收计数。
 调用 `stop()` 后，`read_operation_trace()` 返回 CPU 张量与 E 卡时钟标识。
 时间戳使用该 E 卡的 `globaltimer`，跨设备关联需要单独建立时钟对应关系。
