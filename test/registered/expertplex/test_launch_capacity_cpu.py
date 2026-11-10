@@ -71,6 +71,105 @@ def options(command):
 
 
 class LaunchCapacityTests(CustomTestCase):
+    def test_baseline_backend_selection_reaches_native_command(self):
+        """Benchmark overrides reach the native launcher without DeepEP-only flags."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            command = [
+                sys.executable,
+                str(SCRIPTS / "run_serving_experiment.py"),
+                "--variant",
+                "colocated",
+                "--model-path",
+                "/checkpoint",
+                "--tokenizer-path",
+                "/checkpoint",
+                "--weight-mode",
+                "checkpoint",
+                "--dataset-path",
+                "/corpus.jsonl",
+                "--rates",
+                "2",
+                "--ttft-slo-ms",
+                "1000",
+                "--tpot-slo-ms",
+                "50",
+                "--dry-run",
+            ]
+            for index, (a2a, runner) in enumerate(
+                [
+                    (None, None),
+                    ("none", "flashinfer_trtllm"),
+                    ("flashinfer", "flashinfer_trtllm_routed"),
+                ]
+            ):
+                with self.subTest(a2a=a2a, runner=runner):
+                    extra = []
+                    if a2a is not None:
+                        extra = [
+                            "--moe-a2a-backend",
+                            a2a,
+                            "--moe-runner-backend",
+                            runner,
+                            "--disable-tbo",
+                        ]
+                    result = subprocess.run(
+                        [*command, *extra, "--output-dir", str(root / str(index))],
+                        check=True,
+                        text=True,
+                        capture_output=True,
+                    )
+                    plan = json.loads(result.stdout)
+                    inner = subprocess.run(
+                        [*plan["launch"], "--dry-run"],
+                        check=True,
+                        text=True,
+                        capture_output=True,
+                    )
+                    native = shlex.split(inner.stdout.strip())[1:]
+                    flags = options(native)
+                    self.assertEqual(flags["--moe-a2a-backend"], [a2a or "deepep"])
+                    self.assertEqual(
+                        flags["--moe-runner-backend"], [runner or "deep_gemm"]
+                    )
+                    if a2a is None:
+                        self.assertEqual(flags["--deepep-mode"], ["auto"])
+                        self.assertEqual(
+                            flags["--deepep-dispatcher-output-dtype"], ["bf16"]
+                        )
+                        self.assertIn("--enable-two-batch-overlap", flags)
+                    else:
+                        self.assertNotIn("--deepep-mode", flags)
+                        self.assertNotIn("--deepep-dispatcher-output-dtype", flags)
+                        self.assertNotIn("--enable-two-batch-overlap", flags)
+            mismatch = subprocess.run(
+                [
+                    *plan["launch"],
+                    "--deepep-config",
+                    "/frozen-deepep.json",
+                    "--dry-run",
+                ],
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(mismatch.returncode, 0)
+            self.assertIn("requires --moe-a2a-backend deepep", mismatch.stderr)
+            rejected = list(command)
+            rejected[rejected.index("--variant") + 1] = "expertplex"
+            result = subprocess.run(
+                [
+                    *rejected,
+                    "--moe-a2a-backend",
+                    "none",
+                    "--output-dir",
+                    str(root / "rejected"),
+                ],
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("native baseline variants", result.stderr)
+
     def test_explicit_phase_limits_override_exported_limits(self):
         n = node(True)
         a = SimpleNamespace(

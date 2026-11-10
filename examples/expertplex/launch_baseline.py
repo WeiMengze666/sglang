@@ -24,6 +24,17 @@ from launch import (
 )
 
 
+def add_moe_backend_args(parser):
+    parser.add_argument(
+        "--moe-a2a-backend",
+        help="Native baseline communication backend; defaults to deepep",
+    )
+    parser.add_argument(
+        "--moe-runner-backend",
+        help="Native baseline MoE runner; defaults to deep_gemm",
+    )
+
+
 def commands(args):
     if (
         getattr(args, "prefill_graph_backend", "disabled") != "disabled"
@@ -32,6 +43,10 @@ def commands(args):
     ):
         raise ValueError("Prefill graph requires --disable-tbo in the native baseline")
     pdd = args.variant == "pdd"
+    a2a_backend = getattr(args, "moe_a2a_backend", None) or "deepep"
+    runner_backend = getattr(args, "moe_runner_backend", None) or "deep_gemm"
+    if getattr(args, "deepep_config", None) and a2a_backend != "deepep":
+        raise ValueError("--deepep-config requires --moe-a2a-backend deepep")
     tp = 4 if pdd else 8
     attention_dp = 1 if args.variant == "pdmux" else tp
     kv = (
@@ -58,13 +73,9 @@ def commands(args):
         "--dp-size",
         "1",
         "--moe-a2a-backend",
-        "deepep",
-        "--deepep-mode",
-        "auto",
+        a2a_backend,
         "--moe-runner-backend",
-        "deep_gemm",
-        "--deepep-dispatcher-output-dtype",
-        "bf16",
+        runner_backend,
         "--attention-backend",
         args.attention_backend,
         "--sampling-backend",
@@ -85,6 +96,8 @@ def commands(args):
         "--host",
         "127.0.0.1",
     ]
+    if a2a_backend == "deepep":
+        common += ["--deepep-mode", "auto", "--deepep-dispatcher-output-dtype", "bf16"]
     if getattr(args, "enable_deterministic_inference", False):
         common += ["--enable-deterministic-inference"]
     if kv is not None:
@@ -177,6 +190,7 @@ def commands(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     add_prefill_graph_args(p)
+    add_moe_backend_args(p)
     p.add_argument(
         "--variant", choices=("colocated", "chunked", "pdd", "pdmux"), required=True
     )

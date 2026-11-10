@@ -28,6 +28,7 @@ from launch import (
 from launch import (
     config as node_config,
 )
+from launch_baseline import add_moe_backend_args
 from process_lifecycle import service_shutdown_budget
 
 
@@ -36,6 +37,7 @@ def main():
     add_prefill_graph_args(p)
     add_attention_capacity_args(p)
     add_decode_compile_args(p)
+    add_moe_backend_args(p)
     p.add_argument("--graph-max-bs", type=int)
     p.add_argument(
         "--dry-run",
@@ -128,6 +130,10 @@ def main():
     )
     p.add_argument("--output-dir", required=True, type=Path)
     args = p.parse_args()
+    if args.variant == "expertplex" and (
+        args.moe_a2a_backend is not None or args.moe_runner_backend is not None
+    ):
+        p.error("MoE backend overrides apply to native baseline variants")
     try:
         prefill_graph_options(args, args.sequence_cap)
     except ValueError as exc:
@@ -291,6 +297,10 @@ def main():
             launch += ["--pdmux-config", args.pdmux_config]
         if args.deepep_config:
             launch += ["--deepep-config", args.deepep_config]
+        if args.moe_a2a_backend is not None:
+            launch += ["--moe-a2a-backend", args.moe_a2a_backend]
+        if args.moe_runner_backend is not None:
+            launch += ["--moe-runner-backend", args.moe_runner_backend]
         if args.variant == "chunked":
             launch += ["--chunk-size", str(args.chunk_size)]
         if args.disable_tbo:

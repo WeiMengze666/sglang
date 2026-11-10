@@ -1000,6 +1000,23 @@ goodput。评估候选优化时应同时复测 `--operation moe` 和完整服务
 测量后冻结。严格逐位诊断还需要一致的专家布局与 LM head GEMM 形状；仅在诊断时
 对齐布局的结果，不能替代对未经该修改的性能基线进行比较。
 
+两个基线实验入口也接受 `--moe-a2a-backend` 和 `--moe-runner-backend`，
+默认仍为 `deepep` 与 `deep_gemm`。显式选择的后端会传递到原生 SGLang 服务，
+由原生实现检查模型、精度与 overlap 兼容性。DeepEP 专用参数只传给 DeepEP 路径，
+`--deepep-config` 也要求该路径。ExpertPlex 实验会拒绝这些基线专用覆盖参数。
+例如可先检查 FlashInfer BF16 候选的启动命令。
+
+```bash
+python examples/expertplex/launch_baseline.py \
+  --variant colocated --model-path "$MODEL" \
+  --moe-a2a-backend flashinfer --moe-runner-backend flashinfer_trtllm_routed \
+  --disable-tbo --attention-backend fa4 --sequence-cap 24576 \
+  --log-dir /tmp/native-flashinfer-plan --dry-run
+```
+
+CPU 命令传递测试覆盖默认配置、标准通信和 FlashInfer A2A。各后端的主模型质量、
+兼容 overlap 策略及 goodput 仍须实测，并在相同调优预算下选择最强原生基线。
+
 严格增量验收在 `check_incremental.py` 上同时指定 `--reference REF.json`、
 `--top-k 0` 和 `--require-exact-logprobs`。任一位置的任一词表项不同，或参考记录
 缺少完整词表，都会保存失败报告并返回非零状态；默认诊断模式仅记录差异。
