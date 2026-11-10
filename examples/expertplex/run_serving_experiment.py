@@ -216,13 +216,13 @@ def main():
     shutdown_timeout = 90
     if args.variant == "expertplex":
         node = json.loads(Path(args.config).read_text())
+        deployment = node_config.NodeConfig.from_dict(node)
         shutdown_timeout = service_shutdown_budget(len(node["clients"]) + 2)
         if (
-            node["model_path"] != args.model_path
-            or node["weight_mode"] != args.weight_mode
+            deployment.model_path != args.model_path
+            or deployment.weight_mode != args.weight_mode
         ):
             p.error("Node config must match model path and weight mode")
-        deployment = node_config.NodeConfig.from_dict(node)
         decode_rank_count = sum(
             client.attention_dp_size
             for client in deployment.clients
@@ -233,11 +233,11 @@ def main():
             and args.decode_kv_tokens % decode_rank_count
         ):
             p.error("Aggregate KV capacity must divide across D attention-DP ranks")
-        if node["max_prefill_tokens"] < args.sequence_cap:
+        if deployment.max_prefill_tokens < args.sequence_cap:
             p.error("P mailbox must cover the common input+output length cap")
         if (
             args.canonical_synthetic_seed is not None
-            and node.get("synthetic_seed", 1234) != args.canonical_synthetic_seed
+            and deployment.synthetic_seed != args.canonical_synthetic_seed
         ):
             p.error("Node synthetic seed differs from the canonical seed")
         node["rendezvous_dir"] = str((args.output_dir / "rendezvous").resolve())

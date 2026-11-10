@@ -11,6 +11,11 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.test_utils import CustomTestCase
+
+register_cpu_ci(est_time=5, suite="base-a-test-cpu")
+
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / "examples/expertplex"
 sys.path.insert(0, str(SCRIPTS))
@@ -65,7 +70,7 @@ def options(command):
     return result
 
 
-class LaunchCapacityTests(unittest.TestCase):
+class LaunchCapacityTests(CustomTestCase):
     def test_explicit_phase_limits_override_exported_limits(self):
         n = node(True)
         a = SimpleNamespace(
@@ -110,11 +115,15 @@ class LaunchCapacityTests(unittest.TestCase):
                 )
 
     def test_KV_cap_counts_attention_DP_ranks(self):
+        """A config omitting weight_mode still uses the checkpoint default."""
         for grouped in (False, True):
             with self.subTest(grouped=grouped), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 config = root / "node.json"
-                config.write_text(json.dumps(node(grouped).to_dict()))
+                values = node(grouped).to_dict()
+                if grouped:
+                    values.pop("weight_mode")
+                config.write_text(json.dumps(values))
                 command = [
                     sys.executable,
                     str(SCRIPTS / "run_serving_experiment.py"),
