@@ -141,7 +141,7 @@ def adaptive_sm_allocation(
         )
         * cluster_size
     )
-    decode_sms = min(q_max, max(cluster_size, scaled))
+    decode_sms = min(q_max, scaled)
     return SmAllocation(total_sms - decode_sms, decode_sms)
 
 
