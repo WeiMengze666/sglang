@@ -1611,24 +1611,28 @@ async def benchmark(
             )
         )
     outputs: List[RequestFuncOutput] = await asyncio.gather(*tasks)
+    # Stop request timing before profiler export and server metadata queries.
+    benchmark_duration = time.perf_counter() - benchmark_start_time
     if is_multi_turn:
         outputs = [x for output in outputs for x in output]
 
-    # Stop profiler (only if profile_steps was not provided, as it auto-stops)
-    if profile and not (
-        hasattr(args, "profile_steps") and args.profile_steps is not None
+    # Step-limited and stage-based profiles stop automatically on each worker.
+    if (
+        profile
+        and getattr(args, "profile_steps", None) is None
+        and getattr(args, "profile_num_steps", None) is None
+        and not getattr(args, "profile_by_stage", False)
     ):
         if pd_separated:
             if pd_profile_urls:
                 await _call_profile_pd(pd_profile_urls, "stop")
         else:
-            if getattr(args, "profile_num_steps", None) is None:
-                print("Stopping profiler...")
-                profile_output = await async_request_profile(
-                    api_url=base_url + "/stop_profile"
-                )
-                if profile_output.success:
-                    print("Profiler stopped")
+            print("Stopping profiler...")
+            profile_output = await async_request_profile(
+                api_url=base_url + "/stop_profile"
+            )
+            if profile_output.success:
+                print("Profiler stopped")
 
     if pbar is not None:
         pbar.close()
@@ -1656,7 +1660,6 @@ async def benchmark(
         accept_length = None
 
     # Compute metrics and print results
-    benchmark_duration = time.perf_counter() - benchmark_start_time
     metrics, output_lens = calculate_metrics(
         input_requests=None if is_multi_turn else benchmark_requests,
         outputs=outputs,

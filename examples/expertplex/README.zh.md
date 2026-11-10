@@ -1067,5 +1067,15 @@ python examples/expertplex/check_preprocessing.py \
 ```
 
 2026-11-10 的 B300 组件验证覆盖容量 0、4、128，每组 35 个完整 MoE 用例，
-开关记录前后的输出哈希一致，满容量截断计数检查通过。服务内轨迹覆盖和观测开销
-仍待验证，端到端性能结论需由独立的同配置服务实验给出。
+开关记录前后的输出哈希一致，满容量截断计数检查通过。随后主模型的 32 请求服务
+诊断保存了四路完整 E 记录，各 mailbox 均无截断或未完成记录。该轮 Decode profiler
+在请求仍在到达时自动导出轨迹，服务日志记录了约 12–13 秒的导出停顿。观测开销
+仍须用独立同配置实验量化，性能验收使用关闭 profiler 的服务结果。
+
+Attention 采样可复用 `sglang.benchmark.serving --profile --pd-separated`，
+分别通过 `--profile-prefill-url` 或 `--profile-decode-url` 指定相应服务列表。
+原生入口在数据准备和 warmup 完成后启动采样。省略 step 和 stage 限制时，全部
+请求完成后才停止采样并导出轨迹；请求总耗时在导出前结束计时。指定
+`--profile-steps`、`--profile-num-steps` 或 `--profile-by-stage` 时，由 worker
+自动停止。CPU 回归覆盖这些生命周期以及导出耗时的排除，运行期间的采样扰动
+仍会影响请求延迟。
