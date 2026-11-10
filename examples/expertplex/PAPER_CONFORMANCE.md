@@ -1,5 +1,23 @@
 # ExpertPlex 原论文对照与验收记录
 
+## 验收口径更新（2026-11-10）
+
+按用户更新后的要求，逐 token 全词表与逐位比较用于定位数值差异。最终验收要求
+模型推理算法实现正确、模型级任务质量不下降，并达到固定数据及
+TTFT 1s / TPOT 50ms / 90% joint SLO 下的 goodput 目标。浮点舍入和计算顺序带来的
+差异需要解释来源，历史逐位诊断结果按其原始条件保留。
+
+模型质量对照固定权重、数据、提示模板、生成参数及评分实现，记录逐题结果与差异。
+Coder 主模型的功能质量评测准备使用 HumanEval+ 和 MBPP+。完整模型质量和约
+1.5× goodput 验收尚未完成。
+
+新 B300 已完成此版本的 CUDA 编译，以及 grouped/per-peer packed IPC 的 FP32 和
+最终 BF16 检查。PyTorch 2.12/cu130、2.14.1/cu130 两个环境均运行实际 GPU 测试，
+各 5 项通过。6144×2560 专家形状的 SM100 scatter/GEMM/activation/gather、混合 P/D
+和 20 次 graph replay 共 35 项满足原有算子容差，最大绝对误差为 0.001953125。
+该算子对照在 CPU 按 expert 顺序加权相加，生产 EP gather 的 route 顺序与 FMA
+边界需继续结合模型级评测核对。此记录覆盖组件验证，主模型服务与质量评测继续进行。
+
 依据：用户工作空间原始 PDF，ExpertPlex, arXiv:2607.18002v2，2026-07-21，§1–9。
 原文：https://arxiv.org/html/2607.18002v2 。本地原始 PDF 已逐节核对。
 PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`。
