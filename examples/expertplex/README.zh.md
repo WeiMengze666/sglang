@@ -1020,3 +1020,28 @@ CPU 命令传递测试覆盖默认配置、标准通信和 FlashInfer A2A。各�
 严格增量验收在 `check_incremental.py` 上同时指定 `--reference REF.json`、
 `--top-k 0` 和 `--require-exact-logprobs`。任一位置的任一词表项不同，或参考记录
 缺少完整词表，都会保存失败报告并返回非零状态；默认诊断模式仅记录差异。
+
+### 有界 operation 记录
+
+`PersistentExecutor(operation_trace_capacity=N)` 可为每个 mailbox 保存前 N 次
+operation 的 epoch、layer、phase、开始与结束时间，以及三个计算阶段的 tile 数。
+默认容量为 0，启用时每条记录占 64 bytes，另需每个 mailbox 8 bytes 的接收计数。
+调用 `stop()` 后，`read_operation_trace()` 返回 CPU 张量与 E 卡时钟标识。
+时间戳使用该 E 卡的 `globaltimer`，跨设备关联需要单独建立时钟对应关系。
+
+记录按接收顺序追加，重复 epoch 仍各占一条。达到容量后保留已有前缀，并继续累加
+`admissions_per_slot`。读取时有效条数为 `min(admissions_per_slot, capacity_per_slot)`，
+计数超出容量表示轨迹被截断。性能分析应报告截断范围及观测开销。
+
+以下组件检查保存各 E rank 的 `.operations.pt` 文件和每个用例的输出哈希。
+
+```bash
+python examples/expertplex/check_preprocessing.py \
+  --hidden 6144 --intermediate 2560 --capacity 128 --experts 4 --top-k 8 \
+  --world 2 --graph-replays 20 --operation-trace-capacity 128 \
+  --output /tmp/expertplex-operations.json
+```
+
+2026-11-10 的 B300 组件验证覆盖容量 0、4、128，每组 35 个完整 MoE 用例，
+开关记录前后的输出哈希一致，满容量截断计数检查通过。服务内轨迹覆盖和观测开销
+仍待验证，端到端性能结论需由独立的同配置服务实验给出。

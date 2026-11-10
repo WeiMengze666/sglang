@@ -1136,7 +1136,7 @@ public:
                      int decode_budget, double expected_tiles,
                      double max_decode_fraction, int requested_ctas,
                      const std::string &backend, int trace_capacity,
-                     int benchmark_stage)
+                     int benchmark_stage, int operation_trace_capacity = 0)
       : owner(std::move(buffers)), w13(std::move(gateup)), w2(std::move(down)) {
     TORCH_CHECK(!owner->active && !owner->started,
                 "A buffer set admits one executor lifetime; allocate fresh "
@@ -1213,6 +1213,11 @@ public:
                     [](auto f) { return reinterpret_cast<const void *>(f); })
               : reinterpret_cast<const void *>(persistent_executor);
     const int threads = sm100 ? expertplex_sm100::Threads : 128;
+    TORCH_CHECK(operation_trace_capacity >= 0 &&
+                    operation_trace_capacity <= 65536,
+                "operation_trace_capacity must be in [0, 65536]");
+    TORCH_CHECK(sm100 || operation_trace_capacity == 0,
+                "Operation tracing requires SM100");
     TORCH_CHECK(trace_capacity >= 0 && trace_capacity <= 65536,
                 "trace_capacity must be in [0, 65536]");
     TORCH_CHECK(sm100 || trace_capacity == 0,
@@ -1222,14 +1227,29 @@ public:
           *owner, reinterpret_cast<const BF16 *>(w13.data_ptr<at::BFloat16>()),
           reinterpret_cast<const BF16 *>(w2.data_ptr<at::BFloat16>()),
           w13.size(0), ctas, trace_capacity, cluster, fused);
+    native_context.operation_trace_capacity = operation_trace_capacity;
+    if (operation_trace_capacity) {
+      size_t bytes = static_cast<size_t>(b.slots) * operation_trace_capacity *
+                     sizeof(expertplex_sm100::OperationTraceRecord);
+      native_context.operation_trace =
+          static_cast<expertplex_sm100::OperationTraceRecord *>(
+              owner->allocate(bytes));
+      C10_CUDA_CHECK(cudaMemset(native_context.operation_trace, 0, bytes));
+      size_t count_bytes = static_cast<size_t>(b.slots) * sizeof(U64);
+      native_context.operation_trace_counts =
+          static_cast<U64 *>(owner->allocate(count_bytes));
+      C10_CUDA_CHECK(
+          cudaMemset(native_context.operation_trace_counts, 0, count_bytes));
+    }
     native_context.benchmark_stage = benchmark_stage;
     const char *pipeline_stores =
         std::getenv("SGLANG_EXPERTPLEX_PIPELINED_STORES");
     // Keep the complete SM100 backend's native epilogue pipeline enabled.
-    // Explicit 0 is a diagnostic ablation; other backends retain their own path.
+    // Explicit 0 is a diagnostic ablation; other backends retain their own
+    // path.
     native_context.pipelined_stores = pipeline_stores
-        ? std::string(pipeline_stores) == "1"
-        : backend == "sm100";
+                                          ? std::string(pipeline_stores) == "1"
+                                          : backend == "sm100";
     TORCH_CHECK(
         !native_context.pipelined_stores || backend == "sm100",
         "Pipelined store retirement requires the complete SM100 backend");
@@ -1318,12 +1338,14 @@ public:
   py::dict describe() const {
     py::dict d;
     d["trace_capacity_per_cta"] = native_context.trace_capacity;
+    d["operation_trace_capacity_per_slot"] =
+        native_context.operation_trace_capacity;
     if (!running && native_context.trace_capacity) {
       c10::cuda::CUDAGuard guard(owner->device);
       std::vector<U64> counts(launch_ctas);
-      C10_CUDA_CHECK(cudaMemcpy(counts.data(), native_context.trace_sequence_counts,
-                                counts.size() * sizeof(U64),
-                                cudaMemcpyDeviceToHost));
+      C10_CUDA_CHECK(
+          cudaMemcpy(counts.data(), native_context.trace_sequence_counts,
+                     counts.size() * sizeof(U64), cudaMemcpyDeviceToHost));
       d["trace_sequence_counts"] = counts;
     }
     d["backend"] = backend_name;
@@ -1351,6 +1373,35 @@ public:
     d["decode_tile_rows"] =
         backend_name == "wmma" ? 16 : expertplex_sm100::DecodeM;
     return d;
+  }
+  py::dict read_operation_trace() {
+    TORCH_CHECK(!running, "Stop the executor before reading operation records");
+    c10::cuda::CUDAGuard guard(owner->device);
+    const auto options =
+        torch::TensorOptions().dtype(torch::kInt64).device(torch::kCPU);
+    auto records = torch::zeros(
+        {owner->b.slots, native_context.operation_trace_capacity, 8}, options);
+    auto control = torch::zeros({owner->b.slots, kControlWords}, options);
+    auto counts = torch::zeros({owner->b.slots}, options);
+    if (native_context.operation_trace_capacity)
+      C10_CUDA_CHECK(
+          cudaMemcpy(records.data_ptr(), native_context.operation_trace,
+                     records.numel() * sizeof(U64), cudaMemcpyDeviceToHost));
+    if (native_context.operation_trace_capacity)
+      C10_CUDA_CHECK(
+          cudaMemcpy(counts.data_ptr(), native_context.operation_trace_counts,
+                     counts.numel() * sizeof(U64), cudaMemcpyDeviceToHost));
+    C10_CUDA_CHECK(cudaMemcpy(control.data_ptr(), owner->b.control,
+                              control.numel() * sizeof(U64),
+                              cudaMemcpyDeviceToHost));
+    py::dict result;
+    result["records"] = records;
+    result["admissions_per_slot"] = counts;
+    result["control"] = control;
+    result["expert_device"] = owner->device;
+    result["capacity_per_slot"] = native_context.operation_trace_capacity;
+    result["clock"] = "expert_gpu_globaltimer_ns";
+    return result;
   }
   torch::Tensor read_trace() {
     TORCH_CHECK(!running, "Stop the executor before reading diagnostic traces");
@@ -1664,10 +1715,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       m, "PersistentExecutor")
       .def(py::init<std::shared_ptr<OwnedBuffers>, torch::Tensor, torch::Tensor,
                     int, double, double, int, const std::string &, int, int>())
+      .def(py::init<std::shared_ptr<OwnedBuffers>, torch::Tensor, torch::Tensor,
+                    int, double, double, int, const std::string &, int, int,
+                    int>())
       .def("stop", &PersistentExecutor::stop,
            py::call_guard<py::gil_scoped_release>())
       .def("describe", &PersistentExecutor::describe)
       .def("read_trace", &PersistentExecutor::read_trace)
+      .def("read_operation_trace", &PersistentExecutor::read_operation_trace)
       .def("read_decision_trace", &PersistentExecutor::read_decision_trace)
       .def("read_progress_trace", &PersistentExecutor::read_progress_trace)
       .def("read_warp_trace", &PersistentExecutor::read_warp_trace)

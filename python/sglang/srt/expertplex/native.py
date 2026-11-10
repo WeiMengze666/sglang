@@ -39,7 +39,9 @@ def _ensure_ninja_on_path() -> None:
         seen.add(directory)
         candidate = directory / "ninja"
         if candidate.is_file() and os.access(candidate, os.X_OK):
-            os.environ["PATH"] = str(directory) + os.pathsep + os.environ.get("PATH", "")
+            os.environ["PATH"] = (
+                str(directory) + os.pathsep + os.environ.get("PATH", "")
+            )
             return
     raise RuntimeError(
         "Ninja executable is required to build ExpertPlex; install ninja or "
@@ -255,6 +257,7 @@ class PersistentExecutor:
         kernel: str | None = None,
         trace_capacity: int = 0,
         benchmark_operation: str = "moe",
+        operation_trace_capacity: int = 0,
     ) -> None:
         self._buffers = buffers
         self._weights = (w13, w2)
@@ -272,6 +275,7 @@ class PersistentExecutor:
             self.kernel,
             trace_capacity,
             {"moe": 0, "gateup": 1, "down": 2, "activation": 3}[benchmark_operation],
+            operation_trace_capacity,
         )
 
     def stop(self) -> None:
@@ -279,6 +283,10 @@ class PersistentExecutor:
 
     def describe(self) -> dict[str, Any]:
         return dict(self._impl.describe())
+
+    def read_operation_trace(self):
+        """Read bounded E-clock records and admission counts after stop."""
+        return dict(self._impl.read_operation_trace())
 
     def read_trace(self):
         """Return [CTA, record, field] diagnostics after stop(); never live polling."""

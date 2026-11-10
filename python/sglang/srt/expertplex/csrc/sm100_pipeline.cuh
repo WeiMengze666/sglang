@@ -99,7 +99,11 @@ constexpr int QueueShards = 8;
 struct alignas(128) QueueHead {
   U64 word;
 };
+struct OperationTraceRecord;
 struct Context {
+  OperationTraceRecord *operation_trace = nullptr;
+  int operation_trace_capacity = 0;
+  U64 *operation_trace_counts = nullptr;
   bool pipelined_stores = false;
   int benchmark_stage =
       0; // Diagnostic single-operation execution; 0 = full MoE.
@@ -119,6 +123,8 @@ struct Context {
   int *tile_prefix;
   QueueHead *queues;
 };
+
+#include "operation_trace.cuh"
 
 inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
                        int layers, int ctas, int trace_capacity, int cluster,
@@ -278,6 +284,7 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
   system_store(c + START_NS, now_ns());
   s->layer = static_cast<int>(uncached_load_u64(c + LAYER));
   s->phase = static_cast<int>(uncached_load_u64(c + PHASE));
+  operation_begin(context, slot, epoch, s->layer, s->phase, c[START_NS]);
   if (s->layer < 0 || s->layer >= layers)
     set_error(c, BAD_LAYER);
   if (s->phase < 0 || s->phase > 1)
@@ -291,6 +298,7 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
     if (system_load(c + ERROR) || n == 0) {
       queue_store(&s->queue, queue_value(epoch, IDLE));
       c[FINISH_NS] = now_ns();
+      operation_finish(context, slot, epoch, c[FINISH_NS], nullptr);
       system_store(c + DONE, epoch);
       return;
     }
@@ -336,6 +344,7 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
   if (system_load(c + ERROR) || gate == 0) {
     queue_store(&s->queue, queue_value(epoch, IDLE));
     c[FINISH_NS] = now_ns();
+    operation_finish(context, slot, epoch, c[FINISH_NS], nullptr);
     system_store(c + DONE, epoch);
   } else {
     Stage first = context.benchmark_stage == DOWN ? DOWN
@@ -547,11 +556,16 @@ __device__ __forceinline__ void retire_task(const DeviceBuffers &b,
     } else {
       // Clear before DONE permits the next request to be published. Clearing
       // after DONE could erase a new epoch's bit; intermediate stages keep it.
-      cuda::atomic_ref<unsigned, cuda::thread_scope_device>(context.runnable[task.phase])
+      cuda::atomic_ref<unsigned, cuda::thread_scope_device>(
+          context.runnable[task.phase])
           .fetch_and(~(1u << task.slot), cuda::memory_order_release);
       queue_store(&state->queue, queue_value(task.epoch, IDLE));
       b.control[static_cast<size_t>(task.slot) * kControlWords + FINISH_NS] =
           now_ns();
+      operation_finish(
+          context, task.slot, task.epoch,
+          b.control[static_cast<size_t>(task.slot) * kControlWords + FINISH_NS],
+          state);
       __threadfence_system();
       system_store(b.control + static_cast<size_t>(task.slot) * kControlWords +
                        DONE,

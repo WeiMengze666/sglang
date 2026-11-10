@@ -90,6 +90,7 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
                 max_decode_sm_fraction=0.75,
                 ctas=settings.get("ctas", 0),
                 trace_capacity=settings.get("trace_capacity", 0),
+                operation_trace_capacity=settings.get("operation_trace_capacity", 0),
             )
         outbox.put(
             {
@@ -108,6 +109,10 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
     finally:
         if executor is not None:
             executor.stop()
+            if settings.get("operation_trace_path"):
+                torch.save(
+                    executor.read_operation_trace(), settings["operation_trace_path"]
+                )
             if os.environ.get("SGLANG_EXPERTPLEX_PROFILE") == "1":
                 if driver.cuProfilerStop() != 0:
                     raise RuntimeError("cuProfilerStop failed")

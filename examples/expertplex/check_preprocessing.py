@@ -7,6 +7,7 @@ This is operator validation, not full-model accuracy or serving performance.
 """
 
 import argparse
+import hashlib
 import json
 import math
 from collections import Counter
@@ -33,6 +34,7 @@ def main():
         action="store_true",
         help="Stress two concurrent raw prefill mailboxes against native arithmetic",
     )
+    parser.add_argument("--operation-trace-capacity", type=int, default=0)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not 1 <= args.world <= 4 or args.capacity < 128 or args.experts < 2:
@@ -71,6 +73,10 @@ def main():
             expert_rank=rank,
             expert_world=args.world,
             trace_capacity=8192,
+            operation_trace_capacity=args.operation_trace_capacity,
+            operation_trace_path=str(
+                args.output.with_suffix(f".rank{rank}.operations.pt")
+            ),
             trace_path=str(args.output.with_suffix(f".rank{rank}.trace.pt")),
             decode_budget=64,
             expected_tiles=8,
@@ -127,6 +133,9 @@ def main():
     def verify(actual, expected, label, phase):
         result = _numerics(torch, actual.cpu(), expected, tolerance)
         result["exact_fraction"] = float((actual.cpu() == expected).float().mean())
+        result["actual_sha256"] = hashlib.sha256(
+            actual.cpu().contiguous().view(torch.uint8).numpy().tobytes()
+        ).hexdigest()
         report["cases"].append(dict(label=label, phase=phase, **result))
         if not result["passed"]:
             raise AssertionError(report["cases"][-1])
