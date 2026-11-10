@@ -2,6 +2,25 @@
 
 本文档只记录可复核的门槛状态和 artifact 路径，不包含原始请求、score 或 trace 数据。实验根目录为 `/home/axis/mengze/expertplex`，主 checkout 为 `sglang` 的 `feat/expertplex-b300`。
 
+## 2026-11-10 新机器恢复
+
+新机器运行源码为 `ac1ded02567f8e50a337e2c23df36a44649b00d1`，使用真实
+Qwen3-Coder-480B-A35B-Instruct BF16 权重、PyTorch 2.14.1/cu130。
+默认独立 1P+3D+4E、P=TBO/D=NONE、FA4、FlashInfer sampling 和 Decode graph
+`[16]` 已完成 12 次并发请求的服务冒烟测试，自有进程清理后无残留。
+请求输出上限为 64 token，测试检查非空返回，模型质量与 goodput 验收仍待完成。
+证据位于 `evidence/20261110-recovery/main-service-smoke-v3/report.json`。
+
+逐 token 全词表比较按用户更新后的要求用于差异定位，允许浮点舍入和计算顺序
+引起的差异。验收要求算法正确、模型级质量不下降，以及固定数据和
+TTFT 1s / TPOT 50ms / 90% joint SLO 下约 1.5× goodput。
+完整 HumanEval+ / MBPP+ 双系统对照已提交，结果待评分。
+ShareGPT 原始数据及重新采样的 1000 请求文件已恢复，二者 SHA256 均与历史记录一致。
+
+## 2026-11-02 历史机器结果
+
+以下任务编号、数值诊断和性能数据来自旧机器。新机器的端到端性能需要重新测量。
+
 | 门槛 | 当前状态 | 证据 |
 |---|---|---|
 | 默认 1P+3D+4E 独立原生 P/D/E | 通过功能与严格诊断 | `artifacts/20261102-recovery-compiled-long-default-v1/all-decode/report.json` |
