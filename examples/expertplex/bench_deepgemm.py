@@ -26,8 +26,8 @@ def main():
     args = p.parse_args()
     import deep_gemm
     import torch
-
     from sglang.kernels.ops.activation.activation import silu_and_mul
+    from sglang.kernels.ops.moe.ep_moe_kernels import silu_and_mul_masked_fwd
 
     torch.cuda.set_device(args.device)
     torch.set_num_threads(8)
@@ -105,7 +105,8 @@ def main():
                     deep_gemm.m_grouped_bf16_gemm_nt_masked(
                         a, w13, gateup, layout, expected
                     )
-                    silu_and_mul(gateup.view(-1, 2 * inner), activated.view(-1, inner))
+                    # Match the native BF16 runner: do not process padded rows.
+                    silu_and_mul_masked_fwd(gateup, activated, layout)
                     deep_gemm.m_grouped_bf16_gemm_nt_masked(
                         activated, w2, out, layout, expected
                     )
@@ -134,6 +135,9 @@ def main():
                 rows=rows,
                 phase=phase,
                 expert_rows=counts,
+                activation_backend=(
+                    "silu_and_mul" if phase == 0 else "silu_and_mul_masked_fwd"
+                ),
                 median_ms=statistics.median(samples),
                 samples_ms=samples,
                 finite=finite,
