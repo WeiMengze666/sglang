@@ -236,6 +236,12 @@ __device__ __forceinline__ int tile_rows(int phase, int stage) {
   return stage == ACTIVATE ? 32 : (phase == 0 ? M : DecodeM);
 }
 
+// Prefill activation amortizes queue/barrier work over four native vector
+// chunks. The template stays bounded at startup, independent of batch size.
+__device__ __forceinline__ int tile_columns(int phase, int stage) {
+  return phase == 0 && stage == ACTIVATE ? 4 * N : N;
+}
+
 __device__ __forceinline__ bool active_stage(int stage) {
   return stage == GATE || stage == ACTIVATE || stage == DOWN ||
          stage >= SCATTER1;
@@ -337,8 +343,9 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
     set_error(c, ROW_OVERFLOW);
   s->gate_tiles = gate;
   s->down_tiles = down;
-  s->activation_tiles =
-      activation_rows * ((b.intermediate + N * Cluster - 1) / (N * Cluster));
+  const int activation_columns = tile_columns(s->phase, ACTIVATE) * Cluster;
+  s->activation_tiles = activation_rows *
+      ((b.intermediate + activation_columns - 1) / activation_columns);
   s->completed = 0;
   __threadfence();
   if (system_load(c + ERROR) || gate == 0) {
@@ -459,8 +466,9 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
       return true;
     }
     const int tile_m = tile_rows(phase, stage);
-    const int tile_n =
-        (operation_columns<Fused>(b, stage) + N * Cluster - 1) / (N * Cluster);
+    const int tile_width = tile_columns(phase, stage);
+    const int tile_n = (operation_columns<Fused>(b, stage) +
+                        tile_width * Cluster - 1) / (tile_width * Cluster);
     unsigned row_tile = index / tile_n;
     unsigned column_tile = index % tile_n;
     const int *prefix =
@@ -509,7 +517,7 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
             state->layer,
             lo,
             static_cast<int>(local_row) * tile_m,
-            static_cast<int>(column_tile) * N * Cluster,
+            static_cast<int>(column_tile) * tile_width * Cluster,
             uncached_load_int(b.counts + static_cast<size_t>(slot) * b.experts +
                               lo),
             phase,
@@ -789,7 +797,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       if (data_stage(task.stage))
         task.row += rank * data_tile_rows(task.stage);
       else
-        task.column += rank * N;
+        task.column += rank * tile_columns(task.phase, task.stage);
       // Count real work even after the trace fills. A control-only flush may
       // occupy the last ring index, so its timestamp cannot detect overflow.
       if (task.slot >= 0 && context.trace)
@@ -1036,45 +1044,46 @@ __global__ __launch_bounds__(Threads, 1) void executor(
       } else if (task.stage == ACTIVATE) {
         const size_t base = expert_base(b, task.slot, task.expert);
         if (task.phase == 0) {
-          // Preserve the 32x128 tile, using native activation's aligned BF16
-          // vectors. A half warp spans one row; each thread owns four vectors
-          // instead of issuing 64 scalar loads over 32 individual rows.
-          const int column = task.column + (local_row % 16) * 8;
-          uint4 gates[4], ups[4];
+          // Reuse the native BF16 vector arithmetic in four fixed chunks.
 #pragma unroll
-          for (int part = 0; part < 4; ++part) {
-            const int row = task.row + local_row / 16 + part * 8;
-            const size_t offset = (base + row) * (2 * intermediate) + column;
-            const bool valid = row < task.rows && column < intermediate;
-            gates[part] = valid ? load_vector_cg(b.gateup + offset)
+          for (int chunk = 0; chunk < 4; ++chunk) {
+            const int column = task.column + chunk * N + (local_row % 16) * 8;
+            uint4 gates[4], ups[4];
+  #pragma unroll
+            for (int part = 0; part < 4; ++part) {
+              const int row = task.row + local_row / 16 + part * 8;
+              const size_t offset = (base + row) * (2 * intermediate) + column;
+              const bool valid = row < task.rows && column < intermediate;
+              gates[part] = valid ? load_vector_cg(b.gateup + offset)
+                                  : uint4{0, 0, 0, 0};
+              ups[part] = valid ? load_vector_cg(b.gateup + offset + intermediate)
                                 : uint4{0, 0, 0, 0};
-            ups[part] = valid ? load_vector_cg(b.gateup + offset + intermediate)
-                              : uint4{0, 0, 0, 0};
-          }
-#pragma unroll
-          for (int part = 0; part < 4; ++part) {
-            const int row = task.row + local_row / 16 + part * 8;
-            const uint32_t gate_words[4] = {gates[part].x, gates[part].y,
-                                            gates[part].z, gates[part].w};
-            const uint32_t up_words[4] = {ups[part].x, ups[part].y,
-                                          ups[part].z, ups[part].w};
-            alignas(16) BF16 values[8];
-#pragma unroll
-            for (int pair = 0; pair < 4; ++pair) {
-#pragma unroll
-              for (int half = 0; half < 2; ++half) {
-                const float gate = __bfloat162float(__ushort_as_bfloat16(
-                    (gate_words[pair] >> (16 * half)) & 65535));
-                const float up = __bfloat162float(__ushort_as_bfloat16(
-                    (up_words[pair] >> (16 * half)) & 65535));
-                values[pair * 2 + half] = __float2bfloat16(
-                    expertplex_activation::silu_mul(gate, up, 0));
-              }
             }
-            if (row < task.rows && column < intermediate)
-              *reinterpret_cast<uint4 *>(
-                  b.activation + (base + row) * intermediate + column) =
-                  *reinterpret_cast<uint4 *>(values);
+  #pragma unroll
+            for (int part = 0; part < 4; ++part) {
+              const int row = task.row + local_row / 16 + part * 8;
+              const uint32_t gate_words[4] = {gates[part].x, gates[part].y,
+                                              gates[part].z, gates[part].w};
+              const uint32_t up_words[4] = {ups[part].x, ups[part].y,
+                                            ups[part].z, ups[part].w};
+              alignas(16) BF16 values[8];
+  #pragma unroll
+              for (int pair = 0; pair < 4; ++pair) {
+  #pragma unroll
+                for (int half = 0; half < 2; ++half) {
+                  const float gate = __bfloat162float(__ushort_as_bfloat16(
+                      (gate_words[pair] >> (16 * half)) & 65535));
+                  const float up = __bfloat162float(__ushort_as_bfloat16(
+                      (up_words[pair] >> (16 * half)) & 65535));
+                  values[pair * 2 + half] = __float2bfloat16(
+                      expertplex_activation::silu_mul(gate, up, 0));
+                }
+              }
+              if (row < task.rows && column < intermediate)
+                *reinterpret_cast<uint4 *>(
+                    b.activation + (base + row) * intermediate + column) =
+                    *reinterpret_cast<uint4 *>(values);
+            }
           }
         } else {
         const int column = task.column + local_row;

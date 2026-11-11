@@ -41,8 +41,9 @@ __device__ __forceinline__ void build_row_tiles(const DeviceBuffers &b,
       rows *
       ((operation_columns<Fused>(b, GATE) + N * Cluster - 1) / (N * Cluster));
   state->down_tiles = rows * ((b.hidden + N * Cluster - 1) / (N * Cluster));
-  state->activation_tiles =
-      activation_rows * ((b.intermediate + N * Cluster - 1) / (N * Cluster));
+  const int activation_columns = tile_columns(0, ACTIVATE) * Cluster;
+  state->activation_tiles = activation_rows *
+      ((b.intermediate + activation_columns - 1) / activation_columns);
 }
 
 // All loops have a startup-fixed tile/H/K bound, independent of batch length.
