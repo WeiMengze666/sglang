@@ -528,6 +528,14 @@ schema 要求 `units="seconds_per_layer"`、非空 `provenance`、真实 `total_
 `{x,sequence_length,latency_s}` 样本；MoE 的 x 必须是 tile footprint。旧的
 `moe_by_sm_count` 格式仍只使用实际测量过的 SM 预算，不对整段 MoE 延迟做隐式插值。
 
+单卡 attention 组件工具 `profile_attention.py` 可用 `--attention-backend fa4`
+匹配当前服务候选，并通过 `--cpu-threads` 指定 CPU 线程数（默认 1，写入报告）。
+它只接受单 GPU 的 D client，生成独立配置时清除全局及各 client 的 overlap，
+同时取消依赖 TBO 的 compact P mailbox；原始部署配置不变。
+这测量的是不含 routed MoE 的顺序 attention 层，不包含 TP/DP collective、
+生产服务调度或完整 TBO critical path。配置准备已通过 CPU 回归；实际 FA4 延迟、
+计时事件的观察开销和预测误差仍需通过 GPU 实验确认，不能直接当作校准完成。
+
 每个 phase 还必须提供 `attention_domain`：`training_points` 是实际训练测量的
 `[local_batch, sequence_length]` 列表；`max_phase_tokens`、`max_kv_tokens` 和
 `kv_reserve_per_sequence` 必须来自该次测量配置。不能用留出样本扩张训练范围。

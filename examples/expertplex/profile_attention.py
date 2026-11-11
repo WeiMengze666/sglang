@@ -23,7 +23,9 @@ def main():
     p.add_argument("--tokenizer-path", required=True)
     p.add_argument("--client-id", type=int, default=1)
     p.add_argument(
-        "--attention-backend", choices=("triton", "flashinfer"), default="flashinfer"
+        "--attention-backend",
+        choices=("triton", "flashinfer", "fa4"),
+        default="flashinfer",
     )
     p.add_argument("--disable-flashinfer-autotune", action="store_true")
     p.add_argument("--batches", type=int, nargs="+", default=[1, 2, 4, 8, 16, 32])
@@ -31,6 +33,7 @@ def main():
     p.add_argument("--holdout-batches", type=int, nargs="*", default=[3, 12])
     p.add_argument("--holdout-lengths", type=int, nargs="*", default=[1024, 4096])
     p.add_argument("--iterations", type=int, default=5)
+    p.add_argument("--cpu-threads", type=int, default=1)
     p.add_argument("--kv-tokens", type=int, default=98304)
     p.add_argument("--output-dir", type=Path, required=True)
     args = p.parse_args()
@@ -41,6 +44,7 @@ def main():
             *args.holdout_batches,
             *args.holdout_lengths,
             args.iterations,
+            args.cpu_threads,
             args.kv_tokens,
         )
         <= 0
@@ -49,10 +53,20 @@ def main():
     config = module("config")
     source_node = config.load_config(args.config)
     client = source_node.client(args.client_id)
-    if client.phase != "decode":
-        p.error("Select a D client so SGLang initializes decode graphs")
+    if client.phase != "decode" or client.tp_size != 1:
+        p.error(
+            "Select a single-GPU D client; this profiler does not measure TP/DP collectives"
+        )
     args.output_dir.mkdir(parents=True, exist_ok=False)
     node_data = source_node.to_dict() | {"overlap": "none"}
+    # Client policies override the global default. This isolated measurement
+    # must use sequential layers even when the source deployment uses TBO.
+    for item in node_data["clients"]:
+        item.pop("overlap", None)
+    # A compact P mailbox is valid only with TBO. There is no E communication
+    # in this experiment, and the original deployment configuration is retained
+    # separately in the report.
+    node_data.pop("prefill_mailbox_tokens", None)
     node_path = args.output_dir / "node.json"
     node_path.write_text(json.dumps(node_data, indent=2) + "\n")
     import numpy as np
@@ -66,7 +80,7 @@ def main():
     from sglang.srt.runtime_context import SpawnRanks, publish, spawn_world_rank
     from sglang.srt.server_args import ServerArgs
 
-    torch.set_num_threads(8)
+    torch.set_num_threads(args.cpu_threads)
     torch.cuda.set_device(client.device)
     np.random.seed(20261015)
     spec = config.ModelSpec.from_model_path(source_node.model_path)
