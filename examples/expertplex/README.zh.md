@@ -1068,7 +1068,7 @@ goodput。评估候选优化时应同时复测 `--operation moe` 和完整服务
 
 ```bash
 python examples/expertplex/launch_baseline.py \
-  --variant colocated --model-path "$MODEL" \
+  --variant chunked --chunk-size 49152 --model-path "$MODEL" \
   --moe-a2a-backend flashinfer --moe-runner-backend flashinfer_trtllm_routed \
   --disable-tbo --attention-backend fa4 --sequence-cap 24576 \
   --log-dir /tmp/native-flashinfer-plan --dry-run
@@ -1076,6 +1076,11 @@ python examples/expertplex/launch_baseline.py \
 
 CPU 命令传递测试覆盖默认配置、标准通信和 FlashInfer A2A。各后端的主模型质量、
 兼容 overlap 策略及 goodput 仍须实测，并在相同调优预算下选择最强原生基线。
+FlashInfer A2A 的固定通信 workspace 要求正数的 chunked prefill；原生配置校验会
+拒绝 `--variant colocated` 所产生的 `--chunked-prefill-size -1`。上例的全局
+49152 token 分给 8 个 DP rank 后为每 rank 6144 token。该后端组合不提供 Qwen3
+TBO 所需的分段 dispatch/combine 接口，因此示例显式关闭 TBO；这是一套兼容的
+原生后端候选，不能将与 DeepEP+TBO 的差异归因于单个开关。
 
 逐位增量诊断在 `check_incremental.py` 上同时指定 `--reference REF.json`、
 `--top-k 0` 和 `--require-exact-logprobs`。任一位置的任一词表项不同，或参考记录
