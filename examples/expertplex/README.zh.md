@@ -88,7 +88,7 @@ Mbpp/300 的测试结果也随重复变化。这说明单题差异需要结合�
 最后一行采用 FlashInfer A2A 与 `flashinfer_trtllm_routed`、DP LM head，关闭该
 dispatcher 不支持的 TBO，保留 CPU 调度重叠。其正数 chunked-prefill 上限为全局
 49,152、每 DP rank 6,144；这是一组兼容后端配置的比较，不能归因为单一开关。
-36 次诊断生成全部完成，完整任务质量评分仍待验证。
+36 次诊断生成全部完成；随后全量质量评分和更大请求规模的扫描见下文。
 
 前四组未达到 90% joint attainment；最后一组为 90.625%，仅通过此单次试跑点，
 尚未确定其容量上限，且结果优于当前 ExpertPlex。分别计算 TTFT/TPOT 的 P90 达标，不代表同一批
@@ -100,6 +100,36 @@ dispatcher 不支持的 TBO，保留 CPU 调度重叠。其正数 chunked-prefil
 并对照无 profiler 运行估计观测影响。E 端记录的 admission-to-finish 包含排队与计算；
 A 端 `group_wait` 的累计 GPU 时间占比不等于 SM 占用率，两张 GPU 的绝对时钟也不能
 直接相减作为通信耗时。
+
+### 2026-11-11 原生 FlashInfer 全量检查
+
+保持上述原生 FlashInfer BF16 配置不变，完成相同 542 道题的生成和受限容器评分。
+数据、提示词、生成设置和评分镜像均与默认 ExpertPlex 的全量检查一致；错误和
+长度截断均为 0。下表复用已完成的 ExpertPlex 答案，不重复生成。
+
+| 数据集 | ExpertPlex 通过题数 | 原生 FlashInfer 通过题数 |
+| --- | ---: | ---: |
+| HumanEval | 158 / 164 | 156 / 164 |
+| HumanEval+ | 150 / 164 | 146 / 164 |
+| MBPP | 349 / 378 | 350 / 378 |
+| MBPP+ | 296 / 378 | 297 / 378 |
+
+HumanEval+ 的四道差异题仅 ExpertPlex 通过；MBPP+ 中 Mbpp/300、Mbpp/579 仅原生
+通过，Mbpp/6 仅 ExpertPlex 通过。它们是固定条件下的一次配对观察，保留逐题差异，
+不据总分宣称质量等价；可选 grouped-D 的全量质量还需单独检查。
+
+另外使用固定 ShareGPT 数据、seed=42、每档 256 条请求、8 条预热请求进行无 profiler
+扫描。服务配置和 TTFT ≤ 1s、TPOT ≤ 50ms、90% joint SLO 门槛不变。
+
+| 提供的到达率 (requests/s) | 联合 SLO 合格请求 | 合格比例 | 达到 90% |
+| --- | ---: | ---: | --- |
+| 1 | 251 / 256 | 98.05% | 是 |
+| 2 | 242 / 256 | 94.53% | 是 |
+| 3 | 201 / 256 | 78.52% | 否 |
+
+已测档位中的最大合格到达率为 2 requests/s；仍需细化 2–3 requests/s 之间的边界、
+重复实验并继续公平调优。这不是最终容量上限。ExpertPlex 的同规模对照尚待完成，
+不能将此前 64 请求试跑与本表相除，也不能据此宣称 1.5× goodput。
 
 ## 权重与显存
 
