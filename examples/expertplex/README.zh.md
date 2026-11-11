@@ -648,6 +648,14 @@ TBO 假设 token 均衡切分，实际序列边界会影响预测，需要实测
 `--mem-fraction-static`。`--dry-run` 保存 `commands.json` 并输出启动及压测命令，
 可在 CPU 机器上检查参数。显式 `--decode-kv-tokens` 按所有 D attention-DP rank
 分摊，因此独立 3D 和 grouped DP3 的逻辑 KV 总额一致；默认仍使用原生自动容量探测。
+
+可选 grouped-D 的 FlashInfer autotune 预热绕过正常 DP 批次准备。预热入口需要同时
+填写逐 DP 的原始 token 数及设备端计数，供远端 MoE 的 padding 掩码使用。预热中
+各 rank 的所有行均有效，因此复用已填充的原生 DP 计数 buffer；正式请求仍使用
+独立的原始计数，不能用 padding 后的计数代替。CPU 回归覆盖不同大小的 Decode/
+Extend 预热及原生 DP、独立 D 路径。2026-11-11 的 B300 主模型 grouped-D 重试完成
+36 次生成诊断和 64 条无 profiler 请求，服务正常退出；该范围不代表模型质量或
+goodput 验收通过，默认仍为三个独立 D 服务。
 使用 compact P mailbox 时，
 当前运行时要求 P 请求上限不超过 `max_decode_tokens`，以覆盖 TBO 的序列边界回退；
 优化器也遵守这一支持范围。完整容量 P mailbox 可独立搜索更大的 P 并发。

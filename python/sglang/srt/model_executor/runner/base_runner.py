@@ -666,6 +666,13 @@ class BaseRunner(ABC):
         else:
             lora_ids = None
 
+        # Dummy forwards bypass prepare_mlp_sync_batch. All per-rank rows are
+        # real here, so the uniform DP gather counts are also the raw counts
+        # needed by grouped ExpertPlex routing. Reuse the populated buffer;
+        # normal serving still uses a separate raw vector for padded batches.
+        expertplex_grouped = (
+            get_disagg().enable_expertplex and get_parallel().attn_dp_size > 1
+        )
         forward_batch = ForwardBatch(
             forward_mode=capture_forward_mode,
             batch_size=batch_size,
@@ -688,6 +695,12 @@ class BaseRunner(ABC):
             extend_seq_lens_cpu=extend_seq_lens_cpu,
             global_num_tokens_gpu=buffers.global_num_tokens_gpu,
             global_num_tokens_cpu=global_num_tokens_cpu,
+            original_global_num_tokens_cpu=(
+                global_num_tokens_cpu if expertplex_grouped else None
+            ),
+            expertplex_dp_real_num_tokens_gpu=(
+                buffers.global_num_tokens_gpu if expertplex_grouped else None
+            ),
             global_num_tokens_for_logprob_gpu=buffers.global_num_tokens_for_logprob_gpu,
             dp_padding_mode=DpPaddingMode.get_default_mode_in_cuda_graph(),
             global_dp_buffer_len=global_dp_buffer_len,
