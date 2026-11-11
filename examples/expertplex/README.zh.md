@@ -62,6 +62,38 @@ MBPP+ 有一题仅 ExpertPlex 通过、两题仅原生通过。
 尚未验收。逐位数值对齐用于定位浮点误差及运算顺序差异；验收要求推理算法正确、
 模型质量保持，以及独立测得的性能目标。
 
+### 2026-11-11 重复诊断与性能试跑
+
+对上述 5 道两边结果不同的题目及固定抽取的 7 道控制题，每题重复生成 3 次。
+原生服务在相同设置下有 3 道题的 token 序列出现变化；其中 HumanEval/163 和
+Mbpp/300 的测试结果也随重复变化。这说明单题差异需要结合重复实验判断，不能
+直接归因为算法错误。该子集包含按既有结果选择的题目，其通过率不能代表全量质量。
+可选 grouped-D 在 Mbpp/300 上的三次失败仍保留为待解释结果。
+
+下表为同一固定 ShareGPT 数据、seed=42、64 条请求、2 requests/s Poisson 到达的
+无 profiler 试跑。两边均使用 FA4、BF16 权重及相同的 24,576-token 序列上限；
+原生侧保留 DeepEP/DeepGEMM、TBO 和 attention-DP8。ExpertPlex 使用 P=TBO/D=NONE。
+原生 DP LM head 行仅改变该开关；grouped-D 行使用可选的单组 attention-DP3，
+默认拓扑仍为三路独立 D。该批运行使用 `ac1ded0256`，grouped-D 另外包含
+`261559a845` 的预热计数修复，路由器诊断字段修复不改变模型计算。
+
+| 配置 | 同时满足 TTFT ≤ 1s、TPOT ≤ 50ms | TTFT P90 (ms) | TPOT P90 (ms) |
+| --- | ---: | ---: | ---: |
+| 原生 SGLang | 26 / 64 | 897.74 | 70.18 |
+| 原生 SGLang，启用 DP LM head | 30 / 64 | 834.48 | 65.59 |
+| ExpertPlex，默认三路独立 D | 42 / 64 | 993.29 | 52.03 |
+| ExpertPlex，可选 grouped-D | 56 / 64 | 956.79 | 47.10 |
+
+四组均未达到 90% joint attainment。分别计算 TTFT/TPOT 的 P90 达标，不代表同一批
+请求同时达标。固定到达率下合格请求数的比值也不是论文的 P90 goodput 容量比；
+还需公平调优原生后端、扫描到达率、重复与留出负载验证，不能据此宣称 1.5×。
+
+性能采样另行运行。早期按步数自动结束的 profiler 在请求尚未完成时导出 trace，
+阻塞 Decode 调度器，导致该次延迟不能用于容量判断。采样应在全部请求完成后导出，
+并对照无 profiler 运行估计观测影响。E 端记录的 admission-to-finish 包含排队与计算；
+A 端 `group_wait` 的累计 GPU 时间占比不等于 SM 占用率，两张 GPU 的绝对时钟也不能
+直接相减作为通信耗时。
+
 ## 权重与显存
 
 [官方模型配置](https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct/blob/main/config.json)
