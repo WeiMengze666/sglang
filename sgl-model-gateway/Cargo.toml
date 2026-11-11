@@ -1,6 +1,10 @@
 [workspace]
 members = ["bindings/python"]
-exclude = ["bindings/golang", "examples"]
+exclude = ["bindings/golang", "examples", "vendor/openai-protocol"]
+
+[patch.crates-io]
+# Keep the pinned protocol behavior while forwarding SGLang token diagnostics.
+openai-protocol = { path = "vendor/openai-protocol" }
 
 [package]
 name = "sgl-model-gateway"

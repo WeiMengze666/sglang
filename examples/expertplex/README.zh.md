@@ -159,6 +159,26 @@ nvcc --version
 nvidia-smi topo -m
 ```
 
+需要采集实际 token ID 时，应从本分支构建 router。仅安装版本号为 `0.3.2` 的
+旧 wheel 不足以保证兼容：它会在转发 chat 请求前丢弃 `return_token_ids` 和
+`return_prompt_token_ids`，导致 P/D 服务不返回这些字段。本分支对锁定的
+`openai-protocol 1.0.0` 做了两字段回补，来源和差异见
+[`README.sglang.md`](../../sgl-model-gateway/vendor/openai-protocol/README.sglang.md)。
+这不改变 tokenization、采样或模型计算；两个开关默认关闭。
+
+在已激活的服务环境中，可按 gateway 的构建要求准备 Rust、`protoc` 和 `maturin`，
+然后构建绑定并运行不使用 GPU 的 HTTP 转发回归：
+
+```bash
+maturin develop --release --features vendored-openssl \
+  --manifest-path sgl-model-gateway/bindings/python/Cargo.toml
+python -m pytest -q \
+  sgl-model-gateway/bindings/python/tests/test_token_id_forwarding.py
+```
+
+该回归启动真实 Rust router，使用模拟工作节点覆盖普通 HTTP 和 PD 模式。
+它只验证诊断字段传递，不能代替模型正确性、生成质量或 goodput 验收。
+
 将官方 BF16 checkpoint 下载到本地目录，并记录 Hugging Face revision。不要使用 FP8、
 GPTQ、AWQ 或 ModelOpt 权重代替。原始 480B 权重约需 960 GB 磁盘空间，另留缓存空间。
 
