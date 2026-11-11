@@ -83,8 +83,15 @@ Mbpp/300 的测试结果也随重复变化。这说明单题差异需要结合�
 | 原生 SGLang，启用 DP LM head | 30 / 64 | 834.48 | 65.59 |
 | ExpertPlex，默认三路独立 D | 42 / 64 | 993.29 | 52.03 |
 | ExpertPlex，可选 grouped-D | 56 / 64 | 956.79 | 47.10 |
+| 原生 SGLang，FlashInfer BF16 chunked 候选 | 58 / 64 | 526.34 | 47.16 |
 
-四组均未达到 90% joint attainment。分别计算 TTFT/TPOT 的 P90 达标，不代表同一批
+最后一行采用 FlashInfer A2A 与 `flashinfer_trtllm_routed`、DP LM head，关闭该
+dispatcher 不支持的 TBO，保留 CPU 调度重叠。其正数 chunked-prefill 上限为全局
+49,152、每 DP rank 6,144；这是一组兼容后端配置的比较，不能归因为单一开关。
+36 次诊断生成全部完成，完整任务质量评分仍待验证。
+
+前四组未达到 90% joint attainment；最后一组为 90.625%，仅通过此单次试跑点，
+尚未确定其容量上限，且结果优于当前 ExpertPlex。分别计算 TTFT/TPOT 的 P90 达标，不代表同一批
 请求同时达标。固定到达率下合格请求数的比值也不是论文的 P90 goodput 容量比；
 还需公平调优原生后端、扫描到达率、重复与留出负载验证，不能据此宣称 1.5×。
 
