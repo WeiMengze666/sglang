@@ -36,7 +36,32 @@ tokens。它们不是重复测量的容量结论，也不能与 256 请求基线
 性能定位还需区分 A 端等待和各 E 卡的执行区间。A 端按 rank 顺序轮询 ACK，
 最后观察到 ACK 的 rank 不一定是最慢的 E 卡。新的有界记录器按 slot/rank/epoch
 关联两侧记录，分别报告逐卡轮询等待增量和 E 端本地时长，不相减跨设备的绝对
-时间戳，也不把残差直接称为网络延迟。主模型采样与关闭采样的对照尚待验证。
+时间戳，也不把残差直接称为网络延迟。
+
+GPU85 的关闭、完整记录、溢出三组共 57 项组件检查通过，输出摘要相同；40 个
+A/E epoch 精确关联。GPU88 的主模型开关对照完成，536424 条 rank operation
+全部匹配，无丢失或覆盖；包含启动、graph capture、warmup 和请求阶段，不能
+当作纯 benchmark 区间。Decode 的 A 等待均值约 249.6µs，各次调用中最大 E
+执行时长的均值约 212.5µs，两者不是可相加的关键路径分量。开关采样各 16 个
+请求均满足联合 SLO，但单次短实验不能证明采样零开销或服务容量。
+原始记录保留于本地 `attention-operation-ledger/` 与 `attention-ledger-serving/`。
+
+记录器默认关闭。组件检查可使用：
+
+```bash
+python examples/expertplex/check_preprocessing.py \
+  --communication-trace-capacity 64 --graph-replays 4 --output /tmp/attention-ledger.json
+```
+
+`RemoteGroup(peers, operation_trace_capacity=N)` 为每个 rank 保存前 N 条记录
+（0–65536），计数在溢出后继续增长、不覆盖旧数据。调用 `read_operation_trace()`
+之前必须同步所有使用该 group 的 COMM 和 CUDA Graph launch stream，并保持
+IPC mapping 打开；导出应放在计时区间外。字段为 epoch、layer、phase、
+dispatch_begin_ns、publish_ns、wait_begin_ns、done_observed_ns、status。
+`wait_begin_ns` 是整个串行 rank 等待的开始，后续 rank 的完成时间包含先前 rank
+的轮询；逐 rank 增量或 publish→ACK 残差都不能解释成独立链路延迟。完整覆盖
+需检查 counts 不超过 capacity，并匹配 E 端的 slot/rank/epoch。生产服务的自动
+采样导出仍为私有诊断工具，本次公开接口不默认打开服务采样。
 
 ## 2026-11-10 新机器恢复
 

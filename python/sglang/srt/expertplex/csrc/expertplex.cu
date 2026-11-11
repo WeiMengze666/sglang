@@ -1730,6 +1730,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            py::call_guard<py::gil_scoped_release>());
   py::class_<RemoteGroup, std::shared_ptr<RemoteGroup>>(m, "RemoteGroup")
       .def(py::init<std::vector<std::shared_ptr<RemoteBuffers>>>())
+      .def(py::init<std::vector<std::shared_ptr<RemoteBuffers>>, int>())
+      .def("read_operation_trace", &RemoteGroup::read_operation_trace)
       .def("dispatch", &RemoteGroup::dispatch, py::arg("hidden"),
            py::arg("ids"), py::arg("rows"), py::arg("layer"), py::arg("phase"),
            py::arg("weights") = py::none(), py::arg("publish") = true)

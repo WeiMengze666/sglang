@@ -4,13 +4,45 @@
 
 #include <type_traits>
 
+// Bounded, attention-clock records, one writer per peer on the slot's COMM
+// stream. Counts keep growing on overflow; retained records are never reused.
+// These timestamps must never be subtracted from an expert GPU's clock.
+struct GroupOperationRecord {
+  U64 epoch, layer, phase, dispatch_begin_ns, publish_ns, wait_begin_ns,
+      done_observed_ns, status;
+};
+static_assert(sizeof(GroupOperationRecord) == 8 * sizeof(U64));
+
 struct GroupBuffers {
   DeviceBuffers local[8], peer[8];
   int *status[8];
   int world, slot;
+  GroupOperationRecord *operation_trace = nullptr;
+  U64 *operation_trace_counts = nullptr;
+  int operation_trace_capacity = 0;
 };
 
+__device__ __forceinline__ GroupOperationRecord *group_current_record(
+    const GroupBuffers *g, int rank) {
+  if (!g->operation_trace)
+    return nullptr;
+  const U64 count = g->operation_trace_counts[rank];
+  if (!count || count > static_cast<U64>(g->operation_trace_capacity))
+    return nullptr;
+  return g->operation_trace +
+         static_cast<size_t>(rank) * g->operation_trace_capacity + count - 1;
+}
+
 __global__ void group_clear(const GroupBuffers *g, int layer, int phase) {
+  if (g->operation_trace && threadIdx.x == 0) {
+    const int rank = blockIdx.x;
+    const U64 index = g->operation_trace_counts[rank]++;
+    if (index < static_cast<U64>(g->operation_trace_capacity))
+      g->operation_trace[static_cast<size_t>(rank) *
+                             g->operation_trace_capacity + index] =
+          {0, static_cast<U64>(layer), static_cast<U64>(phase), now_ns(),
+           0, 0, 0, 0};
+  }
   clear_slot_body(g->local[blockIdx.x], g->slot, 0, layer, phase);
 }
 template <typename Id>
@@ -141,8 +173,14 @@ __global__ void group_publish(const GroupBuffers *g, bool publish) {
   __syncthreads();
   if (publish && threadIdx.x == 0) {
     auto *c = g->peer[rank].control + g->slot * kControlWords;
-    if (!system_load(c + ERROR))
-      system_store(c + READY, uncached_load_u64(c + PENDING));
+    if (!system_load(c + ERROR)) {
+      const U64 epoch = uncached_load_u64(c + PENDING);
+      if (auto *record = group_current_record(g, rank)) {
+        record->epoch = epoch;
+        record->publish_ns = now_ns();
+      }
+      system_store(c + READY, epoch);
+    }
   }
 }
 __global__ void group_wait(const GroupBuffers *g, U64 timeout_ns) {
@@ -153,6 +191,11 @@ __global__ void group_wait(const GroupBuffers *g, U64 timeout_ns) {
     wait_slot_body(g->peer[rank], g->slot, 0,
                    elapsed < timeout_ns ? timeout_ns - elapsed : 0,
                    g->status[rank]);
+    if (auto *record = group_current_record(g, rank)) {
+      record->wait_begin_ns = start;
+      record->done_observed_ns = now_ns();
+      record->status = static_cast<U64>(*g->status[rank]);
+    }
   }
 }
 template <typename Id, typename Output>
@@ -220,9 +263,14 @@ public:
   GroupBuffers *gpu = nullptr;
   int device, slot, world;
   bool packed, preprocess;
+  int operation_trace_capacity;
+  torch::Tensor operation_records, operation_counts;
 
-  explicit RemoteGroup(std::vector<std::shared_ptr<RemoteBuffers>> mappings)
-      : peers(std::move(mappings)) {
+  explicit RemoteGroup(std::vector<std::shared_ptr<RemoteBuffers>> mappings,
+                       int trace_capacity = 0)
+      : peers(std::move(mappings)), operation_trace_capacity(trace_capacity) {
+    TORCH_CHECK(trace_capacity >= 0 && trace_capacity <= 65536,
+                "Attention operation trace capacity must be in [0, 65536]");
     TORCH_CHECK(!peers.empty() && peers.size() <= 8, "Invalid expert group");
     const auto &first = *peers[0];
     TORCH_CHECK(!first.closed, "Closed expert peer");
@@ -252,6 +300,17 @@ public:
       descriptor.status[rank] = peer.status;
     }
     c10::cuda::CUDAGuard guard(device);
+    if (trace_capacity) {
+      auto options = torch::TensorOptions().dtype(torch::kInt64)
+                         .device(torch::kCUDA, device);
+      operation_records = torch::zeros({world, trace_capacity, 8}, options);
+      operation_counts = torch::zeros({world}, options);
+      descriptor.operation_trace =
+          reinterpret_cast<GroupOperationRecord *>(operation_records.data_ptr<int64_t>());
+      descriptor.operation_trace_counts =
+          reinterpret_cast<U64 *>(operation_counts.data_ptr<int64_t>());
+      descriptor.operation_trace_capacity = trace_capacity;
+    }
     C10_CUDA_CHECK(cudaMalloc(&gpu, sizeof(GroupBuffers)));
     try {
       C10_CUDA_CHECK(cudaMemcpy(gpu, &descriptor, sizeof(descriptor),
@@ -270,6 +329,24 @@ public:
       cudaFree(gpu);
       cudaSetDevice(old);
     }
+  }
+  // The caller must first drain every COMM and graph-launch stream using
+  // this group. Copies are outside the measured interval; no tracing allocation
+  // or host synchronization is added to dispatch/combine.
+  py::dict read_operation_trace() const {
+    check_open();
+    TORCH_CHECK(operation_trace_capacity > 0, "Attention operation trace is disabled");
+    c10::cuda::CUDAGuard guard(device);
+    py::dict result;
+    result["records"] = operation_records.cpu();
+    result["counts"] = operation_counts.cpu();
+    result["capacity_per_rank"] = operation_trace_capacity;
+    result["slot"] = slot;
+    result["clock_device"] = device;
+    result["fields"] = std::vector<std::string>{
+        "epoch", "layer", "phase", "dispatch_begin_ns", "publish_ns",
+        "wait_begin_ns", "done_observed_ns", "status"};
+    return result;
   }
   void check_open() const {
     for (const auto &peer : peers)

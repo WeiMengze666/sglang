@@ -213,9 +213,22 @@ class RemoteGroup:
     masked decode follows the native DeepEP top-k FP32 reduction order.
     """
 
-    def __init__(self, peers: list[RemoteBuffers]):
+    def __init__(self, peers: list[RemoteBuffers], *, operation_trace_capacity=0):
+        if not 0 <= operation_trace_capacity <= 65536:
+            raise ValueError("Attention operation trace capacity must be in [0, 65536]")
         self.peers = peers
-        self._impl = load_extension().RemoteGroup([peer._impl for peer in peers])
+        self._impl = load_extension().RemoteGroup(
+            [peer._impl for peer in peers], operation_trace_capacity
+        )
+
+    def read_operation_trace(self):
+        """Read bounded attention-clock records after all using streams drain.
+
+        Synchronize COMM and CUDA Graph launch streams first. Call before
+        closing mappings and outside measurement. Pair epochs with E records,
+        compare local durations only, and reject overflow for full coverage.
+        """
+        return self._impl.read_operation_trace()
 
     def dispatch(
         self, hidden, ids, row_map, layer, phase, weights=None, *, publish=True

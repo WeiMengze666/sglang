@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--top-k", type=int, default=2)
     parser.add_argument("--world", type=int, default=2)
     parser.add_argument("--graph-replays", type=int, default=20)
+    parser.add_argument("--communication-trace-capacity", type=int, default=0)
     parser.add_argument(
         "--second-prefill",
         action="store_true",
@@ -152,7 +153,12 @@ def main():
                 [native.RemoteBuffers(owner.descriptor, slot, 0) for owner in owners]
                 for slot in range(2)
             ]
-            groups = [native.RemoteGroup(p) for p in peers]
+            groups = [
+                native.RemoteGroup(
+                    p, operation_trace_capacity=args.communication_trace_capacity
+                )
+                for p in peers
+            ]
             streams = [torch.cuda.Stream() for _ in range(2)]
             report["executors"] = [owner.executor_info for owner in owners]
             try:
@@ -233,6 +239,13 @@ def main():
                         verify(outputs[phase], refs[phase], f"concurrent-{_}", phase)
             finally:
                 torch.cuda.synchronize()
+                if args.communication_trace_capacity:
+                    report["attention_ledgers"] = []
+                    for group in groups:
+                        item = group.read_operation_trace()
+                        item["counts"] = item["counts"].tolist()
+                        item["records"] = item["records"].tolist()
+                        report["attention_ledgers"].append(item)
                 groups.clear()
                 for slot_peers in peers:
                     for peer in slot_peers:
