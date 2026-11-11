@@ -21,6 +21,33 @@ class _MetricsCaptured(Exception):
 
 
 class TestBenchServingProfile(CustomTestCase):
+    def test_pd_workers_stop_before_any_export_wait(self):
+        """A slow export must not leave later workers recording idle events."""
+        workers = [(f"Decode-{i}", f"http://worker-{i}") for i in range(3)]
+        recording = {url for _, url in workers}
+        exported = set()
+
+        async def profile_endpoint(api_url):
+            url = api_url.removesuffix("/stop_profile")
+            recording.remove(url)
+            # Model the first export yielding while other workers still record.
+            await asyncio.sleep(0)
+            self.assertFalse(recording, "Another worker is still recording")
+            exported.add(url)
+            return serving.RequestFuncOutput(
+                success=url != "http://worker-1", error="export failed"
+            )
+
+        output = io.StringIO()
+        with (
+            patch.object(serving, "async_request_profile", profile_endpoint),
+            contextlib.redirect_stdout(output),
+        ):
+            asyncio.run(serving._call_profile_pd(workers, "stop"))
+        self.assertEqual(exported, {url for _, url in workers})
+        self.assertIn("Failed to stop profiler for Decode-1", output.getvalue())
+        self.assertIn("Profiler stopped for Decode-2", output.getvalue())
+
     def _run_profile(self, pd_separated, **profile_options):
         clock = 0.0
         profiler_running = False

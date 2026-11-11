@@ -957,7 +957,7 @@ async def _call_profile_pd(profile_urls: List[Tuple[str, str]], mode: str) -> No
 
     print(f"{action} profiler...")
 
-    for worker_type, url in profile_urls:
+    async def call_worker(worker_type, url):
         profile_output = await async_request_profile(api_url=url + endpoint)
         if profile_output.success:
             print(f"Profiler {action_past} for {worker_type} worker at {url}")
@@ -965,6 +965,14 @@ async def _call_profile_pd(profile_urls: List[Tuple[str, str]], mode: str) -> No
             print(
                 f"Failed to {mode} profiler for {worker_type} worker at {url}: {profile_output.error}"
             )
+
+    if mode == "stop":
+        # Export can take minutes. Freeze every worker's recording without
+        # waiting for an earlier worker to export its trace first.
+        await asyncio.gather(*(call_worker(*worker) for worker in profile_urls))
+    else:
+        for worker in profile_urls:
+            await call_worker(*worker)
 
 
 ASYNC_REQUEST_FUNCS = {
