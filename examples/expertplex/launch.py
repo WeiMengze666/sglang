@@ -375,7 +375,7 @@ def wait_http(url, children, deadline, expected_workers=None):
                     or json.load(response).get("healthy_workers", 0) >= expected_workers
                 ):
                     return
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
             pass
         time.sleep(1)
     raise TimeoutError(f"Service did not become healthy: {url}")

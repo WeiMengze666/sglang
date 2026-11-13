@@ -85,6 +85,28 @@ class LaunchPlanTests(unittest.TestCase):
             ],
         )
 
+    def test_startup_connection_reset_retries_until_ready_or_deadline(self):
+        # A health listener can reset while services are starting. Previously
+        # this escaped the readiness loop and killed otherwise-live workers.
+        response = io.BytesIO(b"")
+        response.status = 200
+        child = SimpleNamespace(poll=lambda: None)
+        with (
+            patch.object(launch.urllib.request, "urlopen",
+                         side_effect=[ConnectionResetError(104, "reset"), response]),
+            patch.object(launch.time, "monotonic", side_effect=[0, 1]),
+            patch.object(launch.time, "sleep"),
+        ):
+            launch.wait_http("http://worker", [("worker", child, None)], 2)
+        with (
+            patch.object(launch.urllib.request, "urlopen",
+                         side_effect=ConnectionResetError(104, "reset")),
+            patch.object(launch.time, "monotonic", side_effect=[0, 2]),
+            patch.object(launch.time, "sleep"),
+            self.assertRaisesRegex(TimeoutError, "did not become healthy"),
+        ):
+            launch.wait_http("http://worker", [("worker", child, None)], 2)
+
     def test_router_readiness_waits_for_all_workers(self):
         responses = []
         for count in [1, 4]:
