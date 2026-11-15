@@ -756,7 +756,15 @@ TP reductions；仅测 `self_attn` 的 hook 不足以覆盖 TP>1。不能把 TP1
 的专家数。`models[phase][SM数][操作ID]` 提供 `{alpha,beta,x_range:[min,max]}`。
 P 操作 ID 为 `5,6,1,3,2,7`，D 为 `1,3,2`，分别覆盖 Scatter、GateUp、ACT、Down、Gather；
 两种 phase 都还需要独立常数项 `gap`（`beta=0,x_range=[0,0]`），记录操作间的开销。
-该格式目前描述完整双 CTA SM100 后端和 E 侧 P 预处理。
+该格式描述完整双 CTA SM100 后端和 E 侧 P 预处理。
+
+融合后端的组件 profile 在每个 E 数量对应的对象中声明
+`kernel="sm100_swiglu"`，使用 P 操作 `5,6,1,2,7` 和 D 操作 `1,2`，保留两种 phase
+各自的 `gap`。操作 `1` 的实测延迟包含 GateUp 的 SwiGLU epilogue，需重新测量并拟合。
+省略 `kernel` 的历史 profile 按 `sm100` 读取；搜索要求 profile 与配置中的 kernel
+一致，并检查该后端的完整操作集合。融合 profile 若仍包含独立 ACT 项会报错。
+CPU 回归覆盖两种后端的搜索、历史格式兼容和错误组合检查。融合后端的 B300
+组件标定与独立留出误差验证仍待完成。
 
 优化器分别计算 GEMM、ACT 和数据处理的 footprint，并在每张 E 上累加独立客户端的
 操作成本后取 rank 临界路径；不会把不同客户端的部分 tile 合并，也不会只收取一次

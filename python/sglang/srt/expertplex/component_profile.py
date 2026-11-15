@@ -12,8 +12,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping, Sequence
 
-
 STAGES = {"prefill": ("5", "6", "1", "3", "2", "7"), "decode": ("1", "3", "2")}
+STAGES_BY_KERNEL = {
+    "sm100": STAGES,
+    "sm100_swiglu": {
+        "prefill": ("5", "6", "1", "2", "7"),
+        "decode": ("1", "2"),
+    },
+}
 
 
 class ProfileCoverageError(ValueError):
@@ -123,6 +129,7 @@ class ComponentProfiles:
     models: Mapping[str, Mapping[int, Mapping[str, ComponentLine]]]
     provenance: str = ""
     runtime_source_sha256: str = ""
+    kernel: str = "sm100"
 
     @classmethod
     def from_dict(cls, data):
@@ -159,9 +166,12 @@ class ComponentProfiles:
             models,
             data["provenance"],
             fingerprint,
+            data.get("kernel", "sm100"),
         )
 
     def __post_init__(self):
+        if not isinstance(self.kernel, str) or self.kernel not in STAGES_BY_KERNEL:
+            raise ValueError("Unsupported component profile kernel")
         if set(self.models) != set(STAGES):
             raise ValueError("Both phase profiles are required")
         for phase, budgets in self.models.items():
@@ -170,7 +180,9 @@ class ComponentProfiles:
             for sms, components in budgets.items():
                 if type(sms) is not int or sms <= 0 or sms % self.geometry.cluster_size:
                     raise ValueError("SM budgets must contain complete CTA clusters")
-                if set(components) != set(STAGES[phase]) | {"gap"}:
+                if set(components) != set(STAGES_BY_KERNEL[self.kernel][phase]) | {
+                    "gap"
+                }:
                     raise ValueError("Missing or extra operation profile")
                 if any(not isinstance(c, ComponentLine) for c in components.values()):
                     raise ValueError("Expected validated component coefficients")
@@ -224,7 +236,7 @@ class ComponentProfiles:
         weight = 0 if lo == hi else (1 / sms - 1 / lo) / (1 / hi - 1 / lo)
         predictions = {}
         errors = []
-        for stage in (*STAGES[phase], "gap"):
+        for stage in (*STAGES_BY_KERNEL[self.kernel][phase], "gap"):
             sides = []
             for budget in (lo, hi):
                 try:

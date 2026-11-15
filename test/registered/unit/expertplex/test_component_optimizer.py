@@ -6,6 +6,10 @@ import unittest
 from unittest.mock import patch
 
 import test_config_optimizer as base
+from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.test_utils import CustomTestCase
+
+register_cpu_ci(est_time=15, suite="base-a-test-cpu")
 
 optimizer = base.optimizer
 config = base.config
@@ -59,7 +63,82 @@ def fixture():
     return model, data
 
 
-class ComponentOptimizerTests(unittest.TestCase):
+class ComponentOptimizerTests(CustomTestCase):
+    def test_fused_profile_uses_gateup_epilogue_and_no_activation_cost(self):
+        """Fused GateUp includes SiLU; ACT tile counts cannot add another cost."""
+        model, data = fixture()
+        component = data["moe_components_by_expert_count"]["4"]
+        component["kernel"] = "sm100_swiglu"
+        for budgets in component["models"].values():
+            for stages in budgets.values():
+                del stages["3"]
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        cp = profiles.components_by_world[4]
+        self.assertEqual(cp.kernel, "sm100_swiglu")
+        counts = [17, 16] + [0] * (cp.geometry.experts - 2)
+        measured = cp.predict_components("decode", 2, 33, counts)
+        self.assertEqual(set(measured), {"1", "2", "gap"})
+        self.assertAlmostEqual(sum(measured.values()), 7e-6)
+        counts[0], counts[1] = 33, 0
+        measured = cp.predict_components("decode", 2, 33, counts)
+        self.assertAlmostEqual(sum(measured.values()), 5e-6)
+        for mutation in ("extra_activation", "missing_kernel", "unknown_kernel"):
+            bad = copy.deepcopy(data)
+            changed = bad["moe_components_by_expert_count"]["4"]
+            if mutation == "extra_activation":
+                changed["models"]["decode"]["2"]["3"] = {
+                    "alpha": 0,
+                    "beta": 0,
+                    "x_range": [0, 10000],
+                }
+            elif mutation == "missing_kernel":
+                del changed["kernel"]
+            else:
+                changed["kernel"] = "unknown"
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                optimizer.MeasuredProfiles.from_dict(bad, model)
+
+    def test_search_matches_runtime_kernel_to_profile_kernel(self):
+        """Changing runtime fusion must not reuse another kernel's coefficients."""
+        model, original = fixture()
+        kwargs = dict(
+            input_length=16,
+            average_output_length=16,
+            context_length=64,
+            prefill_slo_s=1,
+            decode_slo_s=0.05,
+            kv_tokens_per_attention_gpu=4096,
+        )
+        for profile_kernel in ("sm100", "sm100_swiglu"):
+            data = copy.deepcopy(original)
+            component = data["moe_components_by_expert_count"]["4"]
+            if profile_kernel == "sm100_swiglu":
+                component["kernel"] = profile_kernel
+                for budgets in component["models"].values():
+                    for stages in budgets.values():
+                        del stages["3"]
+            profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+            for runtime_kernel in ("sm100", "sm100_swiglu"):
+                node = config.default_config(
+                    "/model",
+                    kernel=runtime_kernel,
+                    prefill_preprocess=True,
+                    max_prefill_tokens=128,
+                    max_decode_tokens=32,
+                )
+                with self.subTest(profile=profile_kernel, runtime=runtime_kernel):
+                    with patch.object(
+                        optimizer,
+                        "enumerate_layouts",
+                        return_value=[optimizer.Layout(1, 3, 4)],
+                    ):
+                        if profile_kernel == runtime_kernel:
+                            result = optimizer.search(node, model, profiles, **kwargs)
+                            self.assertIsNotNone(result)
+                        else:
+                            with self.assertRaisesRegex(ValueError, "kernel"):
+                                optimizer.search(node, model, profiles, **kwargs)
+
     def test_component_parser_rejects_other_model_and_mixed_profiles(self):
         model, data = fixture()
         parsed = optimizer.MeasuredProfiles.from_dict(data, model)

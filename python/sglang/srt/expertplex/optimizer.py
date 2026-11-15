@@ -1289,9 +1289,12 @@ def search(
             component = profiles.components_by_world[layout.expert_count]
             cluster = component.geometry.cluster_size
             geometry = component.geometry
+            if config.kernel != component.kernel:
+                raise ValueError(
+                    "Component profile kernel does not match the configured runtime kernel"
+                )
             if (
-                config.kernel != "sm100"
-                or cluster != 2
+                cluster != 2
                 or geometry.prefill_gemm_tile_rows != 128
                 or geometry.decode_gemm_tile_rows != 128
                 or geometry.activation_tile_rows != 32
