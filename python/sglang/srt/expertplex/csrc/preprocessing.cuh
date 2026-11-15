@@ -42,7 +42,7 @@ __device__ __forceinline__ void build_row_tiles(const DeviceBuffers &b,
       ((operation_columns<Fused>(b, GATE) + N * Cluster - 1) / (N * Cluster));
   state->down_tiles = rows * ((b.hidden + N * Cluster - 1) / (N * Cluster));
   const int activation_columns = tile_columns(0, ACTIVATE) * Cluster;
-  state->activation_tiles = activation_rows *
+  state->activation_tiles = context.interleaved_swiglu ? 0 : activation_rows *
       ((b.intermediate + activation_columns - 1) / activation_columns);
 }
 

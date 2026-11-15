@@ -1135,9 +1135,13 @@ public:
                      torch::Tensor gateup, torch::Tensor down,
                      int decode_budget, double expected_tiles,
                      double max_decode_fraction, int requested_ctas,
-                     const std::string &backend, int trace_capacity,
+                     const std::string &requested_backend, int trace_capacity,
                      int benchmark_stage, int operation_trace_capacity = 0)
       : owner(std::move(buffers)), w13(std::move(gateup)), w2(std::move(down)) {
+    const bool interleaved = requested_backend == "sm100_swiglu";
+    const std::string backend = interleaved ? "sm100" : requested_backend;
+    TORCH_CHECK(!interleaved || benchmark_stage == 0,
+                "Interleaved SwiGLU requires a full MoE operation");
     TORCH_CHECK(!owner->active && !owner->started,
                 "A buffer set admits one executor lifetime; allocate fresh "
                 "buffers to restart");
@@ -1192,6 +1196,13 @@ public:
     // Specialize the two target models at compile time, retaining a generic
     // shape only for small synthetic debugging checkpoints.
     auto with_native_kernel = [&](auto &&fn) {
+      if (interleaved) {
+        if (b.hidden == 6144 && b.intermediate == 2560)
+          return fn(expertplex_sm100::executor<2, 6144, 2560, false, true>);
+        if (b.hidden == 2048 && b.intermediate == 768)
+          return fn(expertplex_sm100::executor<2, 2048, 768, false, true>);
+        return fn(expertplex_sm100::executor<2, 0, 0, false, true>);
+      }
       if (fused) {
         if (b.hidden == 6144 && b.intermediate == 2560)
           return fn(expertplex_sm100::executor<2, 6144, 2560, true>);
@@ -1242,6 +1253,7 @@ public:
           cudaMemset(native_context.operation_trace_counts, 0, count_bytes));
     }
     native_context.benchmark_stage = benchmark_stage;
+    native_context.interleaved_swiglu = interleaved;
     const char *pipeline_stores =
         std::getenv("SGLANG_EXPERTPLEX_PIPELINED_STORES");
     // Keep the complete SM100 backend's native epilogue pipeline enabled.
@@ -1284,7 +1296,7 @@ public:
     launch_threads = threads;
     dynamic_shared = reserve;
     cluster_size = cluster;
-    backend_name = backend;
+    backend_name = requested_backend;
     try {
       C10_CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
       C10_CUDA_CHECK(
@@ -1354,8 +1366,12 @@ public:
     d["ctas"] = launch_ctas;
     d["cluster_size"] = cluster_size;
     d["prefill_preprocess"] = bool(owner->b.prefill_preprocess);
-    d["operation_templates"] =
-        owner->b.prefill_preprocess
+    d["interleaved_swiglu"] = native_context.interleaved_swiglu;
+    d["operation_templates"] = native_context.interleaved_swiglu
+        ? (owner->b.prefill_preprocess
+             ? "scatter1,scatter2,gate_up_swiglu,down,gather"
+             : "gate_up_swiglu,down")
+        : owner->b.prefill_preprocess
             ? "scatter1,scatter2,gate_up,activation,down,gather"
         : backend_name == "sm100_fused" || backend_name == "wmma"
             ? "fused_gate_up_activation,down"

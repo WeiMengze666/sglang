@@ -14,6 +14,8 @@
 #include <deep_gemm/ptx/ld_st.cuh>
 #include <deep_gemm/ptx/tcgen05.cuh>
 
+#include "interleaved_swiglu_store.cuh"
+
 namespace expertplex_sm100 {
 using Barrier = cutlass::arch::ClusterTransactionBarrier;
 using Element = cutlass::bfloat16_t;
@@ -29,6 +31,7 @@ struct alignas(128) Maps {
   CUtensorMap output[2];
   CUtensorMap activation_store[2];
   CUtensorMap gateup_store[2];
+  CUtensorMap interleaved_activation_store[2];
 };
 struct alignas(128) WeightMaps {
   CUtensorMap gate, up, down;
@@ -105,6 +108,7 @@ struct Context {
   int operation_trace_capacity = 0;
   U64 *operation_trace_counts = nullptr;
   bool pipelined_stores = false;
+  bool interleaved_swiglu = false;
   int benchmark_stage =
       0; // Diagnostic single-operation execution; 0 = full MoE.
   int column_group = 0;
@@ -149,6 +153,8 @@ inline Context prepare(OwnedBuffers &owner, const BF16 *w13, const BF16 *w2,
       encode_map(maps[slot].activation_store[phase],
                  b.activation + base * b.intermediate, b.intermediate, rows,
                  tile_m);
+      encode_map(maps[slot].interleaved_activation_store[phase],
+                 b.activation + base * b.intermediate, b.intermediate, rows, 16);
       encode_map(maps[slot].gateup_store[phase],
                  b.gateup + base * 2 * b.intermediate, 2 * b.intermediate, rows,
                  16);
@@ -344,7 +350,7 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
   s->gate_tiles = gate;
   s->down_tiles = down;
   const int activation_columns = tile_columns(s->phase, ACTIVATE) * Cluster;
-  s->activation_tiles = activation_rows *
+  s->activation_tiles = context.interleaved_swiglu ? 0 : activation_rows *
       ((b.intermediate + activation_columns - 1) / activation_columns);
   s->completed = 0;
   __threadfence();
@@ -546,14 +552,15 @@ __device__ __forceinline__ void retire_task(const DeviceBuffers &b,
       } else if (task.stage == SCATTER2) {
         next = state->gate_tiles ? GATE : GATHER;
       } else if (task.stage == GATE)
-        next = ACTIVATE;
+        next = context.interleaved_swiglu ? DOWN : ACTIVATE;
       else if (task.stage == ACTIVATE)
         next = DOWN;
       else if (task.stage == DOWN)
         next = GATHER;
 
     } else if (task.stage != DOWN && context.benchmark_stage == 0) {
-      next = task.stage == GATE && !Fused ? ACTIVATE : DOWN;
+      next = task.stage == GATE && !Fused && !context.interleaved_swiglu
+                 ? ACTIVATE : DOWN;
     }
     if (system_load(b.control + task.slot * kControlWords + ERROR))
       next = IDLE;
@@ -587,7 +594,8 @@ __device__ __forceinline__ void retire_task(const DeviceBuffers &b,
         .finish_ns = now_ns();
 }
 
-template <int Cluster, int Hidden = 0, int Intermediate = 0, bool Fused = false>
+template <int Cluster, int Hidden = 0, int Intermediate = 0, bool Fused = false,
+          bool InterleavedSwiGLU = false>
 __global__ __launch_bounds__(Threads, 1) void executor(
     const __grid_constant__ DeviceBuffers b, Context context, int layers,
     int decode_budget, float expected, int cap) {
@@ -610,6 +618,9 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         cute::prefetch_tma_descriptor(&context.maps[slot].input[phase]);
         cute::prefetch_tma_descriptor(&context.maps[slot].activation[phase]);
         cute::prefetch_tma_descriptor(&context.maps[slot].gateup_store[phase]);
+        if constexpr (InterleavedSwiGLU)
+          cute::prefetch_tma_descriptor(
+              &context.maps[slot].interleaved_activation_store[phase]);
         cute::prefetch_tma_descriptor(&context.maps[slot].output[phase]);
         if constexpr (Fused)
           cute::prefetch_tma_descriptor(
@@ -1123,6 +1134,13 @@ __global__ __launch_bounds__(Threads, 1) void executor(
         __threadfence();
         asm volatile("fence.proxy.async.global;" ::: "memory");
       } else if constexpr (!Fused) {
+        if (InterleavedSwiGLU && gate) {
+          store_interleaved_swiglu(
+              s, tma_store_stage, index * 128, map_row, task.column, tile_m,
+              task.phase, warp - 4, lane, &s.accum_empty[index],
+              reinterpret_cast<const cute::TmaDescriptor *>(
+                  &maps.interleaved_activation_store[task.phase]));
+        } else {
         auto *map =
             gate ? &maps.gateup_store[task.phase] : &maps.output[task.phase];
         deep_gemm::epilogue::sm100_store_cd_swap_ab<
@@ -1132,6 +1150,7 @@ __global__ __launch_bounds__(Threads, 1) void executor(
                    deep_gemm::epilogue::transform::EpilogueIdentity{}, false,
                    &s.accum_empty[index], &s.accum_empty[index],
                    *reinterpret_cast<const cute::TmaDescriptor *>(map));
+        }
       } else {
 #pragma unroll
         for (int col = 0; col < tile_m; col += 8) {

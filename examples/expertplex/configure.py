@@ -48,7 +48,7 @@ def main():
         )
     parser.add_argument(
         "--kernel",
-        choices=("sm100", "sm100_cta1", "sm100_fused", "wmma"),
+        choices=("sm100", "sm100_swiglu", "sm100_cta1", "sm100_fused", "wmma"),
         default="sm100",
     )
     parser.add_argument(

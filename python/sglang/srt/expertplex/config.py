@@ -343,12 +343,20 @@ class NodeConfig:
     def validate(self, model_spec: ModelSpec | None = None) -> None:
         if not isinstance(self.prefill_preprocess, bool):
             raise ValueError("prefill_preprocess must be boolean")
-        if self.prefill_preprocess and self.kernel != "sm100":
+        if self.prefill_preprocess and self.kernel not in ("sm100", "sm100_swiglu"):
             raise ValueError(
                 "expert-side preprocessing requires the native sm100 backend"
             )
-        if self.kernel not in ("sm100", "sm100_cta1", "sm100_fused", "wmma"):
-            raise ValueError("kernel must be sm100, sm100_cta1, sm100_fused or wmma")
+        if self.kernel not in (
+            "sm100",
+            "sm100_swiglu",
+            "sm100_cta1",
+            "sm100_fused",
+            "wmma",
+        ):
+            raise ValueError(
+                "kernel must be sm100, sm100_swiglu, sm100_cta1, sm100_fused or wmma"
+            )
         if self.overlap not in ("none", "tbo", "sbo"):
             raise ValueError("overlap must be none, tbo or sbo")
         if self.weight_mode not in ("checkpoint", "synthetic"):

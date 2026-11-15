@@ -42,11 +42,14 @@ class LaunchPlanTests(unittest.TestCase):
                     "2",
                     "--decode-tp-size",
                     "2",
+                    "--kernel",
+                    "sm100_swiglu",
                 ],
                 check=True,
                 capture_output=True,
             )
             node = launch.config.load_config(target)
+            self.assertEqual(node.kernel, "sm100_swiglu")
             self.assertEqual(
                 [(c.device, c.tp_size) for c in node.clients], [(0, 2), (2, 2)]
             )
@@ -92,15 +95,21 @@ class LaunchPlanTests(unittest.TestCase):
         response.status = 200
         child = SimpleNamespace(poll=lambda: None)
         with (
-            patch.object(launch.urllib.request, "urlopen",
-                         side_effect=[ConnectionResetError(104, "reset"), response]),
+            patch.object(
+                launch.urllib.request,
+                "urlopen",
+                side_effect=[ConnectionResetError(104, "reset"), response],
+            ),
             patch.object(launch.time, "monotonic", side_effect=[0, 1]),
             patch.object(launch.time, "sleep"),
         ):
             launch.wait_http("http://worker", [("worker", child, None)], 2)
         with (
-            patch.object(launch.urllib.request, "urlopen",
-                         side_effect=ConnectionResetError(104, "reset")),
+            patch.object(
+                launch.urllib.request,
+                "urlopen",
+                side_effect=ConnectionResetError(104, "reset"),
+            ),
             patch.object(launch.time, "monotonic", side_effect=[0, 2]),
             patch.object(launch.time, "sleep"),
             self.assertRaisesRegex(TimeoutError, "did not become healthy"),

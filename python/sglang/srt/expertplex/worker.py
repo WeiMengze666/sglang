@@ -22,11 +22,22 @@ _EXPERT_WEIGHT = re.compile(
 )
 
 
-def load_expert_weights(model_path, spec, rank, world, device, synthetic_seed=None):
+def load_expert_weights(
+    model_path,
+    spec,
+    rank,
+    world,
+    device,
+    synthetic_seed=None,
+    *,
+    interleaved_swiglu=False,
+):
     import torch
     from safetensors import safe_open
 
     local_experts = spec.num_experts // world
+    if interleaved_swiglu and spec.intermediate_size % 8:
+        raise ValueError("Interleaved SwiGLU requires intermediate size divisible by 8")
     w13 = torch.empty(
         (spec.num_layers, local_experts, 2 * spec.intermediate_size, spec.hidden_size),
         dtype=torch.bfloat16,
@@ -67,6 +78,19 @@ def load_expert_weights(model_path, spec, rank, world, device, synthetic_seed=No
                     generator = torch.Generator(device=device).manual_seed(seed)
                     w13[layer, local].uniform_(-1e-3, 1e-3, generator=generator)
                     w2[layer, local].uniform_(-1e-3, 1e-3, generator=generator)
+        if interleaved_swiglu:
+            from deep_gemm.mega import transform_weights_for_mega_moe
+
+            # Geometry fixtures use the canonical generator, then explicitly
+            # permute one owned expert at a time. Temporary storage is bounded
+            # by one expert, not the entire model or even an entire layer.
+            for layer in range(spec.num_layers):
+                for local in range(local_experts):
+                    converted, _ = transform_weights_for_mega_moe(
+                        w13[layer, local], w2[layer, local], mma_type="bf16"
+                    )
+                    w13[layer, local].copy_(converted)
+                    del converted
         torch.cuda.synchronize(device)
         logger.warning(
             "SYNTHETIC weights: geometry/capacity testing only, not model accuracy"
@@ -119,6 +143,17 @@ def load_expert_weights(model_path, spec, rank, world, device, synthetic_seed=No
                     raise ValueError(
                         f"Checkpoint shape mismatch for {name}: "
                         f"{tuple(tensor.shape)} != {tuple(destination.shape)}"
+                    )
+                if interleaved_swiglu and projection != "down_proj":
+                    # Keep checkpoint validation in canonical [I,H] shape.
+                    # Copy directly into gran-8 [gate,up] blocks of the final
+                    # resident tensor. No second whole-model allocation.
+                    side = int(projection == "up_proj")
+                    destination = w13[layer, local].view(
+                        spec.intermediate_size // 8, 2, 8, spec.hidden_size
+                    )[:, side]
+                    tensor = tensor.view(
+                        spec.intermediate_size // 8, 8, spec.hidden_size
                     )
                 destination.copy_(tensor)
                 seen.add(key)
@@ -191,6 +226,7 @@ def expert_main(config_path, rank, manifest, stop_event):
         synthetic_seed=config.synthetic_seed
         if config.weight_mode == "synthetic"
         else None,
+        interleaved_swiglu=config.kernel == "sm100_swiglu",
     )
     buffers = OwnedBuffers(
         slot_count=config.slot_count,
@@ -215,6 +251,7 @@ def expert_main(config_path, rank, manifest, stop_event):
         max_decode_sm_fraction=config.max_decode_sm_fraction,
         ctas=config.cta_count,
         kernel=config.kernel,
+        weights_interleaved=config.kernel == "sm100_swiglu",
     )
     descriptor_path = Path(config.rendezvous_dir) / f"expert-{rank}.json"
     atomic_json(

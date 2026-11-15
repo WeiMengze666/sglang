@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from collections import Counter
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from check_gpu import Exporter, _numerics, _prepare, _reference_deepgemm, _weigh
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--kernel", choices=("sm100", "sm100_swiglu"), default="sm100")
     parser.add_argument("--hidden", type=int, default=6144)
     parser.add_argument("--intermediate", type=int, default=2560)
     parser.add_argument("--capacity", type=int, default=512)
@@ -42,6 +44,10 @@ def main():
         parser.error("world 1..4, capacity >=128 and experts >=2 are required")
     if not 1 <= args.top_k <= args.experts * args.world:
         parser.error("top_k must fit the global expert count")
+    os.environ["SGLANG_EXPERTPLEX_KERNEL"] = args.kernel
+    expected_stages = {1, 2, 5, 6, 7}
+    if args.kernel == "sm100":
+        expected_stages.add(3)
     import torch
 
     torch.cuda.set_device(0)
@@ -161,6 +167,9 @@ def main():
             ]
             streams = [torch.cuda.Stream() for _ in range(2)]
             report["executors"] = [owner.executor_info for owner in owners]
+            for info in report["executors"]:
+                assert info["backend"] == args.kernel
+                assert info["loading_stages"] == 9
             try:
 
                 def execute(prepared, phase):
@@ -299,13 +308,15 @@ def main():
                                 ).max()
                             ),
                         }
-                        for stage in (1, 2, 3, 5, 6, 7)
+                        for stage in sorted(expected_stages)
                     },
                     "interval_scope": "producer handoff to epilogue retirement; includes pipeline wait, excludes attention publication propagation",
                 }
             )
         report["observed_stages"] = sorted(stages)
-        if not {1, 2, 3, 5, 6, 7} <= stages:
+        if not expected_stages <= stages or (
+            args.kernel == "sm100_swiglu" and 3 in stages
+        ):
             raise AssertionError(f"Persistent operation traces incomplete: {stages}")
         report["status"] = "passed"
     except BaseException as exc:

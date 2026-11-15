@@ -271,10 +271,27 @@ class PersistentExecutor:
         trace_capacity: int = 0,
         benchmark_operation: str = "moe",
         operation_trace_capacity: int = 0,
+        weights_interleaved: bool = False,
     ) -> None:
         self._buffers = buffers
-        self._weights = (w13, w2)
         self.kernel = kernel or os.environ.get("SGLANG_EXPERTPLEX_KERNEL", "sm100")
+        if weights_interleaved and self.kernel != "sm100_swiglu":
+            raise ValueError("Interleaved weights require sm100_swiglu")
+        if self.kernel == "sm100_swiglu":
+            if benchmark_operation != "moe":
+                raise ValueError("Interleaved SwiGLU requires full MoE")
+            if not weights_interleaved:
+                # Component convenience path: retain caller's canonical weights
+                # for native references. Serving must prepare layer-wise and
+                # explicitly pass weights_interleaved=True to avoid a whole-model copy.
+                from deep_gemm.mega import transform_weights_for_mega_moe
+
+                shape = w13.shape
+                w13, _ = transform_weights_for_mega_moe(
+                    w13.flatten(0, 1), w2, mma_type="bf16"
+                )
+                w13 = w13.view(shape)
+        self._weights = (w13, w2)
         if benchmark_operation not in ("moe", "gateup", "down", "activation"):
             raise ValueError("Unknown diagnostic operation")
         self._impl = load_extension().PersistentExecutor(

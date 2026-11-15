@@ -31,6 +31,21 @@ GEMM 直接复用原生 DeepGEMM 的 STSM/TMA epilogue。
 `sm100_cta1` 保留单 CTA 消融后端，`sm100_fused` 保留早期 4-stage 融合 gate/up/激活后端，
 `wmma` 保留功能参考。它们不能混作论文性能结果。
 
+可选 `sm100_swiglu` 复用 DeepGEMM BF16 MegaMoE 的 granularity-8 gate/up
+交错布局，在 GateUp epilogue 中执行 SwiGLU，保留双 CTA、9-stage GEMM、
+GEMM 输出到 BF16 的舍入边界和原有队列退休协议。它跳过独立 ACT operation；
+这是额外融合优化，不能冒称论文原始六阶段实现。通过 `configure.py --kernel
+sm100_swiglu` 生成配置，P/D/E 仍使用原生服务启动入口。checkpoint 直接写入
+最终交错布局，不复制整套模型权重；合成权重按一个专家为单位转换。
+
+该后端在 B300 完成了专家组件和 Coder BF16 服务测试，但组件加速不等于
+端到端 goodput 达标。2026-11-15，当前源码与可选 A/E 记录器完成合并验证，
+`sm100` 与 `sm100_swiglu` 各通过 19 项混合 P/D、动态路由和 CUDA Graph 检查。
+默认后端为 `sm100`。融合算子检查使用 `check_preprocessing.py --kernel sm100_swiglu`；
+普通后端继续使用 `--kernel sm100`。完整质量验收和 1.5× 性能验收尚未完成。
+六阶段组件 profile 不能直接用于该融合后端的布局预测；组件优化器会拒绝这种组合。
+融合后端需要独立标定，不能把独立 ACT 的耗时直接从原模型中扣除作为预测收益。
+
 当前仍缺完整的原生流水线性能校准、抢占上界测量和跨栈策略覆盖；跨节点 RDMA MoE
 暂不属于本轮单机验收范围。真实 Coder BF16 已通过确定性模式下的固定历史逐 token
 全词表对照，覆盖三路 D 同时活动、实际批处理和非空 TBO 图重放；三路 D 使用相同的
