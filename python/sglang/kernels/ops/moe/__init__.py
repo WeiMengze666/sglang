@@ -304,3 +304,13 @@ register_kernel(
         capabilities=frozenset({CapabilityRequirement.CUDA, CapabilityRequirement.HIP}),
     )
 )
+
+register_kernel(
+    KernelSpec(
+        op="moe.mask_topk_by_rank_counts",
+        backend=KernelBackend.TRITON,
+        target="sglang.kernels.ops.moe.mask_topk_by_rank_counts:mask_topk_by_rank_counts",
+        capabilities=_CUDA,
+        description="Copy top-k outputs and mask per-rank padding using device counts.",
+    )
+)

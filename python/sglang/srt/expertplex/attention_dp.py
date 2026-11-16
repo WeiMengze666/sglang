@@ -74,6 +74,13 @@ def mask_topk_padding(topk, batch, num_dp_ranks: int):
     stride = rows // num_dp_ranks
     if any(n > stride for n in counts):
         raise ValueError("raw DP count exceeds gathered slot length")
+    if ids.device.type == "cuda":
+        from sglang.kernels.ops.moe.mask_topk_by_rank_counts import (
+            mask_topk_by_rank_counts,
+        )
+
+        masked_ids, masked_weights = mask_topk_by_rank_counts(ids, weights, raw)
+        return topk._replace(topk_ids=masked_ids, topk_weights=masked_weights)
     index = torch.arange(rows, device=ids.device)
     valid = (index.remainder(stride) < raw[index.div(stride, rounding_mode="floor")])[:, None]
     return topk._replace(
