@@ -843,6 +843,13 @@ TBO 假设 token 均衡切分，实际序列边界会影响预测，需要实测
 可在 CPU 机器上检查参数。显式 `--decode-kv-tokens` 按所有 D attention-DP rank
 分摊，因此独立 3D 和 grouped DP3 的逻辑 KV 总额一致；默认仍使用原生自动容量探测。
 
+`launch.py` 和 `run_serving_experiment.py` 支持
+`--decode-load-balance-method total_requests`，为每个 Decode attention-DP 服务选择
+原生请求分配策略。可选值还包括 `auto`、`round_robin`、`follow_bootstrap_room` 和
+`total_tokens`。手动启动独立原生 D 服务时使用 `--load-balance-method`。GPUq 70
+已验证 `round_robin` / `total_requests` 的 Coder BF16 配对运行；在固定 3.75
+requests/s 下，后者改善了 TTFT，TPOT P90 仍为 53.22ms，完整 goodput 目标待验收。
+
 可选 grouped-D 的 FlashInfer autotune 预热绕过正常 DP 批次准备。预热入口需要同时
 填写逐 DP 的原始 token 数及设备端计数，供远端 MoE 的 padding 掩码使用。预热中
 各 rank 的所有行均有效，因此复用已填充的原生 DP 计数 buffer；正式请求仍使用

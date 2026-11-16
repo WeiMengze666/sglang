@@ -148,6 +148,18 @@ def add_attention_capacity_args(parser):
             help=f"Native {phase} weight+KV budget, overriding --mem-fraction-static",
         )
 
+    parser.add_argument(
+        "--decode-load-balance-method",
+        choices=(
+            "auto",
+            "round_robin",
+            "follow_bootstrap_room",
+            "total_requests",
+            "total_tokens",
+        ),
+        help="Native request assignment within each decode attention-DP service",
+    )
+
 
 def attention_capacity_options(args):
     result = []
@@ -157,6 +169,9 @@ def attention_capacity_options(args):
             value = getattr(args, name, None)
             if value is not None:
                 result += ["--" + name.replace("_", "-"), str(value)]
+    method = getattr(args, "decode_load_balance_method", None)
+    if method is not None:
+        result += ["--decode-load-balance-method", method]
     return result
 
 
@@ -290,6 +305,9 @@ def commands(node, args):
             args.sampling_backend,
             *execution_options(args, decode=client.phase == "decode"),
         ]
+        method = getattr(args, "decode_load_balance_method", None)
+        if client.phase == "decode" and method is not None:
+            command += ["--load-balance-method", method]
         if client.attention_dp_size > 1:
             command += [
                 "--attn-dp-size",

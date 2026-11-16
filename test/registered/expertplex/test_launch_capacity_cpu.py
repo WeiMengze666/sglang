@@ -263,6 +263,7 @@ class LaunchCapacityTests(CustomTestCase):
                 commands = [shlex.split(line) for line in inner.stdout.splitlines()]
                 for command in commands[2:-1]:
                     self.assertEqual(options(command)["--max-total-tokens"], ["32768"])
+                    self.assertNotIn("--load-balance-method", options(command))
 
     def test_benchmark_to_native_P_D_commands_preserve_tuning(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -304,6 +305,8 @@ class LaunchCapacityTests(CustomTestCase):
                 "16",
                 "--decode-chunked-prefill-size",
                 "48",
+                "--decode-load-balance-method",
+                "total_requests",
                 "--enable-deterministic-inference",
                 "--dry-run",
             ]
@@ -329,6 +332,8 @@ class LaunchCapacityTests(CustomTestCase):
             self.assertIn("--enable-two-batch-overlap", p)
             self.assertNotIn("--enable-two-batch-overlap", d)
             self.assertEqual(d["--attn-dp-size"], ["3"])
+            self.assertEqual(d["--load-balance-method"], ["total_requests"])
+            self.assertNotIn("--load-balance-method", p)
             self.assertEqual(d["--chunked-prefill-size"], ["48"])
             self.assertEqual(d["--max-prefill-tokens"], ["16"])
             bench = plan["benchmark"]
