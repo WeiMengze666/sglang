@@ -6,6 +6,11 @@ import sys
 import unittest
 from pathlib import Path
 
+from sglang.test.ci.ci_register import register_cpu_ci
+from sglang.test.test_utils import CustomTestCase
+
+register_cpu_ci(est_time=5, suite="base-a-test-cpu")
+
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "examples/expertplex"))
 module = importlib.import_module("bench_preemption")
@@ -13,7 +18,7 @@ validate = module.validate_warp_propagation
 validate_universal = module.validate_universal_propagation_bound
 
 
-class WarpPropagationTests(unittest.TestCase):
+class WarpPropagationTests(CustomTestCase):
     def fixture(self):
         records, warps, decisions = [], [], []
         for seq, phase, begin, end, admission in [
@@ -155,15 +160,123 @@ class WarpPropagationTests(unittest.TestCase):
         self.assertEqual(result["arrivals"][0]["clusters_without_decode_work"], [1])
         self.assertEqual(len(result["arrivals"][0]["clusters"]), 1)
 
+    def universal_fixture(self):
+        fixture = self.fixture()
+        warp = validate(*fixture, ctas=2)
+        decisions = module.validate_decision_trace(fixture[0], fixture[1], 2)
+        warp["phase_switches"][0]["decision_to_all_warps_us"] = 2.0
+        decisions["phase_switches"][0]["old_tiles_in_flight_per_cta"] = 1
+        decisions["phase_switches"][0]["unretired_sequence_upper_bound"] = 1
+        return warp, decisions
+
+    def test_universal_gate_rejects_mismatched_switch_and_cluster_evidence(self):
+        """Counts alone previously accepted stale switch keys and duplicate recipients."""
+        for kind in (
+            "switch_key",
+            "switch_phase",
+            "duplicate_switch",
+            "duplicate_cluster",
+            "duplicate_arrival",
+        ):
+            warp, decisions = self.universal_fixture()
+            if kind == "switch_key":
+                warp["phase_switches"][0]["claim_sequence"] += 1
+            elif kind == "switch_phase":
+                warp["phase_switches"][0]["selected_phase"] = 0
+            elif kind == "duplicate_switch":
+                warp["phase_switches"] *= 2
+                decisions["phase_switches"] *= 2
+            elif kind == "duplicate_cluster":
+                warp["configured_clusters"] = 2
+                warp["configured_ctas"] = 4
+                warp["arrivals"][0]["clusters"] *= 2
+            else:
+                warp["arrivals"] *= 2
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                validate_universal(warp, decisions, 3.0)
+
+    def test_universal_gate_matches_reordered_switch_evidence_by_identity(self):
+        warp, decisions = self.universal_fixture()
+        warp["phase_switches"].append(
+            {**warp["phase_switches"][0], "claim_sequence": 3, "selected_phase": 0}
+        )
+        decisions["phase_switches"].append(
+            {**decisions["phase_switches"][0], "claim_sequence": 3, "selected_phase": 0}
+        )
+        progress = {
+            "phase_switches": [
+                {
+                    "cluster": 0,
+                    "claim_sequence": sequence,
+                    "ctas": [
+                        {
+                            "cta": cta,
+                            "gemms_without_ready_observation": 1,
+                            "data_operations_before_submission": 0,
+                        }
+                        for cta in (0, 1)
+                    ],
+                }
+                for sequence in (3, 2)
+            ]
+        }
+        warp["phase_switches"].reverse()
+        result = validate_universal(warp, decisions, 3.0, progress_checks=progress)
+        self.assertEqual(result["phase_switches"], 2)
+        self.assertEqual(result["max_live_tiles_in_flight_per_cta"], 1)
+
+    def test_universal_gate_requires_matching_complete_progress_ctas(self):
+        """An omitted CTA or another switch's progress cannot certify retirement."""
+        for kind in ("switch_key", "missing_cta", "duplicate_cta", "unknown_cta"):
+            warp, decisions = self.universal_fixture()
+            progress = {
+                "phase_switches": [
+                    {
+                        "cluster": 0,
+                        "claim_sequence": 2,
+                        "ctas": [
+                            {
+                                "cta": cta,
+                                "gemms_without_ready_observation": 1,
+                                "data_operations_before_submission": 0,
+                            }
+                            for cta in (0, 1)
+                        ],
+                    }
+                ]
+            }
+            row = progress["phase_switches"][0]
+            if kind == "switch_key":
+                row["claim_sequence"] += 1
+            elif kind == "missing_cta":
+                row["ctas"].pop()
+            elif kind == "duplicate_cta":
+                row["ctas"][1]["cta"] = 0
+            else:
+                row["ctas"][1]["cta"] = 2
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                validate_universal(warp, decisions, 3.0, progress_checks=progress)
 
     def test_universal_gate_requires_all_clusters(self):
-        warp = {"configured_clusters": 1, "clusters_without_any_tile": [], "phase_switches": [{"decision_to_all_warps_us": 2.0}], "arrivals": [{"clusters_without_decode_work": [], "clusters": [{"publication_to_all_warps_upper_bound_us": 2.0}]}]}
-        decisions = {"phase_switches": [{"old_tiles_in_flight_per_cta": 1, "unretired_sequence_upper_bound": 1}]}
+        warp, decisions = self.universal_fixture()
         self.assertEqual(validate_universal(warp, decisions, 3.0)["status"], "passed")
         with self.assertRaises(ValueError):
-            validate_universal({**warp, "clusters_without_any_tile": [1]}, decisions, 3.0)
+            validate_universal(
+                {**warp, "clusters_without_any_tile": [1]}, decisions, 3.0
+            )
         with self.assertRaises(ValueError):
-            validate_universal(warp, {"phase_switches": [{"old_tiles_in_flight_per_cta": 2, "unretired_sequence_upper_bound": 1}]}, 3.0)
+            validate_universal(
+                warp,
+                {
+                    "phase_switches": [
+                        {
+                            **decisions["phase_switches"][0],
+                            "old_tiles_in_flight_per_cta": 2,
+                        }
+                    ]
+                },
+                3.0,
+            )
         with self.assertRaises(ValueError):
             validate_universal(warp, decisions, 1.0)
         warp["phase_switches"][0]["decision_to_all_warps_us"] = 4.0
@@ -171,17 +284,35 @@ class WarpPropagationTests(unittest.TestCase):
             validate_universal(warp, decisions, 3.0)
 
     def test_universal_gate_counts_live_compute_not_submitted_store(self):
-        warp = {"configured_clusters": 1, "clusters_without_any_tile": [], "phase_switches": [{"decision_to_all_warps_us": 2.0}], "arrivals": [{"clusters_without_decode_work": [], "clusters": [{"publication_to_all_warps_upper_bound_us": 2.0}]}]}
-        decisions = {"phase_switches": [{"old_tiles_in_flight_per_cta": 2, "unretired_sequence_upper_bound": 1}]}
-        progress = {"phase_switches": [{"ctas": [
-            {"gemms_without_ready_observation": 1, "data_operations_before_submission": 0},
-            {"gemms_without_ready_observation": 0, "data_operations_before_submission": 1},
-        ]}]}
+        warp, decisions = self.universal_fixture()
+        decisions["phase_switches"][0]["old_tiles_in_flight_per_cta"] = 2
+        progress = {
+            "phase_switches": [
+                {
+                    "cluster": 0,
+                    "claim_sequence": 2,
+                    "ctas": [
+                        {
+                            "cta": 0,
+                            "gemms_without_ready_observation": 1,
+                            "data_operations_before_submission": 0,
+                        },
+                        {
+                            "cta": 1,
+                            "gemms_without_ready_observation": 0,
+                            "data_operations_before_submission": 1,
+                        },
+                    ],
+                }
+            ]
+        }
         decisions["phase_switches"][0]["unretired_sequence_upper_bound"] = 2
         result = validate_universal(warp, decisions, 3.0, progress_checks=progress)
         self.assertEqual(result["max_live_tiles_in_flight_per_cta"], 1)
         self.assertEqual(result["max_retirement_prefix"], 2)
-        progress["phase_switches"][0]["ctas"][1]["data_operations_before_submission"] = 2
+        progress["phase_switches"][0]["ctas"][1][
+            "data_operations_before_submission"
+        ] = 2
         with self.assertRaisesRegex(ValueError, "live tile"):
             validate_universal(warp, decisions, 3.0, progress_checks=progress)
 

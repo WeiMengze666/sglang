@@ -372,63 +372,123 @@ def validate_warp_propagation(
     }
 
 
+def _index_switch_evidence(rows, clusters, label):
+    """Index one observation per cluster decision, rejecting ambiguous evidence."""
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"Missing {label} phase-switch evidence")
+    indexed = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError(f"Invalid {label} phase-switch record")
+        cluster, sequence = row.get("cluster"), row.get("claim_sequence")
+        if (
+            type(cluster) is not int
+            or not 0 <= cluster < clusters
+            or type(sequence) is not int
+            or sequence < 0
+        ):
+            raise ValueError(f"Invalid {label} cluster decision identity")
+        key = (cluster, sequence)
+        if key in indexed:
+            raise ValueError(f"Duplicate {label} cluster decision")
+        indexed[key] = row
+    return indexed
+
+
 def validate_universal_propagation_bound(
     warp_checks, decision_checks, max_tile_us, progress_checks=None
 ):
-    """Require complete receipts and one live tile at each phase switch.
+    """Check complete receipts and one live tile using matching decision identities.
 
-    ``finish_ns`` includes asynchronous global-store retirement.  A submitted
-    output can therefore remain in the tile trace after its accumulator/TMA
-    work has committed.  When progress evidence is available, count only the
-    still-live GEMM and data operations for the paper's one-tile bound; retain
-    the output-retirement count in the independent trace checks.
+    Submitted asynchronous stores remain in the independent retirement checks.
+    This synthetic full-cluster diagnostic retains its existing timing threshold.
+    It does not establish the paper's full publication-to-preemption bound.
     """
     import math
+
     if not isinstance(warp_checks, dict) or not isinstance(decision_checks, dict):
         raise ValueError("Propagation checks must be dictionaries")
-    if not isinstance(max_tile_us, (int, float)) or not math.isfinite(max_tile_us) or max_tile_us <= 0:
+    if (
+        type(max_tile_us) not in (int, float)
+        or not math.isfinite(max_tile_us)
+        or max_tile_us <= 0
+    ):
         raise ValueError("max_tile_us must be finite and positive")
     clusters = warp_checks.get("configured_clusters")
-    if type(clusters) is not int or clusters <= 0:
-        raise ValueError("Need a positive configured cluster inventory")
+    ctas = warp_checks.get("configured_ctas")
+    if (
+        type(clusters) is not int
+        or clusters <= 0
+        or type(ctas) is not int
+        or ctas <= 0
+        or ctas % clusters
+        or ctas // clusters not in (1, 2)
+    ):
+        raise ValueError("Need a complete configured CTA/cluster inventory")
+    cluster_size = ctas // clusters
     if warp_checks.get("clusters_without_any_tile"):
         raise ValueError("Some configured clusters have no tile trace")
-    arrivals = warp_checks.get("arrivals")
-    switches = decision_checks.get("phase_switches")
-    local_switches = warp_checks.get("phase_switches")
-    if not isinstance(local_switches, list) or len(local_switches) != len(switches or []):
-        raise ValueError("Missing decision-to-warp propagation evidence")
+    switches = _index_switch_evidence(
+        decision_checks.get("phase_switches"), clusters, "decision"
+    )
+    local_switches = _index_switch_evidence(
+        warp_checks.get("phase_switches"), clusters, "warp"
+    )
+    if local_switches.keys() != switches.keys():
+        raise ValueError("Warp evidence does not match every phase switch")
     progress_switches = None
     if progress_checks is not None:
         if not isinstance(progress_checks, dict):
             raise ValueError("Progress checks must be a dictionary")
-        progress_switches = progress_checks.get("phase_switches")
-        if not isinstance(progress_switches, list) or len(progress_switches) != len(switches or []):
-            raise ValueError("Progress checks do not cover every phase switch")
-    if not isinstance(arrivals, list) or not arrivals:
-        raise ValueError("Need at least one decode arrival")
-    if not isinstance(switches, list) or not switches:
-        raise ValueError("Need at least one phase switch")
+        progress_switches = _index_switch_evidence(
+            progress_checks.get("phase_switches"), clusters, "progress"
+        )
+        if progress_switches.keys() != switches.keys():
+            raise ValueError("Progress evidence does not match every phase switch")
     max_live = 0
     max_local = 0.0
-    for index, switch in enumerate(switches):
-        local = local_switches[index].get("decision_to_all_warps_us")
-        if not isinstance(local, (int, float)) or not math.isfinite(local) or local < 0:
+    for key, switch in switches.items():
+        local_switch = local_switches[key]
+        selected = switch.get("selected_phase")
+        if type(selected) is not int or selected not in (0, 1):
+            raise ValueError("Invalid decision phase")
+        if local_switch.get("selected_phase") != selected:
+            raise ValueError("Warp receipt phase differs from decision")
+        local = local_switch.get("decision_to_all_warps_us")
+        if type(local) not in (int, float) or not math.isfinite(local) or local < 0:
             raise ValueError("Invalid decision-to-warp propagation evidence")
         max_local = max(max_local, float(local))
         if local > max_tile_us:
-            raise ValueError("Decision-to-warp propagation exceeds one observed tile lifetime")
+            raise ValueError(
+                "Decision-to-warp propagation exceeds one observed tile lifetime"
+            )
         pending = switch.get("old_tiles_in_flight_per_cta")
         if progress_switches is not None:
+            members = progress_switches[key].get("ctas")
+            if not isinstance(members, list):
+                raise ValueError("Missing live-tile progress evidence")
+            expected = set(range(key[0] * cluster_size, (key[0] + 1) * cluster_size))
+            observed = set()
             live_counts = []
-            for cta in progress_switches[index].get("ctas", []):
-                gemms = cta.get("gemms_without_ready_observation")
-                data = cta.get("data_operations_before_submission")
-                if type(gemms) is not int or type(data) is not int or gemms < 0 or data < 0:
+            for member in members:
+                if not isinstance(member, dict):
+                    raise ValueError("Invalid CTA progress evidence")
+                cta = member.get("cta")
+                if type(cta) is not int or cta not in expected or cta in observed:
+                    raise ValueError("Duplicate or unknown progress CTA")
+                observed.add(cta)
+                gemms = member.get("gemms_without_ready_observation")
+                data = member.get("data_operations_before_submission")
+                if (
+                    type(gemms) is not int
+                    or type(data) is not int
+                    or gemms < 0
+                    or data < 0
+                ):
                     raise ValueError("Invalid live-tile progress evidence")
                 live_counts.append(gemms + data)
-            if not live_counts:
-                raise ValueError("Missing live-tile progress evidence")
+            if observed != expected:
+                raise ValueError("Missing live-tile progress CTA")
             pending = max(live_counts)
             max_live = max(max_live, pending)
         prefix = switch.get("unretired_sequence_upper_bound")
@@ -438,19 +498,56 @@ def validate_universal_propagation_bound(
             raise ValueError("Phase switch lacks a valid retirement prefix")
         if progress_switches is None and prefix > 1:
             raise ValueError("Phase switch lacks a bounded retirement prefix")
+    arrivals = warp_checks.get("arrivals")
+    if not isinstance(arrivals, list) or not arrivals:
+        raise ValueError("Need at least one decode arrival")
     max_bound = 0.0
+    epochs = set()
     for arrival in arrivals:
+        epoch = arrival.get("decode_epoch")
+        if type(epoch) is not int or epoch <= 0 or epoch in epochs:
+            raise ValueError("Invalid or duplicate decode arrival")
+        epochs.add(epoch)
         if arrival.get("clusters_without_decode_work"):
             raise ValueError("Decode arrival does not reach every configured cluster")
         bounds = arrival.get("clusters")
-        if not isinstance(bounds, list) or len(bounds) != clusters:
-            raise ValueError("Decode arrival lacks all cluster warp receipts")
+        if not isinstance(bounds, list):
+            raise ValueError("Decode arrival lacks cluster warp receipts")
+        received = set()
         for bound in bounds:
+            cluster = bound.get("cluster")
+            if (
+                type(cluster) is not int
+                or not 0 <= cluster < clusters
+                or cluster in received
+            ):
+                raise ValueError("Duplicate or unknown arrival cluster")
+            received.add(cluster)
             value = bound.get("publication_to_all_warps_upper_bound_us")
-            if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError("Invalid publication-to-all-warp bound")
             max_bound = max(max_bound, float(value))
-    return {"status":"passed", "arrivals":len(arrivals), "configured_clusters":clusters, "phase_switches":len(switches), "max_live_tiles_in_flight_per_cta":max_live if progress_switches is not None else None, "max_retirement_prefix":max((s["unretired_sequence_upper_bound"] for s in switches), default=0), "max_decision_to_all_warps_upper_bound_us":max_local, "max_publication_to_all_warps_upper_bound_us":max_bound, "max_observed_tile_lifetime_us":float(max_tile_us), "scope":"Synthetic full-cluster propagation and one-live-tile component only; E-side decision propagation is compared with tile lifetime, while A-clock admission RTT and submitted asynchronous-store retirement remain separate diagnostics; no serving or cross-device clock subtraction"}
+        if received != set(range(clusters)):
+            raise ValueError("Decode arrival lacks all cluster warp receipts")
+    return {
+        "status": "passed",
+        "arrivals": len(arrivals),
+        "configured_clusters": clusters,
+        "phase_switches": len(switches),
+        "max_live_tiles_in_flight_per_cta": max_live
+        if progress_switches is not None
+        else None,
+        "max_retirement_prefix": max(
+            s["unretired_sequence_upper_bound"] for s in switches.values()
+        ),
+        "max_decision_to_all_warps_upper_bound_us": max_local,
+        "max_publication_to_all_warps_upper_bound_us": max_bound,
+        "max_observed_tile_lifetime_us": float(max_tile_us),
+        "scope": "Synthetic full-cluster receipt and one-live-tile component only; "
+        "E-side decision propagation is compared with tile lifetime. A-clock admission "
+        "RTT and submitted asynchronous-store retirement remain separate diagnostics. "
+        "This does not establish the complete paper propagation bound or serving performance.",
+    }
 
 
 def main():
@@ -793,11 +890,13 @@ def main():
         )
         if args.require_universal_propagation_bound:
             max_tile_us = max((r["finish_ns"] - r["begin_ns"]) / 1000 for r in records)
-            report["universal_propagation_bound"] = validate_universal_propagation_bound(
-                report["warp_propagation_checks"],
-                report["decision_trace_checks"],
-                max_tile_us,
-                progress_checks=report["progress_trace_checks"],
+            report["universal_propagation_bound"] = (
+                validate_universal_propagation_bound(
+                    report["warp_propagation_checks"],
+                    report["decision_trace_checks"],
+                    max_tile_us,
+                    progress_checks=report["progress_trace_checks"],
+                )
             )
         if args.check_single_pending_compute:
             report["pending_compute_checks"] = validate_single_pending_compute(

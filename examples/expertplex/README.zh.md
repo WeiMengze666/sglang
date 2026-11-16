@@ -1078,6 +1078,10 @@ GEMM 与未提交的数据/激活 tile 合计不超过一；没有发生切换�
 比较；A 时钟 admission RTT 只作诊断，不能跨时钟直接充当 one-tile 传播上界。该门
 槛仍是 synthetic 组件证据，不代表 serving correctness 或 goodput。
 
+验收器按 `(cluster, claim_sequence)` 关联 decision、warp receipt 和 progress
+记录，并核对每次 arrival 的唯一 cluster ID，以及每次切换的完整 CTA ID 集合。
+重复、缺失或错配的证据会被拒绝。合法记录可以采用不同的列表顺序。
+
 `bench_preemption.py --prefill-preprocess` 进一步覆盖原始 P 数据路径的 Scatter1、
 Scatter2 和 Gather。该单 E 诊断将逻辑 expert world 中 rank 0 的路由映射为本地 ID，
 其余路由设为 padding；它检查该 shard 的调度与算术，不替代完整多 E 通信验证。
