@@ -177,6 +177,13 @@ STACK 和 LOCAL 均为 0。计时覆盖 wait 与 FP32 combine，E echo 已提前
 最终 BF16 转换、E GEMM 及并发服务开销另行测量。masked 12/24/48 行的 combine
 仍约为 51.2 μs。主模型组合对照已提交 GPUq 125，goodput 收益待验证。
 
+GPUq 126 对公开源码组合重新执行了 72 项 masked 路由检查及 packed combine 的
+5 项测试，全部通过，自有进程完成清理。native 源码指纹为
+`bd3ab36f6edaf2e1faffc0353cd0434d21e24337e2d9a1d1d6e04bb758761775`。
+公开实现保留原有的 65536 条 attention trace 上限。路由边界回归入口为
+`test/manual/expertplex/check_combine_routes.py`，需在至少六张可见 GPU 的分配中运行。
+`--check-cpu` 仅检查 36 组精确 dyadic 参考数据。
+
 GPUq 104 随后验证默认的独立 1P+3D+4E 服务，固定 P=TBO、D=none、四个 A 服务
 均为 TP1、每服务请求上限 16、D graph buckets 为 1/2/4/8/12/16，保留 CPU
 调度重叠、FA4、FlashInfer sampling 和关闭记录器的配置。候选将 route 向量读取

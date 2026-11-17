@@ -198,11 +198,11 @@ __global__ void group_wait(const GroupBuffers *g, U64 timeout_ns) {
     }
   }
 }
-template <typename Id, typename Output>
+template <bool Packed, typename Id, typename Output>
 __global__ void group_combine_rows(const GroupBuffers *g, Output *output,
                                    const Id *ids, const float *weights,
                                    const int *rows, int n, int k) {
-  if (g->local[0].packed[g->slot]) {
+  if constexpr (Packed) {
     // Sender-packed prefill reproduces the E-side BF16 per-rank gather
     // boundary in combine_rows_body before rank-major FP32 accumulation.
     if constexpr (std::is_same_v<Output, float>) {
@@ -223,34 +223,53 @@ __global__ void group_combine_rows(const GroupBuffers *g, Output *output,
        i += static_cast<size_t>(gridDim.x) * blockDim.x) {
     const int token = i / vectors, h = (i % vectors) * 8;
     float value[8] = {};
-    for (int choice = 0; choice < k; ++choice) {
-      const size_t route = static_cast<size_t>(token) * k + choice;
-      const int expert = static_cast<int>(ids[route]);
-      if (expert < 0 || expert >= experts * g->world)
-        continue;
-      const int rank = expert % g->world;
-      if (*g->status[rank] != OK)
-        continue;
-      const auto &b = g->local[rank];
-      const int row = rows[route];
-      if (row < 0 || row >= b.capacity[g->slot])
-        continue;
-      const size_t base =
-          (expert_base(b, g->slot, expert / g->world) + row) * hidden + h;
-      uint32_t words[4];
-      asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
-                   : "=r"(words[0]), "=r"(words[1]), "=r"(words[2]), "=r"(words[3])
-                   : "l"(b.output + base)
-                   : "memory");
-      const float weight = weights[route];
+    // Stage independent peer reads before consuming them. Preserve the
+    // route-major FP32 FMA order and the single final BF16 conversion.
+    constexpr int routes_per_chunk = 8;
+    for (int first = 0; first < k; first += routes_per_chunk) {
+      uint32_t words[routes_per_chunk][4];
+      float route_weights[routes_per_chunk];
+      bool valid[routes_per_chunk] = {};
 #pragma unroll
-      for (int pair = 0; pair < 4; ++pair) {
-        value[2 * pair] = fmaf(
-            __bfloat162float(__ushort_as_bfloat16(words[pair] & 65535)), weight,
-            value[2 * pair]);
-        value[2 * pair + 1] = fmaf(
-            __bfloat162float(__ushort_as_bfloat16(words[pair] >> 16)), weight,
-            value[2 * pair + 1]);
+      for (int offset = 0; offset < routes_per_chunk; ++offset) {
+        const int choice = first + offset;
+        if (choice >= k)
+          break;
+        const size_t route = static_cast<size_t>(token) * k + choice;
+        const int expert = static_cast<int>(ids[route]);
+        if (expert < 0 || expert >= experts * g->world)
+          continue;
+        const int rank = expert % g->world;
+        if (*g->status[rank] != OK)
+          continue;
+        const auto &b = g->local[rank];
+        const int row = rows[route];
+        if (row < 0 || row >= b.capacity[g->slot])
+          continue;
+        const size_t base =
+            (expert_base(b, g->slot, expert / g->world) + row) * hidden + h;
+        asm volatile("ld.global.cg.v4.u32 {%0, %1, %2, %3}, [%4];"
+                     : "=r"(words[offset][0]), "=r"(words[offset][1]),
+                       "=r"(words[offset][2]), "=r"(words[offset][3])
+                     : "l"(b.output + base)
+                     : "memory");
+        route_weights[offset] = weights[route];
+        valid[offset] = true;
+      }
+#pragma unroll
+      for (int offset = 0; offset < routes_per_chunk; ++offset) {
+        if (!valid[offset])
+          continue;
+        const float weight = route_weights[offset];
+#pragma unroll
+        for (int pair = 0; pair < 4; ++pair) {
+          value[2 * pair] = fmaf(
+              __bfloat162float(__ushort_as_bfloat16(words[offset][pair] & 65535)),
+              weight, value[2 * pair]);
+          value[2 * pair + 1] = fmaf(
+              __bfloat162float(__ushort_as_bfloat16(words[offset][pair] >> 16)),
+              weight, value[2 * pair + 1]);
+        }
       }
     }
     store_group_combine(output, i, value);
@@ -456,24 +475,35 @@ public:
       return;
     }
     if (blocks) {
-      if (output_bf16) {
+      if (packed) {
+        if (ids.scalar_type() == at::kInt)
+          group_combine_rows<true><<<blocks, 256, 0, stream>>>(
+              gpu, output.data_ptr<float>(), ids.data_ptr<int>(),
+              weights.data_ptr<float>(), rows.data_ptr<int>(), ids.size(0),
+              ids.size(1));
+        else
+          group_combine_rows<true><<<blocks, 256, 0, stream>>>(
+              gpu, output.data_ptr<float>(), ids.data_ptr<int64_t>(),
+              weights.data_ptr<float>(), rows.data_ptr<int>(), ids.size(0),
+              ids.size(1));
+      } else if (output_bf16) {
         auto *out =
             reinterpret_cast<BF16 *>(output.data_ptr<at::BFloat16>());
         if (ids.scalar_type() == at::kInt)
-          group_combine_rows<<<blocks, 256, 0, stream>>>(
+          group_combine_rows<false><<<blocks, 256, 0, stream>>>(
               gpu, out, ids.data_ptr<int>(), weights.data_ptr<float>(),
               rows.data_ptr<int>(), ids.size(0), ids.size(1));
         else
-          group_combine_rows<<<blocks, 256, 0, stream>>>(
+          group_combine_rows<false><<<blocks, 256, 0, stream>>>(
               gpu, out, ids.data_ptr<int64_t>(), weights.data_ptr<float>(),
               rows.data_ptr<int>(), ids.size(0), ids.size(1));
       } else if (ids.scalar_type() == at::kInt)
-        group_combine_rows<<<blocks, 256, 0, stream>>>(
+        group_combine_rows<false><<<blocks, 256, 0, stream>>>(
             gpu, output.data_ptr<float>(), ids.data_ptr<int>(),
             weights.data_ptr<float>(), rows.data_ptr<int>(), ids.size(0),
             ids.size(1));
       else
-        group_combine_rows<<<blocks, 256, 0, stream>>>(
+        group_combine_rows<false><<<blocks, 256, 0, stream>>>(
             gpu, output.data_ptr<float>(), ids.data_ptr<int64_t>(),
             weights.data_ptr<float>(), rows.data_ptr<int>(), ids.size(0),
             ids.size(1));
