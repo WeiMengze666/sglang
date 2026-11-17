@@ -175,7 +175,7 @@ GPUq 108/113 将 packed 与 masked combine 按模板参数分别实例化，保�
 配对输入与输出张量检查通过。packed FP32 实例的寄存器数从 88 降至 54，
 STACK 和 LOCAL 均为 0。计时覆盖 wait 与 FP32 combine，E echo 已提前完成，
 最终 BF16 转换、E GEMM 及并发服务开销另行测量。masked 12/24/48 行的 combine
-仍约为 51.2 μs。主模型组合对照已提交 GPUq 125，goodput 收益待验证。
+仍约为 51.2 μs。主模型组合对照的当前恢复实验为 GPUq 135，goodput 收益待验证。
 
 GPUq 126 对公开源码组合重新执行了 72 项 masked 路由检查及 packed combine 的
 5 项测试，全部通过，自有进程完成清理。native 源码指纹为
@@ -345,6 +345,13 @@ rank 配置、四组请求长度、固定 SLO 和自有进程清理均已核验�
    使用原生 Qwen3 P/D operation 顺序和完整的 dispatch A/B、experts、combine A/B
    接口。`begin` 在 COMM stream 等待 COMPUTE 的路由结果，
    调用 `csrc/group_communication.cuh::RemoteGroup` 的 dispatch/combine 接口。
+   当前性能实验采用 sender-packed P（`prefill_preprocess=False`）。attention 端的
+   `group_count` / `group_pack` 计算每个专家的行号和 offsets，`group_dispatch_rows`
+   直接写入 E 的 `b.input`。`attention_metadata()` 仅替换 counts/offsets 指针，
+   保留 IPC 映射的 input/output 地址。`group_publish` 将最终元数据复制到 E，
+   在各写入线程的 system fence 和 CTA 同步之后发布 READY。E 使用这些 offsets
+   执行 GEMM。packed combine 从 E 的 `b.output` 拉取结果，先完成每个 EP rank
+   的 top-k FP32 累加及 BF16 RN，再按 rank 顺序做 FP32 累加和最终 BF16 转换。
    raw P 路径（`prefill_preprocess=True`）由 `group_dispatch_raw` 写入固定的
    transport 接收张量 `raw_input` 及路由元数据，`group_publish` 在 payload fence 后
    发布 READY。APK 随后执行 Scatter1 计数、计算 expert offsets，再由 Scatter2
@@ -426,8 +433,8 @@ GPUq 134/135 已提交恢复实验，运行结果待核验。
 | §4.3 Fig.4 | system P → CTA0 → device p_i → cluster DSMEM → warp broadcast → mbarrier | 默认后端已实现该传播链；GPU 定时发布和 tile trace 已采集，尚未证明完整上界 | 可控时刻注入 urgent decode，记录各级 epoch/timestamp |
 | §4.3 | 决策在 check epoch 内固定；观察切换后不得再领取旧 phase tile | leader 是唯一领取者并向所有成员分发同一 Task；CAS 竞争不会被当成 phase 空闲；trace validator 检查成员决策与阶段退役，但完整传播上界仍待验证 | 有预取、多 warp、多 CTA 的长时间压力测试 |
 | §4.3 | 不在每个 tile 后 drain pipeline；无需 checkpoint、restore 或重算 | SM100 双 accumulator，延迟 store 退休与 Task ring 元数据复用已分离；跨 mailbox 回归通过，配对汇总仍慢约 0.73%。完整 SM100 后端默认开启，可显式关闭做消融 | pipeline 轨迹、吞吐及 phase 切换边界检查 |
-| §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | NVLink IPC 路径已验证全部 56 个有向 GPU 对；raw P 的最终 transport 接收张量与 expert-packed GEMM 张量不同，后者的 offsets 由 E 生成；与原文 sender-final-expert-offset 的字面一致性尚未证明 | 最终张量定义与 offset 所有权审计；多发送方、重复 epoch、容量边界、故障路径 |
-| §5.2 | E 无独立通信接收 kernel、无预留 polling SM；attention pull 最终结果 | 默认 raw P 没有 receiver-ring/credit-return，但 APK 执行 Scatter1/Scatter2/Gather；attention pull Gather 的最终 per-rank BF16 结果；通信微基准的 identity echo 仅为计时外诊断 | kernel trace、并发 P/D 数值验证；通信与本地数据整理边界分别计时 |
+| §5.2 | attention push 到最终 dispatch buffer；payload 可见后发布 ready | 当前性能配置的 sender-packed P 和 masked D 直接写入 E 的 GEMM 输入；P 的 counts/offsets 在 attention 端生成并在 READY 前发布，D 使用固定 expert stride。NVLink IPC 已验证全部 56 个有向 GPU 对。raw P 的本地 Scatter/Gather 使用另一路径 | 保持两条路径各自的 epoch、容量、错误与并发回归；补齐完整服务传播时延验收 |
+| §5.2 | E 无独立通信接收 kernel、无预留 polling SM；attention pull 最终结果 | sender-packed P 从 E 的 GEMM 输出拉取，attention 端保留 per-rank BF16 gather 舍入。raw P 在 APK 内执行 Scatter1/Scatter2/Gather，attention 拉取其 BF16 输出。两条路径均使用 attention-side WaitDone | kernel trace、并发 P/D 验证；通信微基准的 identity echo 仅为计时外诊断 |
 | §5.2 Fig.5 | 单线程 WaitDone 位于 COMM stream；COMPUTE stream 可继续 TBO/SBO | 独立 COMM stream 和双 mailbox 已实现；真实模型三路 D 已验证非空双 microbatch 图重放及所有 E 的 epoch 完成，Qwen2 SBO 已复用原生 shared 分支并通过辅助模型全词表对齐及实际 Decode 图节点重叠验证；prefill 图/shared TBO/标定仍未验收 | CUDA timeline 的计算/通信重叠量与 SBO 验证 |
 | §5.3 | 跨节点 P 同 local rank 转发，节点内 NVLink multicast/gather；无 P 节点走低优先级 IB VL | 单节点 MoE 路径为 NVLink；多节点 MoE RDMA/层次转发未实现 | 需要多节点与 IB 硬件；单机测试不能替代 |
 | §6.1–6.3 Eq.1–3 | 联合枚举 attention/MoE 并行、布局、overlap、q；内存过滤；SLO 二分批量；critical path 估计 | 当前优化器只覆盖部分布局与简化模型，需补齐可执行策略 | profile 拟合留出集误差、候选可执行性、预测/实测对比 |
@@ -435,9 +442,14 @@ GPUq 134/135 已提交恢复实验，运行结果待核验。
 
 论文 §7.1、§7.6 本身包含 APK 内的 MoE 预处理/后处理和 EP Scatter/Gather，不能仅因
 存在本地 scatter 就判定与论文不一致，也不能据此把两种“最终 buffer”视为已经等同。
-§5.2 的逐细节验收仍需确认论文最终张量的布局与 sender/E 的 offset 所有权；若采用
-sender 直接写 expert-packed 输入的路径，须保留并重新验证原生 normal 模式的 per-rank
-BF16 gather 舍入边界，再完成并发、epoch/容量/错误路径与数值、通信重叠验收。
+2026-11-18 的源码核对确认，sender-packed 路径的 offset 由 attention 生成，payload
+写入 APK GEMM 使用的同一个 IPC 映射地址。每个 mailbox 的单一 attention 写入者
+由 bootstrap lease 管理，TBO 子批次使用不同 slot。GPUq 126 的公开源码指纹与
+当前 native 源码一致，packed combine 的实际 grouped/per-peer IPC 及 FP32/最终
+BF16 检查已通过。GPUq 128 的主模型服务配置也明确使用 sender-packed P。
+这覆盖了该路径的缓冲区所有权和已记录的组件/服务验证。§7.1、§7.6 的 APK 内
+Scatter/Gather 操作仍按 raw 路径独立验收，完整抢占传播、优化器标定及端到端
+goodput 继续保留为未完成项。
 
 ## 论文实验逐项对应
 
@@ -516,7 +528,9 @@ HTTP 仅用于启动、独占槽位登记与退出释放，每层 activation 仍
 恢复这些默认值之后，旧的固定参数性能结果仍保留，但不能当成新配置的验收结果。
 
 
-## 2026-11-09 本地开发状态
+## 2026-11-09 本地开发历史记录
+
+以下为当日硬件恢复前的记录。其后的 GPU 验证见本文件开头和 2026-11-17 更新。
 
 当前 B300 不可用。本轮 CPU 回归共 108 项，107 项通过，实际 CUDA IPC 归并测试
 1 项因缺少 GPU 跳过。已在原生参数生成链路修复 P/D 独立请求上限、显存比例和
