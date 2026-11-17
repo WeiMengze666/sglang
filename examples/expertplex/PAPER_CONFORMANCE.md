@@ -161,7 +161,24 @@ GPUq 79 使用原生 DP3 通信组测量 BF16、H=6144、每 rank 行数 1/2/4/8
 的输出边界。三 rank 的 eager/graph 共 24 个条件通过动态输入输出检查，各采样
 30 次、每次 32 个操作。CUDA Graph 中，原生 AllReduce 加本地切片相对
 ReduceScatter 加速 1.38–1.94×，每次节省 7.88–13.77 μs；eager 模式更慢。
-该组件测量排除了 E 并发、attention 和 norm 融合，主模型收益待配对验证。
+该组件测量排除了 E 并发、attention 和 norm 融合。
+
+GPUq 86 随后完成同一源码、可选 attention-DP3 的主模型配对。仅将 D 的原生
+`boundary_reduction` 从 `rs+rsv` 改为 `ar`，保留 round-robin、CPU 调度重叠、
+P/D 无 TBO、请求上限和 graph buckets。四组各 256 个请求全部完成，实际各 rank
+配置、输入/输出长度与自有进程清理均已核验。
+
+| D 边界通信 | 到达率 (requests/s) | 联合达标请求 | TTFT P90 (ms) | TPOT P90 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| rs+rsv | 3 | 221 / 256 | 506.45 | 50.36 |
+| ar | 3 | 117 / 256 | 2472.72 | 56.03 |
+| rs+rsv | 3.75 | 143 / 256 | 2442.03 | 53.22 |
+| ar | 3.75 | 147 / 256 | 2239.42 | 53.15 |
+
+四组均低于固定的 90% 联合门槛。3 requests/s 下 `ar` 明显回退，组件加速尚未
+转化为服务收益，性能配置继续采用 `rs+rsv`。两组 D 日志记录的 decode batch
+均使用 CUDA Graph。此单次配对尚不能解释服务回退的具体机制，仍需请求时序和
+完整 forward 的匹配诊断。默认三路独立 D 与完整 goodput 目标继续单独验收。
 
 GPUq 81 的原生 TP8/EP8/attention-DP8 基线保留 FlashInfer BF16 A2A/runner、
 FA4、DP LM head、CPU 调度重叠及原有容量。每个到达率各 256 个请求，实际八个
