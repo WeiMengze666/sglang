@@ -522,6 +522,7 @@ def main():
     log_root = Path(args.log_dir).resolve()
     log_root.mkdir(parents=True, exist_ok=True)
     import psutil
+    from sglang.srt.utils.network import try_bind_socket
 
     children = []
     owned = []
@@ -563,17 +564,20 @@ def main():
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
     try:
-        spawn("experts", worker_command, base_env)
-        wait_http(
-            f"http://127.0.0.1:{args.port + 200}",
-            children,
-            time.monotonic() + node.startup_timeout_s,
-        )
-        for client, command in server_commands:
-            spawn(f"{client.phase}-{client.id}", command, base_env)
-        deadline = time.monotonic() + node.startup_timeout_s
-        for client, _ in server_commands:
-            wait_http(f"http://127.0.0.1:{client.port}", children, deadline)
+        # Mooncake allocates RPC ports while P/D start. Hold the router's port
+        # until its own process can bind it, including during long compilation.
+        with try_bind_socket(host=args.host, port=args.port, reuse_addr=False):
+            spawn("experts", worker_command, base_env)
+            wait_http(
+                f"http://127.0.0.1:{args.port + 200}",
+                children,
+                time.monotonic() + node.startup_timeout_s,
+            )
+            for client, command in server_commands:
+                spawn(f"{client.phase}-{client.id}", command, base_env)
+            deadline = time.monotonic() + node.startup_timeout_s
+            for client, _ in server_commands:
+                wait_http(f"http://127.0.0.1:{client.port}", children, deadline)
         spawn("router", router_command, base_env)
         wait_http(
             f"http://{args.host}:{args.port}",
