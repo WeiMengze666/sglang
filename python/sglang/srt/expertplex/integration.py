@@ -173,27 +173,25 @@ def attention_weights_iterator(
 
 
 def compiled_attention_errors(cfg, client, config):
-    """Admit the bounded native decode compiler path without diagnostic switches.
+    """Check the native decode compiler's ExpertPlex integration boundary.
 
-    These checks select the numerically validated configuration, not a separate
-    model executor. SGLang still owns compilation, CUDA graphs, scheduling and
-    attention; remote routed MoE retains its existing eager compiler boundary.
+    SGLang owns graph-bucket alignment, compilation and tuning. Precision and
+    determinism controls remain user choices. Remote routed MoE keeps its eager
+    compiler boundary while attention uses the native compiled model forward.
     """
     if not getattr(cfg, "enable_torch_compile", False):
         return []
     errors = []
     overlap = getattr(client, "overlap", None) or config.overlap
-    if (
-        getattr(cfg, "disaggregation_mode", None) != "decode"
-        or not getattr(cfg, "enable_deterministic_inference", False)
-        or getattr(cfg, "torch_compile_max_bs", None) != 16
-    ):
-        errors.append(
-            "--enable-torch-compile requires deterministic decode with "
-            "--torch-compile-max-bs 16"
-        )
+    if getattr(cfg, "disaggregation_mode", None) != "decode":
+        errors.append("--enable-torch-compile requires decode attention")
+    max_bs = getattr(cfg, "torch_compile_max_bs", None)
+    if type(max_bs) is not int or max_bs <= 0:
+        errors.append("--torch-compile-max-bs must be a positive integer")
     if client.tp_size != 1 or overlap not in ("none", "tbo"):
-        errors.append("ExpertPlex compiled decode requires TP1 and overlap none or tbo")
+        errors.append(
+            "ExpertPlex compiled decode requires local attention TP1 and overlap none or tbo"
+        )
     graph = getattr(cfg, "cuda_graph_config", None)
     decode = (
         graph.get("decode", {})
@@ -205,28 +203,8 @@ def compiled_attention_errors(cfg, client, config):
         if isinstance(decode, dict)
         else getattr(decode, "backend", None)
     )
-    sizes = (
-        decode.get("bs") if isinstance(decode, dict) else getattr(decode, "bs", None)
-    )
-    supported = [[2, 4, 8, 12, 16]]
-    if overlap == "none":
-        supported.append([1, 2, 4, 8, 12, 16])
-    if backend != "full" or list(sizes or []) not in supported:
-        errors.append(
-            "ExpertPlex compiled decode requires full CUDA graph buckets "
-            "2,4,8,12,16 (an additional singleton bucket is supported without TBO)"
-        )
-    required_env = {
-        "SGLANG_TORCH_COMPILE_MODE": "default",
-        "TORCHINDUCTOR_BATCH_INVARIANT": "1",
-        "TORCHINDUCTOR_EMULATE_PRECISION_CASTS": "1",
-        "TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS": "ATEN",
-    }
-    for name, value in required_env.items():
-        if os.environ.get(name) != value:
-            errors.append(
-                f"ExpertPlex compiled decode requires {name}={value} before startup"
-            )
+    if backend != "full":
+        errors.append("ExpertPlex compiled decode requires full CUDA graphs")
     return errors
 
 

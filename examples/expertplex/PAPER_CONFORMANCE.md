@@ -519,7 +519,7 @@ HTTP 仅用于启动、独占槽位登记与退出释放，每层 activation 仍
 | KV / prefix cache | 沿用原生 allocator、radix cache 和显存容量 profiling；启动器默认不传 `--max-total-tokens`。§7.1 统一的是按 PDD 容量限制的采样序列长度，并非各布局的总 KV pool 容量。显式固定总 KV 的实验仅作为额外控制实验。 |
 | Attention backend | 保留 SGLang backend 选择；Triton 的固定数值对照不能代表 FlashInfer/FA4 等路径的最佳性能。 |
 | Prefill graph | 已接入原生 breakable prefill graph，D 保留原生 full decode graph。P graph 默认关闭，须使用 `overlap=none`；辅助入口拒绝与 TBO 同时启用，原生参数解析也会禁用该组合。应分别验证同模式数值对齐和实际 prefill 图执行，不能把捕获成功当作请求已经走图。跨 eager/graph 的逐位比较须另做确定性模式验证。 |
-| torch.compile | 公开入口当前支持受限的 TP1 decode 配置，要求确定性模式、固定 batch 上限和诊断环境变量。移除这些旧诊断限制的候选已通过 8 项 CPU 参数回归。attention-DP3 扩展连同启动参数转发共通过 10 项回归，并通过已有 24 项 DP 检查。主模型编译开关对照已提交 GPUq 123/124。GPU 启动和性能结果待核验，候选尚未发布。逐位比较继续用于定位问题，模型质量按本文件开头的当前验收口径集中评估。 |
+| torch.compile | TP1 decode 的公开入口保留 full graph 与 none/TBO，使用原生 bucket 对齐和编译调优，允许用户选择确定性及精度选项。普通参数集成通过 8 项 CPU 回归，GPUq 123/128 完成独立 1P+3D+4E、P/D none 的主模型编译开关对照，尚无容量收益。attention-DP3 扩展连同启动参数转发通过 10 项回归及已有 24 项 DP 检查，GPUq 134 验证待完成，扩展候选尚未发布。逐位比较继续用于定位问题，模型质量按当前口径集中评估。 |
 | DeepGEMM | 复用原生 TMA、TCGEN05、双 CTA multicast、STSM/TMA epilogue 和 BF16 舍入边界；新增的是长驻 operation 选择与合作阶段切换。负收益的替代实现不能替换已验证路径。 |
 | DeepEP | Decode combine 保持原生 low-latency 的 top-k 顺序 FP32 FMA 与最终 BF16 舍入；P 保持 normal 的每 rank BF16 gather 边界。普通 SGLang 基线继续调用原生 normal / low-latency dispatcher；ExpertPlex 的 attention-initiated M-to-N 不能直接套用要求 E 侧 receiver kernel 的原始 API。新的协议仍需继续对照 DeepEP 的路由布局、向量搬运和归并实现，不能据仅有功能通过宣称保留了全部性能优化。 |
 | Chunked prefill / SBO / TP | chunked prefill 有显式选项；Qwen2 SBO 已通过辅助模型数值与 Decode 图重叠验证；prefill 图、shared TBO、共享分支标定及 attention TP>1 的完整验收仍待完成。默认整请求 P 是论文实验配置，不是 SGLang 能力被全局删除。 |
