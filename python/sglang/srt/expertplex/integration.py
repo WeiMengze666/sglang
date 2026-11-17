@@ -370,8 +370,6 @@ def validate_server_args(cfg: Any) -> None:
     if getattr(cfg, "attn_dp_size", 1) != attention_dp_size:
         errors.append(f"--attn-dp-size must be {attention_dp_size}")
     if attention_dp_size > 1:
-        if getattr(cfg, "disable_overlap_schedule", False):
-            errors.append("grouped attention DP requires CPU overlap")
         if getattr(cfg, "enable_torch_compile", False):
             errors.append("grouped attention DP compile is not validated")
         if not getattr(cfg, "enable_dp_lm_head", False):

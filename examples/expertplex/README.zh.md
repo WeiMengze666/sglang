@@ -850,6 +850,12 @@ TBO 假设 token 均衡切分，实际序列边界会影响预测，需要实测
 已验证 `round_robin` / `total_requests` 的 Coder BF16 配对运行；在固定 3.75
 requests/s 下，后者改善了 TTFT，TPOT P90 仍为 53.22ms，完整 goodput 目标待验收。
 
+默认使用原生 CPU 调度重叠。调度消融可通过
+`--decode-disable-overlap-schedule` 仅选择 D 端的原生普通调度循环，独立启动 D
+服务时使用 `--disable-overlap-schedule`。GPUq 72 已验证 grouped-D 的两种循环均能
+完成服务与清理。在 3 requests/s 下，关闭重叠使联合达标数从 222/256 降至
+52/256，平均 TPOT 从 46.20ms 升至 51.18ms，因此性能配置采用默认重叠模式。
+
 可选 grouped-D 的 FlashInfer autotune 预热绕过正常 DP 批次准备。预热入口需要同时
 填写逐 DP 的原始 token 数及设备端计数，供远端 MoE 的 padding 掩码使用。预热中
 各 rank 的所有行均有效，因此复用已填充的原生 DP 计数 buffer；正式请求仍使用

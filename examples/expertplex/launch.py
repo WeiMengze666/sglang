@@ -136,6 +136,11 @@ def decode_graph_options(args, capacity=None):
 
 def add_attention_capacity_args(parser):
     """Independent admission and KV budgets for native P and D services."""
+    parser.add_argument(
+        "--decode-disable-overlap-schedule",
+        action="store_true",
+        help="Use the native non-overlap CPU scheduler on decode services",
+    )
     for phase in ("prefill", "decode"):
         parser.add_argument(
             f"--{phase}-max-running-requests",
@@ -163,6 +168,8 @@ def add_attention_capacity_args(parser):
 
 def attention_capacity_options(args):
     result = []
+    if getattr(args, "decode_disable_overlap_schedule", False):
+        result.append("--decode-disable-overlap-schedule")
     for phase in ("prefill", "decode"):
         for suffix in ("max_running_requests", "mem_fraction_static"):
             name = f"{phase}_{suffix}"
@@ -227,11 +234,10 @@ def commands(node, args):
         if client.attention_dp_size > 1 and (
             getattr(args, "enable_torch_compile", False)
             or not args.cuda_graph
-            or getattr(args, "disable_overlap_schedule", False)
             or getattr(args, "diagnostic_logit_processor", False)
         ):
             raise ValueError(
-                "grouped attention DP requires CPU overlap, full D graphs and no compile"
+                "grouped attention DP requires full D graphs and no compile"
             )
         running = attention_request_limit(node, client, args, capacity)
         bootstrap = args.bootstrap_port + client.id
@@ -328,8 +334,13 @@ def commands(node, args):
         # Ordinary serving retains SGLang's CPU/GPU overlap. The diagnostic
         # capture processor reads CPU request history synchronously and is not
         # a performance configuration.
-        if getattr(args, "disable_overlap_schedule", False) or getattr(
-            args, "diagnostic_logit_processor", False
+        if (
+            getattr(args, "disable_overlap_schedule", False)
+            or (
+                client.phase == "decode"
+                and getattr(args, "decode_disable_overlap_schedule", False)
+            )
+            or getattr(args, "diagnostic_logit_processor", False)
         ):
             command += ["--disable-overlap-schedule"]
         if getattr(args, "disable_flashinfer_autotune", False):

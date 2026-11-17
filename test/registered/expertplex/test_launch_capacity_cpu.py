@@ -264,6 +264,7 @@ class LaunchCapacityTests(CustomTestCase):
                 for command in commands[2:-1]:
                     self.assertEqual(options(command)["--max-total-tokens"], ["32768"])
                     self.assertNotIn("--load-balance-method", options(command))
+                    self.assertNotIn("--disable-overlap-schedule", options(command))
 
     def test_benchmark_to_native_P_D_commands_preserve_tuning(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -307,6 +308,7 @@ class LaunchCapacityTests(CustomTestCase):
                 "48",
                 "--decode-load-balance-method",
                 "total_requests",
+                "--decode-disable-overlap-schedule",
                 "--enable-deterministic-inference",
                 "--dry-run",
             ]
@@ -324,7 +326,6 @@ class LaunchCapacityTests(CustomTestCase):
                 self.assertEqual(row["--cuda-graph-bs-decode"], ["16"])
                 self.assertIn("--enable-deterministic-inference", row)
                 self.assertNotIn("--max-total-tokens", row)
-                self.assertNotIn("--disable-overlap-schedule", row)
             self.assertEqual(p["--max-running-requests"], ["16"])
             self.assertEqual(d["--max-running-requests"], ["48"])
             self.assertEqual(p["--mem-fraction-static"], ["0.9"])
@@ -334,6 +335,8 @@ class LaunchCapacityTests(CustomTestCase):
             self.assertEqual(d["--attn-dp-size"], ["3"])
             self.assertEqual(d["--load-balance-method"], ["total_requests"])
             self.assertNotIn("--load-balance-method", p)
+            self.assertIn("--disable-overlap-schedule", d)
+            self.assertNotIn("--disable-overlap-schedule", p)
             self.assertEqual(d["--chunked-prefill-size"], ["48"])
             self.assertEqual(d["--max-prefill-tokens"], ["16"])
             bench = plan["benchmark"]

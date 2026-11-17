@@ -371,6 +371,45 @@ class IntegrationTests(unittest.TestCase):
         ):
             self.assertIn(fragment, str(caught.exception))
 
+    def test_grouped_dp_accepts_native_cpu_schedule_modes(self):
+        """DP graph row-count validation applies to both native scheduler loops."""
+        node = self.config.to_dict()
+        node["clients"] = [
+            node["clients"][0],
+            dict(
+                id=1,
+                phase="decode",
+                device=1,
+                port=30001,
+                tp_size=3,
+                attention_dp_size=3,
+                overlap="none",
+            ),
+        ]
+        node["max_decode_tokens"] = 48
+        CONFIG.NodeConfig.from_dict(node).write_json(self.config_path)
+        INTEGRATION._load_attention_config.cache_clear()
+        for disabled in (False, True):
+            with self.subTest(disable_overlap_schedule=disabled):
+                INTEGRATION.validate_server_args(
+                    self.server_args(
+                        tp_size=3,
+                        attn_dp_size=3,
+                        enable_dp_lm_head=True,
+                        disable_overlap_schedule=disabled,
+                        max_running_requests=48,
+                        chunked_prefill_size=16,
+                        max_prefill_tokens=16,
+                        cuda_graph_config={
+                            "prefill": {"backend": "disabled"},
+                            "decode": {
+                                "backend": "full",
+                                "bs": [1, 2, 4, 8, 12, 16],
+                            },
+                        },
+                    )
+                )
+
     def test_native_schedule_overlap_is_not_rejected(self):
         INTEGRATION.validate_server_args(
             self.server_args(disable_overlap_schedule=False)
