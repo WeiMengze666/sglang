@@ -493,7 +493,9 @@ KV pool 默认沿用 SGLang 显存 profiling；以上命令不限制总 KV token
 仅用于显式的控制实验。原生 scheduler overlap、decode CUDA Graph、FlashInfer
 attention/sampling/autotune 和 Mooncake KV 移交继续使用。缓存行为遵循原生 PD 默认值
 （例如 decode radix cache 默认关闭），可以在已支持的原生选项范围内调整。
-公开服务入口仍拒绝尚未完成组合验收的 `torch.compile`。已合入的编译兼容修复
+公开服务入口支持 TP1 decode、full CUDA Graph 和 none/TBO overlap 的受限
+`torch.compile` 配置，当前仍要求确定性模式、batch 上限 16 及诊断环境变量。
+已合入的编译兼容修复
 保留原生 CUDA TopK 的 padding 和专家映射处理，让异步远端 MoE 通信保持原有
 dispatch/combine 生命周期，同时允许相邻 dense 运算编译；确定性模式的
 `aten::mm.out` 继续使用已有 invariant GEMM，并固定归约配置。普通模式的编译调优保留。
@@ -507,8 +509,12 @@ dispatch/combine 生命周期，同时允许相邻 dense 运算编译；确定�
 该检查加入了额外 GPU 计数器；随后删除计数器内核并恢复原有 runner 的复验也通过：
 上述五个阶段的全词表字节保持一致，三个 D 仍有共同进展，四个 E 的双子批次完成
 记录均通过检查。该复验保留 CPU 诊断采样，不是普通服务性能测试。
-原生编译参数接入及按汇编器隔离、复用缓存的候选仍在验证，公开入口的组合限制
-继续保留。以上结果不证明 QKV/router 的编译覆盖、其他工具链或 goodput。
+2026-11-17 已准备普通原生编译配置候选，移除确定性、固定 batch 上限、固定图
+bucket 列表及诊断环境变量的强制条件，图 bucket 对齐和编译调优交由原生 SGLang
+处理。8 项 CPU 回归通过，旧实现在实际参数校验处失败。GPUq 120 使用同一候选
+源码，对照默认独立 1P+3D+4E 中 decode 编译关闭与开启，保持 P/D overlap 为 none、
+负载及 SLO 相同。实际 GPU 启动与性能待验证，候选尚未发布。
+以上历史数值结果不证明 QKV/router 的编译覆盖、其他工具链或 goodput。
 
 带 shared expert 的辅助 Qwen2 MoE 已接入原生 SBO，适用范围和独立验证见
 [Qwen2 SBO](QWEN2_SBO.md)。Coder 主模型没有 shared expert，不能用它证明 SBO；
