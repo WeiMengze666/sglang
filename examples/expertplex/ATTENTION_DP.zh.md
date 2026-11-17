@@ -28,8 +28,10 @@ P 的 `--max-running-requests 16` 单独显式指定。不要把 D 的全局请�
 查询 D 的 server info 时，`chunked_prefill_size` 是解析后的 16。
 
 默认 `attention_dp_size=1` 不写入序列化 JSON，已有 attention TP 组的含义保持不变。
-当前新模式只接受 Decode 的有效 TP1、CPU overlap 开启、D overlap NONE、完整 Decode
-CUDA graphs 且不开启 `torch.compile`；新的 TBO/SBO、TP×DP 混合分片组合会明确拒绝。
+当前公开模式只接受 Decode 的有效 TP1、D overlap NONE 和完整 Decode CUDA graphs；
+CPU scheduler overlap 沿用原生可选设置。可通过 D 服务的 `--enable-torch-compile`
+启用原生编译，`--torch-compile-max-bs` 按每个 D 副本设置。TBO/SBO、TP×DP
+混合分片组合仍明确拒绝，相关候选通过验证前不会放开。
 没有单独实测 DP/gather profile 时，placement optimizer 也会拒绝把该模式当作已测候选。
 
 ## 独立启动 P、D、E
@@ -136,3 +138,15 @@ CPU overlap、P TBO、D NONE、Decode full graphs、无 `torch.compile`。其验
 原生参考/自重复、逐 token 全词表严格对齐、三路共同进展、idle 副本、真实输入和提交
 以及客户端/Expert 生命周期检查；是否通过须以对应实测报告为准。本文不把该范围扩展为
 非确定性模式、编译模式、论文全部细节或相对最强原生基线的 1.5× goodput 结论。
+
+## 普通编译服务验证
+
+2026-11-17 的 GPUq 134 使用实际 BF16 权重、P/D overlap NONE、CPU scheduler
+overlap 开启、D 全局容量 48、每副本 graph bank `[1,2,4,8,12,16]`，完成编译关闭/
+开启的两组服务测试。D 使用原生 `rs+rsv` boundary reduction 和 round-robin 分配；
+辅助启动器的 `--decode-boundary-reduction rs+rsv` 只转发给 D 服务。
+准确公开源码的编译准入与启动参数检查 10 项、既有 DP 检查 24 项通过。
+
+在固定 256 请求下，3 rps 的联合 SLO 达标数为 223/222，3.75 rps 为 161/148
+（关闭/开启编译）。双方均未达到 90%，所以编译保持默认关闭；这是功能验证，
+不是容量提升或质量验收。完整指标见 [论文验收记录](PAPER_CONFORMANCE.md)。

@@ -515,7 +515,10 @@ dispatch/combine 生命周期，同时允许相邻 dense 运算编译；确定�
 GPUq 123/128 已完成默认独立 1P+3D+4E 的主模型编译关闭/开启对照，P/D overlap
 均为 none，使用普通原生 Inductor/FA4 调优与图重放。双方最高通过的实测到达率
 均为 2 requests/s，3 requests/s 均未达到联合 SLO 门槛，尚无容量收益。
-attention-DP3 的编译扩展保存在独立候选中，待 GPUq 134 完成验证后再发布。
+attention-DP3（有效 attention TP1）的普通编译入口也已接入，仍要求 D overlap NONE
+和完整 per-rank graphs。准确源码通过 10 项编译及 24 项 DP CPU 检查；GPUq 134
+完成主模型编译关闭/开启对照，3 rps 分别 223/222 个请求联合达标，3.75 rps 为
+161/148（每组 256 请求），均低于 90%，不作为编译性能收益。默认关闭编译。
 以上历史数值结果不证明 QKV/router 的编译覆盖、其他工具链或 goodput。
 
 带 shared expert 的辅助 Qwen2 MoE 已接入原生 SBO，适用范围和独立验证见

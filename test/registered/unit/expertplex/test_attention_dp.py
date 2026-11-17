@@ -137,8 +137,8 @@ class ExplicitDPConfig(unittest.TestCase):
         self.assertFalse(a.disable_overlap_schedule)
         self.assertFalse(a.enable_two_batch_overlap)
 
-    def test_launcher_rejects_group_compile_cpuoff_or_nondivisor_limits(self):
-        for key, value in [('enable_torch_compile', True), ('cuda_graph', False), ('disable_overlap_schedule', True), ('diagnostic_logit_processor', True), ('decode_max_running_requests', 47), ('decode_chunked_prefill_size', 16)]:
+    def test_launcher_rejects_unsupported_or_nondivisor_limits(self):
+        for key, value in [('cuda_graph', False), ('diagnostic_logit_processor', True), ('decode_max_running_requests', 47), ('decode_chunked_prefill_size', 16)]:
             a = args()
             setattr(a, key, value)
             with self.subTest(key=key), self.assertRaises(ValueError):
@@ -189,7 +189,7 @@ class RealEntryAndCompatibility(unittest.TestCase):
             original.update(expertplex_bootstrap_addr=None, expertplex_config=str(path), expertplex_client_id=1, chunked_prefill_size=16, cuda_graph_config={'decode': {'backend': 'full', 'bs': [1, 2, 4, 8, 16]}, 'prefill': {'backend': 'disabled', 'bs': []}})
             with patch.dict(os.environ, {'CUDA_VISIBLE_DEVICES': '0,1,2,3,4,5,6,7'}):
                 integration.validate_server_args(SimpleNamespace(**original))
-                for key, value in [('attn_dp_size', 1), ('dp_size', 3), ('enable_dp_lm_head', False), ('max_running_requests', 47), ('max_prefill_tokens', 32), ('chunked_prefill_size', 32), ('disable_overlap_schedule', True), ('enable_torch_compile', True)]:
+                for key, value in [('attn_dp_size', 1), ('dp_size', 3), ('enable_dp_lm_head', False), ('max_running_requests', 47), ('max_prefill_tokens', 32), ('chunked_prefill_size', 32)]:
                     bad = dict(original)
                     bad[key] = value
                     with self.subTest(key=key), self.assertRaises(ValueError):

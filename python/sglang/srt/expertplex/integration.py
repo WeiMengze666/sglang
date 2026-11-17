@@ -188,7 +188,8 @@ def compiled_attention_errors(cfg, client, config):
     max_bs = getattr(cfg, "torch_compile_max_bs", None)
     if type(max_bs) is not int or max_bs <= 0:
         errors.append("--torch-compile-max-bs must be a positive integer")
-    if client.tp_size != 1 or overlap not in ("none", "tbo"):
+    attention_dp_size = getattr(client, "attention_dp_size", 1)
+    if client.tp_size != attention_dp_size or overlap not in ("none", "tbo"):
         errors.append(
             "ExpertPlex compiled decode requires local attention TP1 and overlap none or tbo"
         )
@@ -348,8 +349,6 @@ def validate_server_args(cfg: Any) -> None:
     if getattr(cfg, "attn_dp_size", 1) != attention_dp_size:
         errors.append(f"--attn-dp-size must be {attention_dp_size}")
     if attention_dp_size > 1:
-        if getattr(cfg, "enable_torch_compile", False):
-            errors.append("grouped attention DP compile is not validated")
         if not getattr(cfg, "enable_dp_lm_head", False):
             errors.append("grouped attention DP requires --enable-dp-lm-head")
     for name in (
@@ -469,13 +468,22 @@ def validate_server_args(cfg: Any) -> None:
             else ("disabled", "breakable")
         )
         if phase == "decode" and attention_dp_size > 1:
-            sizes = (phase_config.get("bs") if isinstance(phase_config, dict)
-                     else getattr(phase_config, "bs", None))
-            if backend != "full" or not sizes or any(
-                type(n) is not int or not 0 < n <= capacity // attention_dp_size
-                for n in sizes
+            sizes = (
+                phase_config.get("bs")
+                if isinstance(phase_config, dict)
+                else getattr(phase_config, "bs", None)
+            )
+            if (
+                backend != "full"
+                or not sizes
+                or any(
+                    type(n) is not int or not 0 < n <= capacity // attention_dp_size
+                    for n in sizes
+                )
             ):
-                errors.append("grouped attention DP requires full per-rank graph buckets within global capacity")
+                errors.append(
+                    "grouped attention DP requires full per-rank graph buckets within global capacity"
+                )
         if backend not in allowed:
             errors.append(f"--cuda-graph-backend-{phase} must be one of {allowed}")
         if phase == "prefill" and backend != "disabled" and overlap == "sbo":

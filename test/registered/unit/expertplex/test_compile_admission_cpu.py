@@ -2,9 +2,9 @@
 
 import importlib.util
 import os
+from pathlib import Path
 import types
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -157,6 +157,117 @@ class CompileAdmission(CustomTestCase):
         self.args.enable_torch_compile = True
         self.args.enable_expertplex = False
         self.validate()
+
+    def test_native_attention_dp_uses_local_tp1_compiler(self):
+        self.client.tp_size = 3
+        self.client.attention_dp_size = 3
+        self.args.tp_size = 3
+        self.args.attn_dp_size = 3
+        self.args.enable_dp_lm_head = True
+        self.args.max_running_requests = 48
+        self.args.chunked_prefill_size = 16
+        self.args.max_prefill_tokens = 16
+        self.config.max_decode_tokens = 48
+        self.args.torch_compile_max_bs = 16
+        self.args.cuda_graph_config["decode"]["bs"] = [1, 2, 4, 8, 12, 16]
+        self.validate()
+        self.assertFalse(self.args.enable_deterministic_inference)
+        self.assertEqual(self.args.torch_compile_max_bs, 16)
+        # Preserve native CPU scheduler choices already supported by serving.
+        for disabled in (True, False):
+            with self.subTest(disable_overlap_schedule=disabled):
+                self.args.disable_overlap_schedule = disabled
+                self.validate()
+                self.assertEqual(self.args.disable_overlap_schedule, disabled)
+
+        for name, value, message in (
+            ("enable_dp_lm_head", False, "enable-dp-lm-head"),
+            ("attn_dp_size", 1, "attn-dp-size"),
+            ("max_running_requests", 47, "divide by attention DP"),
+        ):
+            with self.subTest(name=name), patch.object(self.args, name, value):
+                with self.assertRaisesRegex(ValueError, message):
+                    self.validate()
+
+    def test_grouped_launcher_forwards_compile_only_to_decode(self):
+        import dataclasses
+        import sys
+        from sglang.srt.expertplex.config import default_config
+
+        sys.path.insert(0, str(ROOT / "examples/expertplex"))
+        self.addCleanup(sys.path.pop, 0)
+        import launch
+
+        node = default_config("/model", max_decode_tokens=48, overlap="none")
+        node = dataclasses.replace(
+            node,
+            clients=(
+                node.clients[0],
+                dataclasses.replace(node.clients[1], tp_size=3, attention_dp_size=3),
+            ),
+        )
+        args = types.SimpleNamespace(
+            config="/node.json",
+            port=16000,
+            bootstrap_port=18000,
+            nccl_port=17000,
+            cuda_graph=True,
+            chunked_prefill=False,
+            kv_tokens=None,
+            attention_backend="fa4",
+            sampling_backend="flashinfer",
+            ib_device=None,
+            skip_tokenizer_init=False,
+            tokenizer_path=None,
+            prefill_graph_backend="disabled",
+            prefill_graph_max_tokens=None,
+            host="127.0.0.1",
+            enable_torch_compile=True,
+            torch_compile_max_bs=16,
+            cuda_graph_bs_decode=[1, 2, 4, 8, 12, 16],
+            decode_max_running_requests=48,
+            decode_load_balance_method="round_robin",
+            decode_boundary_reduction="rs+rsv",
+        )
+        worker, servers, router = launch.commands(node, args)
+        self.assertNotIn("--enable-torch-compile", worker)
+        self.assertNotIn("--enable-torch-compile", router)
+        for client, command in servers:
+            if client.phase == "prefill":
+                self.assertNotIn("--enable-torch-compile", command)
+                continue
+            self.assertIn("--enable-torch-compile", command)
+            self.assertIn("--enable-dp-lm-head", command)
+            self.assertEqual(
+                command[command.index("--load-balance-method") + 1], "round_robin"
+            )
+            self.assertEqual(
+                command[command.index("--boundary-reduction") + 1], "rs+rsv"
+            )
+            self.assertNotIn("--enable-deterministic-inference", command)
+            self.assertEqual(command[command.index("--torch-compile-max-bs") + 1], "16")
+            self.assertEqual(command[command.index("--attn-dp-size") + 1], "3")
+            self.assertEqual(command[command.index("--max-prefill-tokens") + 1], "16")
+            self.assertEqual(command[command.index("--max-running-requests") + 1], "48")
+        # The decode-only switch must still leave the P scheduler unchanged.
+        args.decode_disable_overlap_schedule = True
+        _, cpu_plain_servers, _ = launch.commands(node, args)
+        for client, command in cpu_plain_servers:
+            self.assertEqual(
+                "--disable-overlap-schedule" in command, client.phase == "decode"
+            )
+        self.assertIn(
+            "--decode-disable-overlap-schedule", launch.attention_capacity_options(args)
+        )
+        args.decode_disable_overlap_schedule = False
+        args.enable_torch_compile = False
+        _, plain_servers, _ = launch.commands(node, args)
+        for (_, compiled), (_, plain) in zip(servers, plain_servers):
+            normalized = list(compiled)
+            if "--enable-torch-compile" in normalized:
+                start = normalized.index("--enable-torch-compile")
+                del normalized[start : start + 3]
+            self.assertEqual(normalized, plain)
 
 
 if __name__ == "__main__":

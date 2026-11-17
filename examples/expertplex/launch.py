@@ -165,6 +165,12 @@ def add_attention_capacity_args(parser):
         help="Native request assignment within each decode attention-DP service",
     )
 
+    parser.add_argument(
+        "--decode-boundary-reduction",
+        choices=("auto", "ar", "rs", "rsv", "rs+rsv"),
+        help="Native decode attention/FFN boundary reduction strategy",
+    )
+
 
 def attention_capacity_options(args):
     result = []
@@ -179,6 +185,9 @@ def attention_capacity_options(args):
     method = getattr(args, "decode_load_balance_method", None)
     if method is not None:
         result += ["--decode-load-balance-method", method]
+    reduction = getattr(args, "decode_boundary_reduction", None)
+    if reduction is not None:
+        result += ["--decode-boundary-reduction", reduction]
     return result
 
 
@@ -232,13 +241,9 @@ def commands(node, args):
         )
         local_capacity = capacity // client.attention_dp_size
         if client.attention_dp_size > 1 and (
-            getattr(args, "enable_torch_compile", False)
-            or not args.cuda_graph
-            or getattr(args, "diagnostic_logit_processor", False)
+            not args.cuda_graph or getattr(args, "diagnostic_logit_processor", False)
         ):
-            raise ValueError(
-                "grouped attention DP requires full D graphs and no compile"
-            )
+            raise ValueError("grouped attention DP requires full D graphs")
         running = attention_request_limit(node, client, args, capacity)
         bootstrap = args.bootstrap_port + client.id
         decode_chunk = getattr(args, "decode_chunked_prefill_size", None)
@@ -314,6 +319,9 @@ def commands(node, args):
         method = getattr(args, "decode_load_balance_method", None)
         if client.phase == "decode" and method is not None:
             command += ["--load-balance-method", method]
+        reduction = getattr(args, "decode_boundary_reduction", None)
+        if client.phase == "decode" and reduction is not None:
+            command += ["--boundary-reduction", reduction]
         if client.attention_dp_size > 1:
             command += [
                 "--attn-dp-size",

@@ -419,7 +419,21 @@ GPUq 130 因前置对照未完成而退出，尚未加载模型。这两个任�
 辅助启动器现复用原生 socket 工具，在 E/P/D 初始化期间预留路由器端口，启动
 路由器前释放。3 项真实 socket 回归覆盖初始化期间占用保护、交接、异常释放及
 端口已被占用时提前失败，旧实现失败、修复后通过。原有 5 项启动器检查通过。
-GPUq 134/135 已提交恢复实验，运行结果待核验。
+GPUq 134 已完成恢复后的 DP3 编译对照，两个服务组均正常结束且清理完成。固定
+同一模型、数据、SLO、P/D NONE、D 全局容量 48、每副本 graph 上限 16、原生
+`rs+rsv` 归约、round-robin 分配和 CPU scheduler overlap，仅改变 D 编译开关。
+
+| DP3 Decode 配置 | 到达率 rps | joint 达标数 / 256 | P90 TTFT ms | P90 TPOT ms |
+| --- | ---: | ---: | ---: | ---: |
+| 编译关闭 | 3 | 223 | 550.01 | 50.07 |
+| 编译开启 | 3 | 222 | 568.38 | 50.25 |
+| 编译关闭 | 3.75 | 161 | 2117.40 | 52.67 |
+| 编译开启 | 3.75 | 148 | 2314.59 | 53.05 |
+
+四组均未达到 90% joint SLO；本实验只测了 3/3.75 rps，不能据此将整体容量记为零。
+普通 DP3 编译路径功能通过，未显示容量收益，默认关闭。准确公开准入/参数转发源码
+通过 10 项编译与 24 项 DP CPU 检查；保留已有 CPU overlap 开关，不收紧原生选项。
+GPUq 135 的 packed combine 组合对照仍待完整结果。
 
 ## 机制与代码审计
 
@@ -519,7 +533,7 @@ HTTP 仅用于启动、独占槽位登记与退出释放，每层 activation 仍
 | KV / prefix cache | 沿用原生 allocator、radix cache 和显存容量 profiling；启动器默认不传 `--max-total-tokens`。§7.1 统一的是按 PDD 容量限制的采样序列长度，并非各布局的总 KV pool 容量。显式固定总 KV 的实验仅作为额外控制实验。 |
 | Attention backend | 保留 SGLang backend 选择；Triton 的固定数值对照不能代表 FlashInfer/FA4 等路径的最佳性能。 |
 | Prefill graph | 已接入原生 breakable prefill graph，D 保留原生 full decode graph。P graph 默认关闭，须使用 `overlap=none`；辅助入口拒绝与 TBO 同时启用，原生参数解析也会禁用该组合。应分别验证同模式数值对齐和实际 prefill 图执行，不能把捕获成功当作请求已经走图。跨 eager/graph 的逐位比较须另做确定性模式验证。 |
-| torch.compile | TP1 decode 的公开入口保留 full graph 与 none/TBO，使用原生 bucket 对齐和编译调优，允许用户选择确定性及精度选项。普通参数集成通过 8 项 CPU 回归，GPUq 123/128 完成独立 1P+3D+4E、P/D none 的主模型编译开关对照，尚无容量收益。attention-DP3 扩展连同启动参数转发通过 10 项回归及已有 24 项 DP 检查，GPUq 134 验证待完成，扩展候选尚未发布。逐位比较继续用于定位问题，模型质量按当前口径集中评估。 |
+| torch.compile | TP1 decode 的公开入口保留 full graph 与 none/TBO，使用原生 bucket 对齐和编译调优，允许用户选择确定性及精度选项。普通参数集成通过 8 项 CPU 回归，GPUq 123/128 完成独立 1P+3D+4E、P/D none 的主模型编译开关对照，尚无容量收益。attention-DP3 扩展连同启动参数转发通过 10 项回归及已有 24 项 DP 检查，GPUq 134 完成普通 DP3 主模型编译开关对照，公开入口已接入，但 3/3.75 rps 均未达到联合 SLO 门槛。逐位比较继续用于定位问题，模型质量按当前口径集中评估。 |
 | DeepGEMM | 复用原生 TMA、TCGEN05、双 CTA multicast、STSM/TMA epilogue 和 BF16 舍入边界；新增的是长驻 operation 选择与合作阶段切换。负收益的替代实现不能替换已验证路径。 |
 | DeepEP | Decode combine 保持原生 low-latency 的 top-k 顺序 FP32 FMA 与最终 BF16 舍入；P 保持 normal 的每 rank BF16 gather 边界。普通 SGLang 基线继续调用原生 normal / low-latency dispatcher；ExpertPlex 的 attention-initiated M-to-N 不能直接套用要求 E 侧 receiver kernel 的原始 API。新的协议仍需继续对照 DeepEP 的路由布局、向量搬运和归并实现，不能据仅有功能通过宣称保留了全部性能优化。 |
 | Chunked prefill / SBO / TP | chunked prefill 有显式选项；Qwen2 SBO 已通过辅助模型数值与 Decode 图重叠验证；prefill 图、shared TBO、共享分支标定及 attention TP>1 的完整验收仍待完成。默认整请求 P 是论文实验配置，不是 SGLang 能力被全局删除。 |
