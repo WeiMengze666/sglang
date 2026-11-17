@@ -707,12 +707,15 @@ __device__ __forceinline__ void wait_slot_body(const DeviceBuffers &b, int slot,
     epoch = uncached_load_u64(c + PENDING);
   U64 started = now_ns();
   while (true) {
-    U64 error = system_load(c + ERROR);
+    // An ERROR load before the DONE acquire can miss an executor failure
+    // published between the two loads.
+    const U64 done = system_load(c + DONE);
+    const U64 error = system_load(c + ERROR);
     if (error) {
       *status = static_cast<int>(error);
       return;
     }
-    if (system_load(c + DONE) == epoch) {
+    if (done == epoch) {
       __threadfence_system();
       *status = OK;
       return;
