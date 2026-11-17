@@ -522,8 +522,10 @@ SBO 与 prefill graph 等尚未验证的组合仍会明确拒绝。
 
 ### 可选原生 Attention DP Decode 组
 
-默认三个独立 D 服务保持不变。可选的单前端、三 attention DP 副本布局、独立 P/D/E
-启动命令、全局与本地容量边界以及验证范围见 [Attention DP](ATTENTION_DP.zh.md)。
+1P+3D+4E 按物理 GPU 角色计数。三个独立 D 前端和一个原生 attention-DP3 前端
+均可组织其中的三个 D GPU，P/D/E 三类服务分别独立启动。两种配置均纳入主性能
+验收。单前端的启动命令、全局与本地容量边界以及验证范围见
+[Attention DP](ATTENTION_DP.zh.md)。
 
 ### Attention TP 组
 

@@ -1,9 +1,12 @@
 # 可选的原生 Attention DP Decode 组
 
-默认拓扑仍是三个独立的 TP1 Decode 服务。这个可选拓扑把 GPU 1–3 交给一个
+示例默认使用三个独立的 TP1 Decode 服务。这个可选拓扑把 GPU 1–3 交给一个
 原生 SGLang Decode 前端，使用原生 attention DP controller、gather、MoE 输出归约
 和 DP LM head；GPU 0 的 Prefill 与 GPU 4–7 的 Expert 服务仍独立启动。
 它不引入新的调度器或服务运行时，也不表示已经找到更优的 goodput 配置。
+
+两种组织方式都占用物理 1P+3D+4E，并通过独立的原生 P/D/E 服务运行，均纳入
+本轮单机性能验收。性能报告注明具体 D 组织方式及实际启动参数。
 
 ## 拓扑与容量
 

@@ -30,6 +30,11 @@ PDF SHA256：`8321f7095ccdde149178e16fa3cdbfa60a7a87fd42920483acb21e0cac2a363a`�
 当前用户确认的验收范围为单节点 8×B300。§5.3 跨节点 MoE RDMA 转发与
 InfiniBand 流量隔离暂缓；保留这些原文要求以供后续多节点验证，不以单机结果代替。
 
+1P+3D+4E 按物理 GPU 角色计数，P/D/E 三类服务分别通过原生 SGLang 入口启动。
+三个 D GPU 可由独立 D 前端或一个原生 attention-DP3 前端管理，两种配置均纳入
+主性能验收。性能报告记录 D 组织方式及实际启动参数，并与公平调优后的最强
+原生基线比较。
+
 历史数值证据：更换机器前，真实 Coder BF16 权重在确定性模式下通过固定历史、并发请求的
 全词表逐位对照，覆盖三路 D 同时活动、实际 decode 批处理和非空 TBO 重放完成。
 三路 D 重复使用同一组参考轨迹；这不代表更多独立提示，也不是完整模型质量评估。
@@ -59,7 +64,7 @@ GPUq 5、7 使用同一固定 ShareGPT 样本、seed 42、24,576-token 序列上
 CPU 调度重叠。全局 chunked-prefill 上限为 49,152，每个 DP rank 为 6,144。
 ExpertPlex 采用物理 1P+3D+4E、可选的单组 attention-DP3、`sm100_swiglu`，
 P/D 均关闭 TBO，保留 CPU 调度重叠，D 全局请求上限为 48、每 rank 为 16。
-默认三路独立 D 的结果需单独验收。
+三路独立 D 实验还用于分析 attention 组织方式对结果的影响。
 
 | 配置 | 到达率 (requests/s) | 联合达标请求 | TTFT P90 (ms) | TPOT P90 (ms) |
 | --- | ---: | ---: | ---: | ---: |
@@ -155,6 +160,22 @@ combine 候选。基线与候选分别通过 72 项路由、dtype、尾部、pad
 通信组件，E GEMM、P 并发和主模型服务的表现由单独实验测量。生成代码的 BF16
 输出实例寄存器数从 40 增至 92，FP32 从 48 增至 88，STACK 和 LOCAL 均为 0。
 sender-packed P 与 masked D 共用 kernel 实例，P 路径也受该寄存器分配影响。
+
+GPUq 108/113 将 packed 与 masked combine 按模板参数分别实例化，保留各自的
+累加顺序及舍入边界。候选通过 72 项 masked 路由检查、4 项 packed IPC 子场景
+及 9 项协议检查。以下配对结果使用相同输入、H=6144、top-8、四个 E echo，
+每项采集 30 个 CUDA Graph 样本。
+
+| packed 行数 | 共用实例 combine (μs) | 分离实例 combine (μs) | 组件加速比 |
+| ---: | ---: | ---: | ---: |
+| 128 | 85.856 | 61.440 | 1.39740 |
+| 512 | 192.512 | 120.832 | 1.59322 |
+| 2048 | 612.368 | 337.920 | 1.81217 |
+
+配对输入与输出张量检查通过。packed FP32 实例的寄存器数从 88 降至 54，
+STACK 和 LOCAL 均为 0。计时覆盖 wait 与 FP32 combine，E echo 已提前完成，
+最终 BF16 转换、E GEMM 及并发服务开销另行测量。masked 12/24/48 行的 combine
+仍约为 51.2 μs。主模型组合对照已提交 GPUq 125，goodput 收益待验证。
 
 GPUq 104 随后验证默认的独立 1P+3D+4E 服务，固定 P=TBO、D=none、四个 A 服务
 均为 TP1、每服务请求上限 16、D graph buckets 为 1/2/4/8/12/16，保留 CPU
@@ -284,7 +305,7 @@ P/D 无 TBO、请求上限和 graph buckets。四组各 256 个请求全部完�
 四组均低于固定的 90% 联合门槛。3 requests/s 下 `ar` 明显回退，组件加速尚未
 转化为服务收益，性能配置继续采用 `rs+rsv`。两组 D 日志记录的 decode batch
 均使用 CUDA Graph。此单次配对尚不能解释服务回退的具体机制，仍需请求时序和
-完整 forward 的匹配诊断。默认三路独立 D 与完整 goodput 目标继续单独验收。
+完整 forward 的匹配诊断。该结果尚未达到完整 goodput 目标。
 
 GPUq 81 的原生 TP8/EP8/attention-DP8 基线保留 FlashInfer BF16 A2A/runner、
 FA4、DP LM head、CPU 调度重叠及原有容量。每个到达率各 256 个请求，实际八个
@@ -453,7 +474,7 @@ HTTP 仅用于启动、独占槽位登记与退出释放，每层 activation 仍
 | KV / prefix cache | 沿用原生 allocator、radix cache 和显存容量 profiling；启动器默认不传 `--max-total-tokens`。§7.1 统一的是按 PDD 容量限制的采样序列长度，并非各布局的总 KV pool 容量。显式固定总 KV 的实验仅作为额外控制实验。 |
 | Attention backend | 保留 SGLang backend 选择；Triton 的固定数值对照不能代表 FlashInfer/FA4 等路径的最佳性能。 |
 | Prefill graph | 已接入原生 breakable prefill graph，D 保留原生 full decode graph。P graph 默认关闭，须使用 `overlap=none`；辅助入口拒绝与 TBO 同时启用，原生参数解析也会禁用该组合。应分别验证同模式数值对齐和实际 prefill 图执行，不能把捕获成功当作请求已经走图。跨 eager/graph 的逐位比较须另做确定性模式验证。 |
-| torch.compile | 公开入口当前支持受限的 TP1 decode 配置，要求确定性模式、固定 batch 上限和诊断环境变量。移除这些旧诊断限制的候选已通过 8 项 CPU 参数回归，主模型原生编译开关性能实验已提交 GPUq 120。GPU 启动和性能结果待核验，候选尚未发布。逐位比较继续用于定位问题，模型质量按本文件开头的当前验收口径集中评估。 |
+| torch.compile | 公开入口当前支持受限的 TP1 decode 配置，要求确定性模式、固定 batch 上限和诊断环境变量。移除这些旧诊断限制的候选已通过 8 项 CPU 参数回归。attention-DP3 扩展连同启动参数转发共通过 10 项回归，并通过已有 24 项 DP 检查。主模型编译开关对照已提交 GPUq 123/124。GPU 启动和性能结果待核验，候选尚未发布。逐位比较继续用于定位问题，模型质量按本文件开头的当前验收口径集中评估。 |
 | DeepGEMM | 复用原生 TMA、TCGEN05、双 CTA multicast、STSM/TMA epilogue 和 BF16 舍入边界；新增的是长驻 operation 选择与合作阶段切换。负收益的替代实现不能替换已验证路径。 |
 | DeepEP | Decode combine 保持原生 low-latency 的 top-k 顺序 FP32 FMA 与最终 BF16 舍入；P 保持 normal 的每 rank BF16 gather 边界。普通 SGLang 基线继续调用原生 normal / low-latency dispatcher；ExpertPlex 的 attention-initiated M-to-N 不能直接套用要求 E 侧 receiver kernel 的原始 API。新的协议仍需继续对照 DeepEP 的路由布局、向量搬运和归并实现，不能据仅有功能通过宣称保留了全部性能优化。 |
 | Chunked prefill / SBO / TP | chunked prefill 有显式选项；Qwen2 SBO 已通过辅助模型数值与 Decode 图重叠验证；prefill 图、shared TBO、共享分支标定及 attention TP>1 的完整验收仍待完成。默认整请求 P 是论文实验配置，不是 SGLang 能力被全局删除。 |
