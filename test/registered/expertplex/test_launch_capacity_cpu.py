@@ -96,11 +96,11 @@ class LaunchCapacityTests(CustomTestCase):
                 "50",
                 "--dry-run",
             ]
-            for index, (a2a, runner) in enumerate(
+            for index, (a2a, runner, policy) in enumerate(
                 [
-                    (None, None),
-                    ("none", "flashinfer_trtllm"),
-                    ("flashinfer", "flashinfer_trtllm_routed"),
+                    (None, None, None),
+                    ("none", "flashinfer_trtllm", "round_robin"),
+                    ("flashinfer", "flashinfer_trtllm_routed", "total_requests"),
                 ]
             ):
                 with self.subTest(a2a=a2a, runner=runner):
@@ -120,14 +120,19 @@ class LaunchCapacityTests(CustomTestCase):
                         capture_output=True,
                     )
                     plan = json.loads(result.stdout)
+                    native_options = ["--load-balance-method", policy] if policy else []
                     inner = subprocess.run(
-                        [*plan["launch"], "--dry-run"],
+                        [*plan["launch"], *native_options, "--dry-run"],
                         check=True,
                         text=True,
                         capture_output=True,
                     )
                     native = shlex.split(inner.stdout.strip())[1:]
                     flags = options(native)
+                    if policy is None:
+                        self.assertNotIn("--load-balance-method", flags)
+                    else:
+                        self.assertEqual(flags["--load-balance-method"], [policy])
                     self.assertEqual(flags["--moe-a2a-backend"], [a2a or "deepep"])
                     self.assertEqual(
                         flags["--moe-runner-backend"], [runner or "deep_gemm"]

@@ -1271,6 +1271,13 @@ goodput。评估候选优化时应同时复测 `--operation moe` 和完整服务
 测量后冻结。严格逐位诊断还需要一致的专家布局与 LM head GEMM 形状；仅在诊断时
 对齐布局的结果，不能替代对未经该修改的性能基线进行比较。
 
+`launch_baseline.py --load-balance-method total_requests` 可选择原生 attention-DP
+请求分配策略，支持 `auto`、`round_robin`、`follow_bootstrap_room`、
+`total_requests`、`total_tokens`。省略该参数时由原生服务解析默认策略。
+GPUq 81 已验证 BF16 主模型 TP8/EP8/attention-DP8 下 `round_robin` 与
+`total_requests` 的实际启动配置和完整服务流程。2.5 requests/s 时后者联合达标
+231/256，3 requests/s 时降至 189/256；基线选择还需重复测试和容量边界细化。
+
 两个基线实验入口也接受 `--moe-a2a-backend` 和 `--moe-runner-backend`，
 默认仍为 `deepep` 与 `deep_gemm`。显式选择的后端会传递到原生 SGLang 服务，
 由原生实现检查模型、精度与 overlap 兼容性。DeepEP 专用参数只传给 DeepEP 路径，

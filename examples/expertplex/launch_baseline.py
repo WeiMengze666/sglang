@@ -110,6 +110,8 @@ def commands(args):
         if attention_dp <= 1:
             raise ValueError("DP LM head requires a baseline with DP attention")
         common += ["--enable-dp-lm-head"]
+    if getattr(args, "load_balance_method", None) is not None:
+        common += ["--load-balance-method", args.load_balance_method]
     if args.skip_tokenizer_init:
         common += ["--skip-tokenizer-init"]
     if args.tokenizer_path:
@@ -195,6 +197,16 @@ def main():
         "--variant", choices=("colocated", "chunked", "pdd", "pdmux"), required=True
     )
     p.add_argument("--model-path", required=True)
+    p.add_argument(
+        "--load-balance-method",
+        choices=(
+            "auto",
+            "round_robin",
+            "follow_bootstrap_room",
+            "total_requests",
+            "total_tokens",
+        ),
+    )
     p.add_argument("--tokenizer-path")
     p.add_argument(
         "--load-format", choices=("safetensors", "dummy"), default="safetensors"
