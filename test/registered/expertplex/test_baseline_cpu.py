@@ -32,6 +32,16 @@ class BaselineLaunchTests(unittest.TestCase):
             bootstrap_port=19000,
         )
         prefill, decode, router = baseline.commands(args)
+        for backend, p_chunk in (("deepep", "-1"), ("flashinfer", "2048")):
+            args.moe_a2a_backend = backend
+            p, d, _ = baseline.commands(args)
+            for command, expected in ((p[1], p_chunk), (d[1], "-1")):
+                self.assertEqual(
+                    command[command.index("--chunked-prefill-size") + 1], expected
+                )
+        with self.assertRaisesRegex(ValueError, "positive chunk size"):
+            baseline.commands(SimpleNamespace(**{**vars(args), "chunk_size": -1}))
+        args.moe_a2a_backend = "deepep"
         for server in (prefill, decode):
             self.assertNotIn("--enable-custom-logit-processor", server[1])
             self.assertNotIn("--disable-overlap-schedule", server[1])

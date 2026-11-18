@@ -158,6 +158,15 @@ def commands(args):
             str(args.bootstrap_port + gpu),
         ]
         if role == "prefill":
+            # FlashInfer A2A sizes its eager dispatch workspace from the P chunk.
+            if a2a_backend == "flashinfer":
+                if args.chunk_size <= 0:
+                    raise ValueError(
+                        "FlashInfer PDD prefill requires a positive chunk size"
+                    )
+                command[command.index("--chunked-prefill-size") + 1] = str(
+                    args.chunk_size
+                )
             # Only the fixed-capacity control run bounds P's transient pool.
             # Auto mode lets each phase use SGLang's memory profiler.
             if kv is not None:

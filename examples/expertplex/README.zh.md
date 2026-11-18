@@ -1326,6 +1326,12 @@ FlashInfer A2A 的固定通信 workspace 要求正数的 chunked prefill；原�
 TBO 所需的分段 dispatch/combine 接口，因此示例显式关闭 TBO；这是一套兼容的
 原生后端候选，不能将与 DeepEP+TBO 的差异归因于单个开关。
 
+使用 `--variant pdd --moe-a2a-backend flashinfer` 时，通过 `--chunk-size` 指定
+prefill 服务的全局 token 预算。例如，`--chunk-size 24576` 在 TP4/EP4、
+attention-DP4 的 prefill 服务上对应每 rank 6144 tokens。单独的 decode 服务使用
+`--chunked-prefill-size -1`。可以在每个服务的 `/server_info` 中检查
+`internal_states[*].chunked_prefill_size` 和 `memory_usage.token_capacity`。
+
 逐位增量诊断在 `check_incremental.py` 上同时指定 `--reference REF.json`、
 `--top-k 0` 和 `--require-exact-logprobs`。任一位置的任一词表项不同，或参考记录
 缺少完整词表，都会保存失败报告并返回非零状态；默认诊断模式仅记录差异。
