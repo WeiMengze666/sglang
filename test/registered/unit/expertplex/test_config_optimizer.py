@@ -16,6 +16,7 @@ import sys
 import tempfile
 import types
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -312,6 +313,28 @@ class ConfigTests(unittest.TestCase):
 
 
 class OptimizerTests(unittest.TestCase):
+    def test_heterogeneous_decode_clients_require_per_client_profiles(self):
+        model = config.ModelSpec.from_dict(model_config())
+        profiles = optimizer.MeasuredProfiles.from_dict(profiles_dict(model), model)
+        node = config.default_config(
+            "/model", prefill_overlap="tbo", decode_overlap="none"
+        )
+        clients = list(node.clients)
+        rank = next(i for i, client in enumerate(clients) if client.phase == "decode")
+        clients[rank] = replace(clients[rank], overlap="tbo")
+        with self.assertRaisesRegex(optimizer.ProfileCoverageError, "within one phase"):
+            optimizer.search(
+                replace(node, clients=tuple(clients)),
+                model,
+                profiles,
+                input_length=128,
+                average_output_length=128,
+                context_length=256,
+                prefill_slo_s=1,
+                decode_slo_s=0.05,
+                kv_tokens_per_attention_gpu=65536,
+            )
+
     def test_communication_payload_matches_raw_and_routed_transports(self):
         model = config.ModelSpec.from_dict(model_config(coder=True))
         layout = optimizer.Layout(1, 3, 4)
@@ -643,31 +666,31 @@ class OptimizerTests(unittest.TestCase):
         layout = optimizer.Layout(1, 1, 2)
         self.assertEqual(
             optimizer.expected_rank_footprints(
-                profiles, layout, "decode", 1, 16, "tbo"
+                profiles, layout, "decode", 2, 16, "tbo"
             ),
-            (8, 8),
+            (16, 16),
         )
         latency = optimizer._iteration_latency(
-            model, profiles, layout, "decode", 1, 16, 16, 2, "tbo"
+            model, profiles, layout, "decode", 2, 16, 16, 2, "tbo"
         )
         communication = (
             optimizer.nvlink_payload_bytes(
-                model, layout, "decode", 1, prefill_preprocess=False
+                model, layout, "decode", 2, prefill_preprocess=False
             )
             / 1e11
         )
-        self.assertAlmostEqual(latency, 16 + 2 * communication)
+        self.assertAlmostEqual(latency, 32 + 2 * communication)
         del phase["probabilities_by_layer"]
         averaged = optimizer.MeasuredProfiles.from_dict(data, model)
         self.assertEqual(
-            optimizer.expected_rank_footprint(averaged, layout, "decode", 1, 16, "tbo"),
-            4,
+            optimizer.expected_rank_footprint(averaged, layout, "decode", 2, 16, "tbo"),
+            8,
         )
         self.assertEqual(
             optimizer._iteration_latency(
-                model, averaged, layout, "decode", 1, 16, 16, 2, "tbo"
+                model, averaged, layout, "decode", 2, 16, 16, 2, "tbo"
             ),
-            12,
+            24,
         )
         # Even after preserving each layer's rank maximum, TBO must take its
         # attention/MoE maximum before summing layers with different bottlenecks.
@@ -680,9 +703,9 @@ class OptimizerTests(unittest.TestCase):
         mixed = optimizer.MeasuredProfiles.from_dict(data, model)
         self.assertAlmostEqual(
             optimizer._iteration_latency(
-                model, mixed, layout, "decode", 1, 16, 16, 2, "tbo"
+                model, mixed, layout, "decode", 2, 16, 16, 2, "tbo"
             ),
-            14 + communication,
+            28 + communication,
         )
 
     def test_per_layer_routing_requires_complete_consistent_model_counts(self):

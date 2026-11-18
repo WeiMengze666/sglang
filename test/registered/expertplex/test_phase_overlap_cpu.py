@@ -142,24 +142,6 @@ class PhaseOverlap(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stage hooks"):
             config.default_config("/model", decode_overlap="tbo").validate(shared)
 
-    def test_optimizer_cannot_silently_model_mixed_policy_as_uniform(self):
-        from _bootstrap import module
-
-        optimizer = module("optimizer")
-        node = config.default_config("/model", overlap="tbo", decode_overlap="none")
-        with self.assertRaisesRegex(optimizer.ProfileCoverageError, "Client-specific"):
-            optimizer.search(
-                node,
-                None,
-                None,
-                input_length=128,
-                average_output_length=128,
-                context_length=256,
-                prefill_slo_s=1,
-                decode_slo_s=0.05,
-                kv_tokens_per_attention_gpu=65536,
-            )
-
     def test_cli_installs_policy_before_compact_capacity_validation(self):
         with tempfile.TemporaryDirectory() as temp:
             dest = Path(temp) / "node.json"

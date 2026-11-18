@@ -1042,7 +1042,7 @@ def component_layer_latencies(
     return tuple(result)
 
 
-def max_feasible_batch(maximum, slo, latency):
+def max_feasible_batch(maximum, slo, latency, *, separate_singleton=False):
     """Binary search a monotone latency within a contiguous measured domain.
 
     A below-coverage probe moves right, an above-coverage probe moves left.
@@ -1051,14 +1051,16 @@ def max_feasible_batch(maximum, slo, latency):
     """
     if type(maximum) is not int or maximum < 0 or not math.isfinite(slo) or slo <= 0:
         raise ValueError("Expected a nonnegative capacity and positive finite SLO")
-    lo, hi, best = 1, maximum, 0
+    # Decode TBO needs two nonempty children to hide latency. Its singleton
+    # can be slower than batch two, outside the monotone two-child domain.
+    lo, hi, best = 2 if separate_singleton else 1, maximum, 0
     while lo <= hi:
         middle = (lo + hi) // 2
         try:
             value = latency(middle)
         except ProfileCoverageError as error:
             if error.below and error.above:
-                return best  # The component domains have no common batch.
+                break  # The component domains have no common batch in this range.
             if error.below:
                 lo = middle + 1
             elif error.above:
@@ -1072,6 +1074,8 @@ def max_feasible_batch(maximum, slo, latency):
             best, lo = middle, middle + 1
         else:
             hi = middle - 1
+    if separate_singleton and not best and maximum:
+        return max_feasible_batch(1, slo, latency)
     return best
 
 
@@ -1094,8 +1098,21 @@ def _iteration_latency(
     sequence = input_length if phase == "prefill" else context_length
     tp = layout.prefill_tp_size if phase == "prefill" else layout.decode_tp_size
     attention_profile = profiles.attention_profile(phase, tp)
-    attention_profile.domain.validate(local_batch, sequence)
-    attention = attention_profile.coefficients.predict(local_batch, sequence)
+    decode_tbo = phase == "decode" and overlap == "tbo"
+    first_child = local_batch // 2 if decode_tbo else 0
+    if first_child and local_batch > attention_profile.domain.capacity_batch(sequence):
+        raise ProfileCoverageError(
+            "Parent decode batch exceeds profiled request/KV capacity", above=True
+        )
+    # The attention profiler times an unsplit invocation. Decode splits on
+    # sequence count, so both nonempty calls pay their own fitted intercept.
+    attention_batches = (
+        (first_child, local_batch - first_child) if first_child else (local_batch,)
+    )
+    attention = 0.0
+    for size in attention_batches:
+        attention_profile.domain.validate(size, sequence)
+        attention += attention_profile.coefficients.predict(size, sequence)
     tokens = batch * input_length if phase == "prefill" else batch
     # Mailboxes belong to independent attention clients. Their partial tiles
     # cannot be merged into a single global-batch tile without changing the
@@ -1118,9 +1135,10 @@ def _iteration_latency(
         )
         / profiles.nvlink_bytes_per_second
     )
+    can_overlap = overlap == "tbo" and (phase == "prefill" or first_child > 0)
     layers = [
         max(attention, latency + communication)
-        if overlap == "tbo"
+        if can_overlap
         else attention + latency + communication
         for latency in moe
     ]
@@ -1368,6 +1386,7 @@ def search(
                             config.prefill_preprocess,
                         )
                     ),
+                    separate_singleton=phase == "decode" and policies[phase] == "tbo",
                 )
                 low = count * local_batch
                 batches[phase] = low

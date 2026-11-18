@@ -836,6 +836,12 @@ python examples/expertplex/profile_full_moe.py \
 都按实际策略计算双 mailbox 内存及独立 microbatch padding，并保留 profile 覆盖检查。
 TBO 假设 token 均衡切分，实际序列边界会影响预测，需要实测校准。
 
+对独立 D 服务，优化器按原生 decode 规则将本地请求数拆成向下和向上取整的两半。
+例如 5 条请求会执行 batch 2 和 batch 3 两次 attention，各自使用实测区间内的系数估时，
+两次调用共用的 KV 容量按全部 5 条请求校验。只有一条请求时，attention、通信和 MoE
+串行计时；搜索单独检查这个点，因为两条请求开始重叠后，预测延迟可能反而下降。
+这些预测按逻辑请求数建模，实际 CUDA Graph 桶填充和服务排队仍需端到端测量。
+
 二分搜索使用每个同类服务相同的整数 local batch，再乘服务数量计算 Eq.1；不会将
 全局 batch 向上取整后允许超过预测的 routed 工作量。`--write-config` 在有 profile 时
 导出布局、P/D 策略、q、预期 decode footprint，以及每个 client 的

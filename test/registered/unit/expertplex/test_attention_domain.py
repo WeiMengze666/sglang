@@ -24,6 +24,75 @@ def domain(phase="decode", points=None, phase_tokens=100000, kv_tokens=1000000):
 
 
 class AttentionDomainTests(unittest.TestCase):
+    def test_decode_tbo_uses_nonempty_child_shapes_and_parent_capacity(self):
+        model = base.config.ModelSpec.from_dict(
+            base.model_config() | {"num_hidden_layers": 1}
+        )
+        data = base.profiles_dict(model)
+        data["decode"]["attention"] = {"alpha": 5, "beta": 2}
+        data["decode"]["moe_by_sm_count"]["2"] = {"alpha": 3, "beta": 0}
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        layout = optimizer.Layout(1, 1, 2)
+
+        def predict(batch, source=profiles):
+            return optimizer._iteration_latency(
+                model, source, layout, "decode", batch, 16, 128, 2, "tbo"
+            )
+
+        transfer = (
+            optimizer.nvlink_payload_bytes(
+                model, layout, "decode", 1, prefill_preprocess=False
+            )
+            / profiles.nvlink_bytes_per_second
+        )
+        self.assertAlmostEqual(predict(1), 7 + 3 + transfer)
+        self.assertEqual(predict(5), (5 + 2 * 2) + (5 + 2 * 3))
+        points = [[2, 128], [4, 128], [2, 256], [4, 256]]
+        limited = replace(
+            profiles,
+            attention_domains=profiles.attention_domains
+            | {"decode": domain(points=points, phase_tokens=7)},
+        )
+        self.assertEqual(predict(7, limited), (5 + 2 * 3) + (5 + 2 * 4))
+        for batch, direction in ((3, "below"), (8, "above")):
+            with self.subTest(batch=batch), self.assertRaises(
+                optimizer.ProfileCoverageError
+            ) as error:
+                predict(batch, limited)
+            self.assertTrue(getattr(error.exception, direction))
+
+    def test_search_handles_singleton_at_tbo_transition(self):
+        model = base.config.ModelSpec.from_dict(
+            base.model_config() | {"num_hidden_layers": 1}
+        )
+        data = base.profiles_dict(model)
+        data["decode"]["attention"] = {"alpha": 2, "beta": 0}
+        data["decode"]["moe_by_sm_count"] = {"2": {"alpha": 5, "beta": 0}}
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        node = base.config.default_config(
+            "/model", max_decode_tokens=2, max_prefill_tokens=128
+        )
+        options = dict(
+            input_length=16,
+            average_output_length=8,
+            context_length=128,
+            prefill_slo_s=1,
+            decode_slo_s=6,
+            kv_tokens_per_attention_gpu=4096,
+            prefill_overlap="sequential",
+            decode_overlap="tbo",
+        )
+        layout = optimizer.Layout(1, 3, 4)
+        with patch.object(optimizer, "enumerate_layouts", return_value=[layout]):
+            result = optimizer.search(node, model, profiles, **options)
+            self.assertEqual(result.decode_batch, 6)
+            singleton = replace(node, max_decode_tokens=1)
+            self.assertIsNone(optimizer.search(singleton, model, profiles, **options))
+            serial = optimizer.search(
+                singleton, model, profiles, **(options | {"decode_slo_s": 8})
+            )
+            self.assertEqual(serial.decode_batch, 3)
+
     def test_hull_is_stricter_than_bounding_box(self):
         d = domain()
         self.assertEqual(d.batch_bounds(128), (1, 8))
