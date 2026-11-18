@@ -111,6 +111,8 @@ class LaunchCapacityTests(CustomTestCase):
                             a2a,
                             "--moe-runner-backend",
                             runner,
+                            "--load-balance-method",
+                            policy,
                             "--disable-tbo",
                         ]
                     result = subprocess.run(
@@ -120,9 +122,8 @@ class LaunchCapacityTests(CustomTestCase):
                         capture_output=True,
                     )
                     plan = json.loads(result.stdout)
-                    native_options = ["--load-balance-method", policy] if policy else []
                     inner = subprocess.run(
-                        [*plan["launch"], *native_options, "--dry-run"],
+                        [*plan["launch"], "--dry-run"],
                         check=True,
                         text=True,
                         capture_output=True,
@@ -147,6 +148,31 @@ class LaunchCapacityTests(CustomTestCase):
                         self.assertNotIn("--deepep-mode", flags)
                         self.assertNotIn("--deepep-dispatcher-output-dtype", flags)
                         self.assertNotIn("--enable-two-batch-overlap", flags)
+            pdd = command.copy()
+            pdd[pdd.index("--variant") + 1] = "pdd"
+            encoded = subprocess.check_output(
+                [
+                    *pdd,
+                    "--moe-a2a-backend", "flashinfer",
+                    "--moe-runner-backend", "flashinfer_trtllm_routed",
+                    "--load-balance-method", "round_robin",
+                    "--disable-tbo",
+                    "--max-prefill-tokens", "49152",
+                    "--chunk-size", "24576",
+                    "--output-dir", str(root / "pdd"),
+                ],
+                text=True,
+            )
+            children = subprocess.check_output(
+                [*json.loads(encoded)["launch"], "--dry-run"], text=True
+            )
+            for role, size in (("prefill", "24576"), ("decode", "-1")):
+                (line,) = (s for s in children.splitlines() if s.startswith(role + ": "))
+                flags = options(shlex.split(line)[1:])
+                self.assertEqual(flags["--chunked-prefill-size"], [size])
+                self.assertEqual(flags["--load-balance-method"], ["round_robin"])
+                self.assertEqual(flags["--max-prefill-tokens"], ["49152"])
+                self.assertEqual(flags["--context-length"], ["24576"])
             mismatch = subprocess.run(
                 [
                     *plan["launch"],

@@ -1332,6 +1332,23 @@ attention-DP4 的 prefill 服务上对应每 rank 6144 tokens。单独的 decode
 `--chunked-prefill-size -1`。可以在每个服务的 `/server_info` 中检查
 `internal_states[*].chunked_prefill_size` 和 `memory_usage.token_capacity`。
 
+使用统一入口复测 GPUq 170 的原生 PDD 配置时，将 `$DATASET` 指向同一批冻结的
+256 条请求，将 `$OUTPUT` 指向新的结果目录。三个 token 参数分别控制可比较的
+单请求总长度、原生调度器的 prefill 批预算和 FlashInfer P 的分块大小。
+
+```bash
+python examples/expertplex/run_serving_experiment.py \
+  --variant pdd --model-path "$MODEL" --tokenizer-path "$MODEL" \
+  --weight-mode checkpoint --dataset-path "$DATASET" --output-dir "$OUTPUT" \
+  --sequence-cap 24576 --max-prefill-tokens 49152 --chunk-size 24576 \
+  --attention-backend fa4 --sampling-backend flashinfer --enable-dp-lm-head \
+  --moe-a2a-backend flashinfer --moe-runner-backend flashinfer_trtllm_routed \
+  --mem-fraction-static 0.95 --graph-max-bs 32 --disable-tbo \
+  --load-balance-method round_robin --port 16000 --startup-timeout 2400 \
+  --seed 42 --requests 256 --warmup-requests 8 --rates 2 2.5 2.75 3 3.75 \
+  --ttft-slo-ms 1000 --tpot-slo-ms 50
+```
+
 逐位增量诊断在 `check_incremental.py` 上同时指定 `--reference REF.json`、
 `--top-k 0` 和 `--require-exact-logprobs`。任一位置的任一词表项不同，或参考记录
 缺少完整词表，都会保存失败报告并返回非零状态；默认诊断模式仅记录差异。

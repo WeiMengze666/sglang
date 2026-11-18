@@ -35,6 +35,20 @@ def add_moe_backend_args(parser):
     )
 
 
+def add_load_balance_arg(parser):
+    parser.add_argument(
+        "--load-balance-method",
+        choices=(
+            "auto",
+            "round_robin",
+            "follow_bootstrap_room",
+            "total_requests",
+            "total_tokens",
+        ),
+        help="Native baseline request distribution across DP ranks",
+    )
+
+
 def commands(args):
     if (
         getattr(args, "prefill_graph_backend", "disabled") != "disabled"
@@ -202,20 +216,11 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     add_prefill_graph_args(p)
     add_moe_backend_args(p)
+    add_load_balance_arg(p)
     p.add_argument(
         "--variant", choices=("colocated", "chunked", "pdd", "pdmux"), required=True
     )
     p.add_argument("--model-path", required=True)
-    p.add_argument(
-        "--load-balance-method",
-        choices=(
-            "auto",
-            "round_robin",
-            "follow_bootstrap_room",
-            "total_requests",
-            "total_tokens",
-        ),
-    )
     p.add_argument("--tokenizer-path")
     p.add_argument(
         "--load-format", choices=("safetensors", "dummy"), default="safetensors"

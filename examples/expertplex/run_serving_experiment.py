@@ -28,7 +28,7 @@ from launch import (
 from launch import (
     config as node_config,
 )
-from launch_baseline import add_moe_backend_args
+from launch_baseline import add_load_balance_arg, add_moe_backend_args
 from process_lifecycle import service_shutdown_budget
 
 
@@ -38,6 +38,7 @@ def main():
     add_attention_capacity_args(p)
     add_decode_compile_args(p)
     add_moe_backend_args(p)
+    add_load_balance_arg(p)
     p.add_argument("--graph-max-bs", type=int)
     p.add_argument(
         "--dry-run",
@@ -67,6 +68,11 @@ def main():
     p.add_argument("--ttft-slo-ms", type=float, required=True)
     p.add_argument("--tpot-slo-ms", type=float, required=True)
     p.add_argument("--sequence-cap", type=int, default=24576)
+    p.add_argument(
+        "--max-prefill-tokens",
+        type=int,
+        help="Native baseline prefill token budget per batch (default: --sequence-cap)",
+    )
     p.add_argument(
         "--decode-kv-tokens",
         type=kv_token_limit,
@@ -98,7 +104,7 @@ def main():
         "--chunk-size",
         type=int,
         default=2048,
-        help="ChunkedPrefill tuning parameter; freeze before held-out evaluation",
+        help="Global prefill chunk for ChunkedPrefill or FlashInfer PDD prefill",
     )
     p.add_argument(
         "--decode-chunked-prefill-size",
@@ -134,6 +140,13 @@ def main():
         args.moe_a2a_backend is not None or args.moe_runner_backend is not None
     ):
         p.error("MoE backend overrides apply to native baseline variants")
+    if args.variant == "expertplex" and args.load_balance_method is not None:
+        p.error("Use --decode-load-balance-method for ExpertPlex decode services")
+    if args.max_prefill_tokens is not None:
+        if args.variant == "expertplex":
+            p.error("Set max_prefill_tokens in the ExpertPlex node config")
+        if args.max_prefill_tokens < 1:
+            p.error("--max-prefill-tokens must be positive")
     try:
         prefill_graph_options(args, args.sequence_cap)
     except ValueError as exc:
@@ -286,7 +299,7 @@ def main():
             "--load-format",
             "dummy" if args.weight_mode == "synthetic" else "safetensors",
             "--max-prefill-tokens",
-            str(args.sequence_cap),
+            str(args.max_prefill_tokens or args.sequence_cap),
             "--decode-kv-tokens",
             str(args.decode_kv_tokens) if args.decode_kv_tokens is not None else "auto",
             "--startup-timeout",
@@ -301,7 +314,9 @@ def main():
             launch += ["--moe-a2a-backend", args.moe_a2a_backend]
         if args.moe_runner_backend is not None:
             launch += ["--moe-runner-backend", args.moe_runner_backend]
-        if args.variant == "chunked":
+        if args.load_balance_method is not None:
+            launch += ["--load-balance-method", args.load_balance_method]
+        if args.variant in ("chunked", "pdd"):
             launch += ["--chunk-size", str(args.chunk_size)]
         if args.disable_tbo:
             launch += ["--disable-tbo"]
