@@ -20,6 +20,7 @@ def _mask_topk_by_rank_counts_kernel(
     WEIGHTS_ROW_STRIDE: tl.constexpr,
     WEIGHTS_COL_STRIDE: tl.constexpr,
     COUNTS_STRIDE: tl.constexpr,
+    RANK_TOKEN_OFFSET: tl.constexpr,
     BLOCK: tl.constexpr,
 ):
     index = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
@@ -27,7 +28,7 @@ def _mask_topk_by_rank_counts_kernel(
     in_range = row < ROWS
     rank = row // ROWS_PER_RANK
     valid_rows = tl.load(counts + rank * COUNTS_STRIDE, mask=in_range, other=0)
-    live = row % ROWS_PER_RANK < valid_rows
+    live = row % ROWS_PER_RANK < valid_rows - RANK_TOKEN_OFFSET
     selected = tl.load(
         ids + row * IDS_ROW_STRIDE + column * IDS_COL_STRIDE, mask=in_range, other=-1
     )
@@ -40,13 +41,15 @@ def _mask_topk_by_rank_counts_kernel(
     tl.store(out_weights + index, tl.where(live, weight, 0.0), mask=in_range)
 
 
-def mask_topk_by_rank_counts(ids, weights, counts):
+def mask_topk_by_rank_counts(ids, weights, counts, *, rank_token_offset=0):
     """Return masked copies of IDs and weights for equal-sized rank segments.
 
     Valid entries retain their exact values. Padding receives ID -1 and weight
     zero. Counts are read on device at execution time, including graph replay.
-    Callers provide integer counts within each segment's row capacity.
+    A child slice uses its offset within each parent rank segment.
     """
+    if type(rank_token_offset) is not int or rank_token_offset < 0:
+        raise ValueError("rank_token_offset must be a nonnegative integer")
     if ids.ndim != 2 or ids.shape != weights.shape:
         raise ValueError("IDs and weights must have the same two-dimensional shape")
     if ids.dtype not in (torch.int32, torch.int64) or weights.dtype != torch.float32:
@@ -79,6 +82,7 @@ def mask_topk_by_rank_counts(ids, weights, counts):
             WEIGHTS_ROW_STRIDE=weights.stride(0),
             WEIGHTS_COL_STRIDE=weights.stride(1),
             COUNTS_STRIDE=counts.stride(0),
+            RANK_TOKEN_OFFSET=rank_token_offset,
             BLOCK=256,
             num_warps=4,
         )

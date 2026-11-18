@@ -1691,6 +1691,17 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         if self.dp_spec_prefill_coordination_applied:
             # Preserve each rank's forward mode on coordinated steps.
             dp_padding_mode = DpPaddingMode.SUM_LEN
+        # Grouped remote TBO gives every rank the same child ranges, including
+        # idle ranks. Use the native MAX_LEN gather/reduce-scatter geometry.
+        if (
+            self.can_run_tbo
+            and not self.is_extend_in_batch
+            and get_parallel().attn_dp_size > 1
+        ):
+            from sglang.srt.expertplex.attention_dp import grouped_attention_dp_size
+
+            if grouped_attention_dp_size() > 1:
+                dp_padding_mode = DpPaddingMode.MAX_LEN
         self.dp_padding_mode = dp_padding_mode
         # Read once here, where dp_padding_mode is final: the idle-row branch
         # below runs after another arm may have rewritten self.forward_mode.

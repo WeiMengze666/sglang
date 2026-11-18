@@ -123,6 +123,41 @@ class RankPaddingTests(CustomTestCase):
         self.assertEqual(actual[0].shape, ids.shape)
         self.assertEqual(actual[1].dtype, weights.dtype)
 
+    def test_child_offsets_read_parent_counts_on_graph_replay(self):
+        from sglang.kernels.ops.moe.mask_topk_by_rank_counts import (
+            mask_topk_by_rank_counts,
+        )
+
+        for dtype in (torch.int32, torch.int64):
+            ids = torch.arange(12 * 8, device="cuda", dtype=dtype).reshape(12, 8)
+            weights = (
+                torch.arange(12 * 8, device="cuda", dtype=torch.float32).reshape(12, 8)
+                / 128
+            )
+            weights[0, 0] = -0.0
+            counts = torch.full((3,), 8, dtype=torch.int32, device="cuda")
+            for offset in (0, 4):
+                mask_topk_by_rank_counts(ids, weights, counts, rank_token_offset=offset)
+            torch.cuda.synchronize()
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                first = mask_topk_by_rank_counts(
+                    ids, weights, counts, rank_token_offset=0
+                )
+                second = mask_topk_by_rank_counts(
+                    ids, weights, counts, rank_token_offset=4
+                )
+            address = counts.data_ptr()
+            for values in ((0, 3, 8), (8, 0, 5), (1, 7, 0), (0, 0, 0), (8, 8, 8)):
+                counts.copy_(torch.tensor(values, dtype=torch.int32, device="cuda"))
+                graph.replay()
+                torch.cuda.synchronize()
+                for offset, output in ((0, first), (4, second)):
+                    self.assert_outputs(
+                        output, reference(ids, weights, (counts - offset).clamp(0, 4))
+                    )
+                self.assertEqual(counts.data_ptr(), address)
+
 
 if __name__ == "__main__":
     unittest.main()

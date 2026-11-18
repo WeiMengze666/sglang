@@ -42,6 +42,55 @@ def make_eager_real_dp_counts(batch, num_dp_ranks: int):
     return copy_real_dp_counts_(buffer, batch)
 
 
+def tbo_child_dp_metadata(batch, start, end):
+    """Describe a uniform child slice of native MAX_LEN rank segments.
+
+    CPU counts describe capture/eager geometry. The shared device vector holds
+    current parent counts on every replay; routing applies the child's offset.
+    """
+    from sglang.srt.layers.dp_attention import DpPaddingMode
+
+    raw = batch.expertplex_dp_real_num_tokens_gpu
+    counts = real_dp_counts(batch, raw.numel())
+    width = len(batch.input_ids)
+    if batch.dp_padding_mode != DpPaddingMode.MAX_LEN:
+        raise ValueError("grouped TBO requires native MAX_LEN padding")
+    if any(type(v) is not int for v in (start, end)) or not 0 <= start <= end <= width:
+        raise ValueError("invalid grouped TBO child token range")
+    padded = batch.global_num_tokens_cpu
+    if padded != [width] * len(counts):
+        raise ValueError("grouped TBO requires equal parent rank segments")
+    if any(n > width for n in counts):
+        raise ValueError("raw DP count exceeds parent rank segment")
+    child_width = end - start
+    # Physical MAX_LEN slots are fixed for the life of a captured graph. These
+    # device views must survive the capture batch and subsequent bucket setup.
+    # The separate parent counts continue to change on replay for route masking.
+    from sglang.srt.layers.dp_attention import dp_slot_in
+    from sglang.srt.runtime_context import get_buffer
+
+    world = len(counts)
+    slot = dp_slot_in(padded)
+    key = f"expertplex.tbo_dp_layout.{raw.device}.{world}.{child_width}"
+    layout = get_buffer(
+        key,
+        lambda: raw.new_tensor(
+            [child_width] * world + [rank * child_width for rank in range(world)]
+        ),
+    )
+    child_counts = [max(0, min(n, end) - start) for n in counts]
+    return {
+        "original_global_num_tokens_cpu": child_counts,
+        "global_num_tokens_cpu": [child_width] * len(counts),
+        "global_num_tokens_gpu": layout[:world],
+        "dp_local_start_pos": layout[world + slot],
+        "dp_local_num_tokens": layout[slot],
+        "global_num_tokens_padded_cpu": [child_width] * len(counts),
+        "global_dp_buffer_len": child_width * len(counts),
+        "expertplex_dp_real_num_tokens_gpu": raw,
+    }
+
+
 def mask_topk_padding(topk, batch, num_dp_ranks: int):
     """Keep valid routes bit-identical; holes use the existing -1 route sentinel."""
     if num_dp_ranks == 1:
@@ -54,6 +103,8 @@ def mask_topk_padding(topk, batch, num_dp_ranks: int):
     if raw is None or raw.shape != (num_dp_ranks,) or raw.dtype != torch.int32 or raw.device != ids.device:
         raise ValueError("missing graph-safe raw DP count vector")
     counts = real_dp_counts(batch, num_dp_ranks)
+    token_range = getattr(batch, "tbo_parent_token_range", None)
+    token_offset = token_range[0] if token_range is not None else 0
     mode = getattr(batch, "dp_padding_mode", None)
     from sglang.srt.layers.dp_attention import DpPaddingMode
     if not isinstance(mode, DpPaddingMode):
@@ -79,10 +130,13 @@ def mask_topk_padding(topk, batch, num_dp_ranks: int):
             mask_topk_by_rank_counts,
         )
 
-        masked_ids, masked_weights = mask_topk_by_rank_counts(ids, weights, raw)
+        masked_ids, masked_weights = mask_topk_by_rank_counts(
+            ids, weights, raw, rank_token_offset=token_offset
+        )
         return topk._replace(topk_ids=masked_ids, topk_weights=masked_weights)
     index = torch.arange(rows, device=ids.device)
-    valid = (index.remainder(stride) < raw[index.div(stride, rounding_mode="floor")])[:, None]
+    parent_rows = raw[index.div(stride, rounding_mode="floor")]
+    valid = (index.remainder(stride) + token_offset < parent_rows)[:, None]
     return topk._replace(
         topk_ids=torch.where(valid, ids, ids.new_full((), -1)),
         topk_weights=torch.where(valid, weights, weights.new_zeros(())),

@@ -116,8 +116,22 @@ class ExplicitDPConfig(unittest.TestCase):
         node = group_node()
         with self.assertRaises(ValueError):
             dataclasses.replace(node, max_decode_tokens=47)
+        tbo = dataclasses.replace(
+            node,
+            clients=(
+                node.clients[0],
+                dataclasses.replace(node.clients[1], overlap="tbo"),
+            ),
+        )
+        self.assertEqual(tbo.client_overlap(tbo.clients[1]), "tbo")
         with self.assertRaises(ValueError):
-            dataclasses.replace(node, clients=(node.clients[0], dataclasses.replace(node.clients[1], overlap='tbo')))
+            dataclasses.replace(
+                node,
+                clients=(
+                    node.clients[0],
+                    dataclasses.replace(node.clients[1], overlap="sbo"),
+                ),
+            )
 
     def test_launcher_actual_native_parser_limits(self):
         node = group_node()

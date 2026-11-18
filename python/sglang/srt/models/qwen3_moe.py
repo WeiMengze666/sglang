@@ -465,7 +465,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
             with get_global_expert_distribution_recorder().with_current_layer(
                 self.layer_id
             ):
-                state.topk_output = self.topk(
+                topk_output = self.topk(
                     hidden_states=hidden_states,
                     router_logits=router_logits,
                     num_token_non_padded=state.forward_batch.moe_num_token_non_padded(),
@@ -474,7 +474,15 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
                     ),
                 )
         else:
-            state.topk_output = self.topk.empty_topk_output(hidden_states.device)
+            topk_output = self.topk.empty_topk_output(hidden_states.device)
+        attention_dp_size = getattr(self, "_expertplex_attention_dp_size", 1)
+        if self._expertplex and attention_dp_size > 1:
+            from sglang.srt.expertplex.attention_dp import mask_topk_padding
+
+            topk_output = mask_topk_padding(
+                topk_output, state.forward_batch, attention_dp_size
+            )
+        state.topk_output = topk_output
 
     def op_dispatch_a(self, state):
         if self.ep_size > 1 or self._expertplex:

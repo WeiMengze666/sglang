@@ -607,6 +607,9 @@ class TboForwardBatchPreparer:
         from sglang.srt.layers.attention.tbo_backend import TboAttnBackend
 
         tbo_split_token_index = cls._compute_split_token_index(batch)
+        if batch.expertplex_dp_real_num_tokens_gpu is not None:
+            # Padded native DP decode has one query per sequence on every rank.
+            batch.tbo_split_seq_index = tbo_split_token_index
 
         is_enable_two_chunk = (
             batch.forward_mode == ForwardMode.EXTEND
@@ -943,6 +946,17 @@ class TboForwardBatchPreparer:
             )
         )
 
+        if batch.expertplex_dp_real_num_tokens_gpu is not None:
+            from sglang.srt.expertplex.attention_dp import tbo_child_dp_metadata
+
+            output_dict.update(
+                tbo_child_dp_metadata(batch, start_token_index, end_token_index)
+            )
+            # Idle ranks participate in the gathered MoE path. Their local
+            # dummy rows stay excluded by the replay-time per-rank counts.
+            if batch.forward_mode.is_idle():
+                output_dict["forward_mode"] = ForwardMode.DECODE
+
         errors = []
         for field in dataclasses.fields(ForwardBatch):
             if getattr(batch, field.name) is not None and field.name not in output_dict:
@@ -997,6 +1011,10 @@ class TboForwardBatchPreparer:
 
     @classmethod
     def _compute_split_token_index(cls, batch: ForwardBatch):
+        if batch.expertplex_dp_real_num_tokens_gpu is not None:
+            if not (batch.forward_mode.is_decode() or batch.forward_mode.is_idle()):
+                raise ValueError("grouped remote TBO supports decode attention")
+            return len(batch.input_ids) // 2
         token_num_per_seq = get_token_num_per_seq(
             forward_mode=batch.forward_mode, spec_info=batch.spec_info
         )

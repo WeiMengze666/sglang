@@ -388,9 +388,9 @@ class NodeConfig:
             )
         for client in self.clients:
             if client.attention_dp_size > 1:
-                if self.client_overlap(client) != "none":
+                if self.client_overlap(client) not in ("none", "tbo"):
                     raise ValueError(
-                        "grouped attention DP currently requires D overlap none"
+                        "grouped attention DP requires D overlap none or tbo"
                     )
                 if self.max_decode_tokens % client.attention_dp_size:
                     raise ValueError("global D capacity must divide by attention DP")
