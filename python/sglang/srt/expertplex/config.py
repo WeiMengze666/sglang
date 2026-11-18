@@ -567,6 +567,7 @@ def default_config(
     expert_count: int = 4,
     prefill_tp_size: int = 1,
     decode_tp_size: int = 1,
+    decode_attention_dp_size: int = 1,
     prefill_overlap: str | None = None,
     decode_overlap: str | None = None,
     prefill_max_running_requests: int | None = None,
@@ -599,6 +600,7 @@ def default_config(
                 30000 + i,
                 prefill_tp_size if i < prefill_count else decode_tp_size,
                 prefill_overlap if i < prefill_count else decode_overlap,
+                attention_dp_size=1 if i < prefill_count else decode_attention_dp_size,
                 max_running_requests=prefill_max_running_requests
                 if i < prefill_count
                 else decode_max_running_requests,

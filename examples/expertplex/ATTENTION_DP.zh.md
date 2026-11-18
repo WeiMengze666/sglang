@@ -16,6 +16,25 @@ attention DP 副本数，有效 attention TP 为二者之商。本例是物理�
 有效 attention TP 1。attention/router 权重和 KV pool 在三个 D GPU 上各自保留；
 显存估计使用有效 TP1，不能按物理跨度 3 把这些权重再除以三。
 
+也可以通过配置生成器创建这个物理布局。`--decode 1` 指一个 D 服务，
+`--decode-tp-size 3 --decode-attention-dp-size 3` 让这个服务使用三张卡。
+下面生成使用单批 P/D 和交错 SwiGLU 的配置文件，供三个角色分别启动时读取。
+
+```bash
+python examples/expertplex/configure.py \
+  --model-path /data/models/Qwen3-Coder-480B-A35B-Instruct \
+  --output "$PWD/grouped-decode.json" --rendezvous-dir "$PWD/rendezvous-grouped" \
+  --prefill 1 --decode 1 --experts 4 --decode-tp-size 3 --decode-attention-dp-size 3 \
+  --max-prefill-tokens 49152 --max-decode-tokens 48 --kernel sm100_swiglu \
+  --no-prefill-preprocess --decode-sm-budget 96 --expected-decode-tiles 8 \
+  --max-decode-sm-fraction 0.99
+
+python examples/expertplex/launch.py --config "$PWD/grouped-decode.json" --dry-run
+```
+
+第二条命令打印各角色和路由器的命令行。部署时可分别启动这些进程。下文的手写
+启动示例使用仓库 JSON，其中 P 开启 TBO。
+
 | 配置 | 全局值 | 每个 D 副本 |
 | --- | ---: | ---: |
 | 最大 running requests / D mailbox token 容量 | 48 | 16 |
@@ -28,10 +47,11 @@ P 的 `--max-running-requests 16` 单独显式指定。不要把 D 的全局请�
 查询 D 的 server info 时，`chunked_prefill_size` 是解析后的 16。
 
 默认 `attention_dp_size=1` 不写入序列化 JSON，已有 attention TP 组的含义保持不变。
-当前公开模式只接受 Decode 的有效 TP1、D overlap NONE 和完整 Decode CUDA graphs；
-CPU scheduler overlap 沿用原生可选设置。可通过 D 服务的 `--enable-torch-compile`
-启用原生编译，`--torch-compile-max-bs` 按每个 D 副本设置。TBO/SBO、TP×DP
-混合分片组合仍明确拒绝，相关候选通过验证前不会放开。
+当前公开模式要求 Decode 的有效 TP1 和完整 Decode CUDA graphs，支持单批与 TBO。
+三卡路由和 scatter 已通过 117 次 CUDA Graph 重放。主模型负载对照中，开启 D TBO
+提高了 TPOT；当前性能配置使用单批 D。CPU scheduler overlap 沿用原生可选设置。
+可通过 D 服务的 `--enable-torch-compile` 启用原生编译，`--torch-compile-max-bs`
+按每个 D 副本设置。当前 grouped D 的校验会拒绝 SBO 和有效 TP 大于 1 的混合分片。
 没有单独实测 DP/gather profile 时，placement optimizer 也会拒绝把该模式当作已测候选。
 
 ## 独立启动 P、D、E

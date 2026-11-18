@@ -74,6 +74,45 @@ class PhaseOverlap(unittest.TestCase):
         self.assertEqual(node.mailboxes_per_client, 2)
         self.assertEqual(node.client_overlap(node.clients[0]), "none")
 
+    def test_configure_grouped_decode_emits_native_service_arguments(self):
+        with tempfile.TemporaryDirectory() as temp:
+            dest = Path(temp) / "node.json"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "examples/expertplex/configure.py"),
+                    "--model-path",
+                    str(Path(temp) / "model"),
+                    "--output",
+                    str(dest),
+                    "--rendezvous-dir",
+                    temp,
+                    "--decode",
+                    "1",
+                    "--decode-tp-size",
+                    "3",
+                    "--decode-attention-dp-size",
+                    "3",
+                    "--max-decode-tokens",
+                    "48",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            node = config.NodeConfig.from_json(dest)
+        self.assertEqual(node.expert_devices, (4, 5, 6, 7))
+        prefill, decode = node.clients
+        self.assertEqual((prefill.device, prefill.attention_dp_size), (0, 1))
+        self.assertEqual((decode.device, decode.attention_tp_size), (1, 1))
+        _, servers, _ = launch.commands(node, self.args())
+        (_, p), (_, d) = servers
+        self.assertNotIn("--attn-dp-size", p)
+        self.assertEqual(d[d.index("--attn-dp-size") + 1], "3")
+        self.assertEqual(d[d.index("--tp-size") + 1], "3")
+        self.assertEqual(d[d.index("--dp-size") + 1], "1")
+        self.assertIn("--enable-dp-lm-head", d)
+
     def test_compact_prefill_requires_actual_prefill_tbo(self):
         node = config.default_config(
             "/model", overlap="none", prefill_overlap="tbo", prefill_mailbox_tokens=1024

@@ -18,6 +18,12 @@ def main():
     parser.add_argument("--experts", type=int, default=4)
     parser.add_argument("--prefill-tp-size", type=int, default=1)
     parser.add_argument("--decode-tp-size", type=int, default=1)
+    parser.add_argument(
+        "--decode-attention-dp-size",
+        type=int,
+        default=1,
+        help="Attention DP ranks within each decode service's physical TP group",
+    )
     parser.add_argument("--max-prefill-tokens", type=int, default=2048)
     parser.add_argument(
         "--prefill-mailbox-tokens",
@@ -70,6 +76,7 @@ def main():
         expert_count=args.experts,
         prefill_tp_size=args.prefill_tp_size,
         decode_tp_size=args.decode_tp_size,
+        decode_attention_dp_size=args.decode_attention_dp_size,
         max_prefill_tokens=args.max_prefill_tokens,
         prefill_mailbox_tokens=args.prefill_mailbox_tokens,
         max_decode_tokens=args.max_decode_tokens,
