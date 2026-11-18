@@ -1051,8 +1051,8 @@ def max_feasible_batch(maximum, slo, latency, *, separate_singleton=False):
     """
     if type(maximum) is not int or maximum < 0 or not math.isfinite(slo) or slo <= 0:
         raise ValueError("Expected a nonnegative capacity and positive finite SLO")
-    # Decode TBO needs two nonempty children to hide latency. Its singleton
-    # can be slower than batch two, outside the monotone two-child domain.
+    # A one-token TBO batch can be slower than a two-child batch. Search
+    # that singleton separately from the monotone two-child domain.
     lo, hi, best = 2 if separate_singleton else 1, maximum, 0
     while lo <= hi:
         middle = (lo + hi) // 2
@@ -1135,7 +1135,8 @@ def _iteration_latency(
         )
         / profiles.nvlink_bytes_per_second
     )
-    can_overlap = overlap == "tbo" and (phase == "prefill" or first_child > 0)
+    local_tokens = local_batch * input_length if phase == "prefill" else local_batch
+    can_overlap = overlap == "tbo" and local_tokens >= 2
     layers = [
         max(attention, latency + communication)
         if can_overlap
@@ -1386,7 +1387,8 @@ def search(
                             config.prefill_preprocess,
                         )
                     ),
-                    separate_singleton=phase == "decode" and policies[phase] == "tbo",
+                    separate_singleton=policies[phase] == "tbo"
+                    and (phase == "decode" or input_length == 1),
                 )
                 low = count * local_batch
                 batches[phase] = low

@@ -24,6 +24,40 @@ def domain(phase="decode", points=None, phase_tokens=100000, kv_tokens=1000000):
 
 
 class AttentionDomainTests(unittest.TestCase):
+    def test_one_token_per_prefill_client_cannot_hide_moe(self):
+        model = base.config.ModelSpec.from_dict(
+            base.model_config() | {"num_hidden_layers": 1}
+        )
+        data = base.profiles_dict(model)
+        data["prefill"]["attention"] = {"alpha": 2, "beta": 0}
+        data["prefill"]["moe_by_sm_count"] = {"6": {"alpha": 5, "beta": 0}}
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        layout = optimizer.Layout(2, 2, 4)
+        node = layout.config("/model", max_prefill_tokens=2, max_decode_tokens=2)
+        options = dict(
+            input_length=1,
+            average_output_length=8,
+            context_length=128,
+            prefill_slo_s=6,
+            decode_slo_s=1,
+            kv_tokens_per_attention_gpu=4096,
+            prefill_overlap="tbo",
+            decode_overlap="sequential",
+        )
+        with patch.object(optimizer, "enumerate_layouts", return_value=[layout]):
+            singleton = replace(node, max_prefill_tokens=1)
+            self.assertIsNone(optimizer.search(singleton, model, profiles, **options))
+            serial = optimizer.search(
+                singleton, model, profiles, **(options | {"prefill_slo_s": 8})
+            )
+            self.assertEqual(serial.prefill_batch, 2)
+            self.assertGreater(serial.predicted_prefill_latency_s, 7)
+            # Two local tokens can form two nonempty children. The singleton's
+            # serial latency can exceed the SLO while batch two meets it.
+            paired = optimizer.search(node, model, profiles, **options)
+            self.assertEqual(paired.prefill_batch, 4)
+            self.assertLess(paired.predicted_prefill_latency_s, 6)
+
     def test_decode_tbo_uses_nonempty_child_shapes_and_parent_capacity(self):
         model = base.config.ModelSpec.from_dict(
             base.model_config() | {"num_hidden_layers": 1}
