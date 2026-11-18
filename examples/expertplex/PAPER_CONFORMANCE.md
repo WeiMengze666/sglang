@@ -47,6 +47,30 @@ APK 的算子开销、完整传播上界、
 实现约束仍以以上原始 PDF 为准，尤其是 tile 提交后的协作切换、单边最终缓冲区访问、
 TBO/SBO 的关键路径，以及按联合 TTFT/TPOT SLO 定义的 P90 goodput。
 
+## 2026-11-18 原生 SGLang 基线复测
+
+在 8×B300 上用 Coder-480B BF16 交替运行两种原生 DP 请求分配策略。每轮重新
+启动服务，先测 2.5 再测 2.75 requests/s。每个到达率使用相同的 256 个
+ShareGPT 请求，seed 42，预热 8 个请求。下表按启动顺序列出同时满足
+TTFT ≤ 1s 和 TPOT ≤ 50ms 的请求数。每格至少需要 231 个请求达标。
+
+| 轮次 | DP 请求分配策略 | 2.5 requests/s | 2.75 requests/s |
+| --- | --- | ---: | ---: |
+| 1 | `round_robin` | 231 / 256 | 223 / 256 |
+| 2 | `total_requests` | 223 / 256 | 224 / 256 |
+| 3 | `total_requests` | 220 / 256 | 225 / 256 |
+| 4 | `round_robin` | 228 / 256 | 227 / 256 |
+
+八个 rank 的实际配置均为 TP8/EP8/attention-DP8、DP LM head、FA4、
+FlashInfer A2A 和 `flashinfer_trtllm_routed`。原生调度重叠开启，TBO 关闭，
+请求上限为 128，每个 DP rank 的 prefill chunk 为 6,144 tokens，decode
+使用 full CUDA Graph，最大 batch 为 32。四轮的 2,048 个请求均成功完成；
+逐请求复算联合 SLO，并核对了输入和输出长度序列。
+
+2.5 requests/s 在四轮中有一轮刚好达标，2.75 requests/s 四轮均低于门槛。
+这次复测保留此前原生基线在 2.5 requests/s 的达标记录，也显示了边界附近的
+运行间波动。ExpertPlex 的 1.5× 验收仍需双方在相同负载下的容量对照。
+
 ## 2026-11-17 性能证据更新
 
 以下汇总维护恢复后完成的实验。主模型为 Coder-480B BF16，运行时基于
