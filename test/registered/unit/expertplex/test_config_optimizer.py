@@ -526,7 +526,7 @@ class OptimizerTests(unittest.TestCase):
                         "--input-length",
                         "64",
                         "--average-output-length",
-                        "5000",
+                        "5000.25",
                         "--context-length",
                         "128",
                         "--prefill-slo-s",
@@ -541,6 +541,11 @@ class OptimizerTests(unittest.TestCase):
                     ]
                 )
             prediction = json.loads(output.getvalue())["prediction"]
+            self.assertAlmostEqual(
+                prediction["predicted_goodput_requests_per_second"],
+                prediction["decode_batch"]
+                / (prediction["predicted_decode_latency_s"] * 5000.25),
+            )
             self.assertEqual(
                 (prediction["prefill_overlap"], prediction["decode_overlap"]),
                 ("tbo", "tbo"),
@@ -944,6 +949,15 @@ class OptimizerTests(unittest.TestCase):
                 node, model, profiles, **{**arguments, "decode_slo_s": 1e-12}
             )
         )
+        for invalid in (True, 0, -1, float("inf"), float("nan"), "16"):
+            with self.subTest(average_output_length=invalid):
+                with self.assertRaisesRegex(ValueError, "average_output_length"):
+                    optimizer.search(
+                        node,
+                        model,
+                        profiles,
+                        **{**arguments, "average_output_length": invalid},
+                    )
 
 
 if __name__ == "__main__":

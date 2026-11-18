@@ -1154,7 +1154,7 @@ def search(
     profiles: MeasuredProfiles,
     *,
     input_length: int,
-    average_output_length: int,
+    average_output_length: float,
     context_length: int,
     prefill_slo_s: float,
     decode_slo_s: float,
@@ -1254,12 +1254,16 @@ def search(
     )
     for name, value in (
         ("input_length", input_length),
-        ("average_output_length", average_output_length),
         ("context_length", context_length),
     ):
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"{name} must be a positive integer")
+    if isinstance(average_output_length, bool) or not isinstance(
+        average_output_length, (int, float)
+    ):
+        raise ValueError("average_output_length must be a finite positive number")
     for name, value in (
+        ("average_output_length", average_output_length),
         ("prefill_slo_s", prefill_slo_s),
         ("decode_slo_s", decode_slo_s),
     ):
@@ -1486,7 +1490,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--reserve-gib", type=float, default=16.0)
     parser.add_argument("--profiles", type=Path)
     parser.add_argument("--input-length", type=int, default=1024)
-    parser.add_argument("--average-output-length", type=int, default=256)
+    parser.add_argument(
+        "--average-output-length",
+        type=float,
+        default=256.0,
+        help="Mean output tokens per request in the workload",
+    )
     parser.add_argument("--context-length", type=int, default=4096)
     parser.add_argument("--prefill-slo-s", type=float, default=1.0)
     parser.add_argument("--decode-slo-s", type=float, default=0.05)
