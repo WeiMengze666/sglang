@@ -24,9 +24,27 @@ class TerminalResidualTests(unittest.TestCase):
     @staticmethod
     def layer(remote=True, terminal=True):
         return SimpleNamespace(
+            is_layer_sparse=True,
             mlp=SimpleNamespace(_expertplex=remote),
             ffn_boundary=SimpleNamespace(plan=SimpleNamespace(terminal=terminal)),
         )
+
+    def test_dense_ffn_preserves_pending_native_residual(self):
+        """Mixed dense/MoE decoders also use the Qwen post-FFN boundary."""
+        layer = self.layer()
+        layer.is_layer_sparse = False
+        layer.mlp = torch.nn.Identity()
+        residual = torch.ones(1, 8, dtype=torch.bfloat16)
+        stream = ResidualStream(residual)
+        output = stream.record(torch.full_like(residual, 0.00390625), PLAIN_ADD)
+        pending = stream.pending
+        with get_parallel().override(attn_tp_size=2):
+            result = Qwen3MoeDecoderLayer._finish_remote_tp_residual(
+                layer, output, SimpleNamespace(residual_stream=stream)
+            )
+        self.assertIs(result, output)
+        self.assertIs(stream.pending, pending)
+        self.assertIs(stream.residual, residual)
 
     def test_only_remote_terminal_tp_folds_the_pending_residual(self):
         for remote in (False, True):

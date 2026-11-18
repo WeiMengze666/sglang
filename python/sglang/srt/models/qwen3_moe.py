@@ -971,7 +971,8 @@ class Qwen3MoeDecoderLayer(nn.Module):
         # before gathering attention-TP slices for the final norm. Remote MoE
         # has replicated rows, but must retain that arithmetic boundary.
         if (
-            self.mlp._expertplex
+            self.is_layer_sparse
+            and self.mlp._expertplex
             and self.ffn_boundary.plan.terminal
             and get_parallel().attn_tp_size > 1
         ):
