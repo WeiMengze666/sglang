@@ -114,6 +114,7 @@ class RequestFuncOutput:
     spec_cap_length: float = 0.0
     spec_block_accept_length: float = 0.0
     spec_cap_lens_histogram: List[int] = field(default_factory=list)
+    dp_rank: Optional[int] = None
 
     @staticmethod
     def init_new(request_func_input: RequestFuncInput):
@@ -754,6 +755,8 @@ async def async_request_sglang_generate(
                             data = orjson.loads(sse_data)
 
                             _meta_info = data.get("meta_info") or {}
+                            if (dp_rank := _meta_info.get("dp_rank")) is not None:
+                                output.dp_rank = dp_rank
                             if _meta_info.get("spec_accept_length") is not None:
                                 output.spec_accept_length = _meta_info[
                                     "spec_accept_length"
@@ -1947,6 +1950,13 @@ async def benchmark(
         "generated_texts": [output.generated_text for output in outputs],
         "errors": [output.error for output in outputs],
     }
+
+    if args.output_details and backend in ("sglang", "sglang-native"):
+        result_details["dp_ranks"] = [o.dp_rank for o in outputs]
+        result_details["request_start_offsets_s"] = [
+            o.start_time - benchmark_start_time if o.start_time else None
+            for o in outputs
+        ]
 
     if args.cache_report:
         result_details["cached_tokens"] = [o.cached_tokens for o in outputs]

@@ -680,6 +680,10 @@ python examples/expertplex/check_e2e.py \
 保留逐请求 `successes/ttfts/latencies/output_lens`，计算同一个请求同时满足 TTFT、TPOT
 的比例，失败请求保留在分母中。分别比较两个 P90 百分位不等价于联合 90% attainment。
 报告最高**已测试**且联合 attainment≥90% 的 offered rate，以及观测 SLO goodput。
+新版原生 `sglang` 客户端的逐请求 JSONL 还保存 `dp_ranks` 和
+`request_start_offsets_s`。前者取响应最后报告的 DP rank，缺失时为 `null`；
+后者以压测开始为零点，记录客户端获得并发名额后发起 HTTP 请求的时间。
+两列均与 TTFT、输出长度按请求顺序对应，可用于核对实际到达间隔和各 rank 的 SLO。
 `summarize_experiments.py` 从逐请求数据重算并核对 SLO 计数、goodput 和最高通过速率，
 拒绝截断数组、汇总字段冲突及成功请求输出长度不一致。失败请求保留在 attainment 分母中，
 其输出不计入成功交付的 token 吞吐；始终失败的位置不能证明输出长度可比。
