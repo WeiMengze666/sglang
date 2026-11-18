@@ -2,7 +2,9 @@
 
 import copy
 import importlib
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -19,6 +21,32 @@ validate_universal = module.validate_universal_propagation_bound
 
 
 class WarpPropagationTests(CustomTestCase):
+    def test_trace_checks_reject_timing_only_mode(self):
+        """A timing-only run cannot report a requested trace check as passed."""
+        for flag in (
+            "--require-universal-propagation-bound",
+            "--check-single-pending-compute",
+        ):
+            with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "result" / "trace.json"
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-S",
+                        module.__file__,
+                        "--trace-capacity",
+                        "0",
+                        flag,
+                        "--output",
+                        str(output),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("trace", result.stderr.splitlines()[-1])
+                self.assertFalse(output.parent.exists())
+
     def fixture(self):
         records, warps, decisions = [], [], []
         for seq, phase, begin, end, admission in [

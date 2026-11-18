@@ -587,8 +587,10 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.check_single_pending_compute and args.trace_capacity <= 0:
-        parser.error("Pending-computation checks require a complete trace")
+    if (
+        args.check_single_pending_compute or args.require_universal_propagation_bound
+    ) and args.trace_capacity <= 0:
+        parser.error("Preemption checks require a positive --trace-capacity")
     if (
         min(*args.prefill_rows, args.decode_rows, args.repeats, args.isolated_repeats)
         <= 0
