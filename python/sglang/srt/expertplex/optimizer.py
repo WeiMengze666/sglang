@@ -86,6 +86,21 @@ class SmAllocation:
     decode_sms: int
 
 
+def _max_decode_ctas(grid_ctas: int, cluster_size: int, fraction: float) -> int:
+    """Match PersistentExecutor's launch-time cap, before either phase is ready."""
+    if grid_ctas % cluster_size or grid_ctas < 2 * cluster_size:
+        raise ValueError(
+            "The persistent grid must consist of at least two complete clusters"
+        )
+    if not 0 < fraction < 1:
+        raise ValueError("max_decode_sm_fraction must be between zero and one")
+    cap = min(grid_ctas - cluster_size, math.floor(grid_ctas * fraction))
+    cap -= cap % cluster_size
+    if cap < cluster_size:
+        raise ValueError("Decode cap must fit at least one cluster")
+    return cap
+
+
 def adaptive_sm_allocation(
     *,
     total_sms: int,
@@ -112,26 +127,13 @@ def adaptive_sm_allocation(
         or current_decode_tiles < 0
     ):
         raise ValueError("current_decode_tiles must be a nonnegative integer")
-    if not 0 < max_decode_sm_fraction < 1:
-        raise ValueError("max_decode_sm_fraction must be between zero and one")
-    if total_sms % cluster_size:
-        raise ValueError("total_sms must be divisible by cluster_size")
+    q_max = _max_decode_ctas(total_sms, cluster_size, max_decode_sm_fraction)
     if not prefill_ready and not decode_ready:
         return SmAllocation(0, 0)
     if not decode_ready:
         return SmAllocation(total_sms, 0)
     if not prefill_ready:
         return SmAllocation(0, total_sms)
-    if total_sms < 2 * cluster_size:
-        raise ValueError("contention requires at least two CTA clusters")
-    q_max = min(
-        total_sms - cluster_size,
-        max(
-            cluster_size,
-            math.floor(total_sms * max_decode_sm_fraction / cluster_size)
-            * cluster_size,
-        ),
-    )
     scaled = (
         math.ceil(
             decode_sm_budget
@@ -1187,6 +1189,15 @@ def search(
         )
     if profiles.components_by_world and config.cta_count not in (0, profiles.total_sms):
         raise ValueError("Component search requires matching total SMs")
+    grid_ctas = config.cta_count or profiles.total_sms
+    if grid_ctas > profiles.total_sms:
+        raise ValueError("The persistent grid exceeds the physical SM count")
+    launch_cluster = 1 if config.kernel == "sm100_cta1" else 2
+    max_decode_ctas = _max_decode_ctas(
+        grid_ctas, launch_cluster, config.max_decode_sm_fraction
+    )
+    # WMMA shares the executor's launch cap but selects a phase per CTA.
+    policy_cluster = 1 if config.kernel == "wmma" else launch_cluster
     if overlap not in ("sequential", "tbo", "auto"):
         raise ValueError("overlap must be sequential, tbo or auto")
     prefill_choices = _phase_overlap_choices(
@@ -1322,11 +1333,9 @@ def search(
                     "Component planner currently describes the complete two-CTA SM100 pipeline"
                 )
             budgets = []
-            for q in range(cluster, profiles.total_sms, cluster):
-                if q > profiles.total_sms * config.max_decode_sm_fraction:
-                    continue
+            for q in range(cluster, max_decode_ctas + 1, cluster):
                 try:
-                    component.bracket("prefill", profiles.total_sms - q)
+                    component.bracket("prefill", grid_ctas - q)
                     component.bracket("decode", q)
                 except ProfileCoverageError:
                     continue
@@ -1336,8 +1345,9 @@ def search(
                 sm
                 for (phase, sm) in profiles.moe
                 if phase == "decode"
-                and ("prefill", profiles.total_sms - sm) in profiles.moe
-                and sm <= profiles.total_sms * config.max_decode_sm_fraction
+                and ("prefill", grid_ctas - sm) in profiles.moe
+                and sm <= max_decode_ctas
+                and sm % policy_cluster == 0
             )
         for q in budgets:
             batches: dict[str, int] = {}
@@ -1349,7 +1359,7 @@ def search(
                     min(config.max_prefill_tokens, kv_tokens_per_attention_gpu)
                     // input_length,
                     prefill_slo_s,
-                    profiles.total_sms - q,
+                    grid_ctas - q,
                 ),
                 (
                     "decode",
@@ -1439,9 +1449,9 @@ def search(
                 component_runtime_source_sha256=component.runtime_source_sha256
                 if profiles.components_by_world
                 else None,
-                prefill_sm_bracket=component.bracket("prefill", profiles.total_sms - q)
+                prefill_sm_bracket=component.bracket("prefill", grid_ctas - q)
                 if profiles.components_by_world
-                else (profiles.total_sms - q, profiles.total_sms - q),
+                else (grid_ctas - q, grid_ctas - q),
                 decode_sm_bracket=component.bracket("decode", q)
                 if profiles.components_by_world
                 else (q, q),

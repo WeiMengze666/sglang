@@ -730,6 +730,9 @@ schema 要求 `units="seconds_per_layer"`、非空 `provenance`、真实 `total_
 `expert_probabilities`（总和为 top-k）。`fit_coefficients` 接受实测
 `{x,sequence_length,latency_s}` 样本；MoE 的 x 必须是 tile footprint。旧的
 `moe_by_sm_count` 格式仍只使用实际测量过的 SM 预算，不对整段 MoE 延迟做隐式插值。
+搜索时以 `cta_count` 指定的长驻 CTA 总数分配 P/D 预算，取值为 0 时使用全部 SM。
+例如，148 SM 的 B300 启动 96 个长驻 CTA 时，P 和 D 的预算之和为 96。
+双 CTA cluster 的 SM100 后端按两个 CTA 分配，并为 P 保留至少一个 cluster。
 
 单卡 attention 组件工具 `profile_attention.py` 可用 `--attention-backend fa4`
 匹配当前服务候选，并通过 `--cpu-threads` 指定 CPU 线程数（默认 1，写入报告）。

@@ -372,6 +372,38 @@ class OptimizerTests(unittest.TestCase):
                 kv_tokens_per_attention_gpu=8192,
             )
 
+    def test_search_uses_persistent_grid_and_native_budget_granularity(self):
+        model = config.ModelSpec.from_dict(model_config())
+        node = config.default_config("/models/30b", cta_count=4)
+        data = profiles_dict(model)  # Eight physical SMs in the fixture.
+        args = dict(
+            input_length=8,
+            context_length=16,
+            average_output_length=4,
+            prefill_slo_s=1,
+            decode_slo_s=0.1,
+            kv_tokens_per_attention_gpu=128,
+        )
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        result = optimizer.search(node, model, profiles, **args)
+        self.assertEqual(result.prefill_sm_bracket, (2, 2))
+        self.assertEqual(result.decode_sm_bracket, (2, 2))
+
+        # 3D + 5P fits an eight-CTA grid only with individual CTA preferences.
+        for phase, budget in (("decode", 3), ("prefill", 5)):
+            data[phase]["moe_by_sm_count"] = {str(budget): {"alpha": 1e-6, "beta": 0}}
+        profiles = optimizer.MeasuredProfiles.from_dict(data, model)
+        full = replace(node, cta_count=0)
+        self.assertIsNone(optimizer.search(full, model, profiles, **args))
+        for kernel in ("sm100_cta1", "wmma"):
+            with self.subTest(kernel=kernel):
+                result = optimizer.search(
+                    replace(full, kernel=kernel), model, profiles, **args
+                )
+                self.assertEqual(result.decode_sm_budget, 3)
+        with self.assertRaisesRegex(ValueError, "physical SM"):
+            optimizer.search(replace(node, cta_count=10), model, profiles, **args)
+
     def test_tbo_search_counts_double_buffers_and_exports_selected_policy(self):
         model = config.ModelSpec.from_dict(model_config())
         node = config.default_config(
@@ -728,6 +760,30 @@ class OptimizerTests(unittest.TestCase):
         self.assertEqual(optimizer.tile_footprint([8], 128), 1)
         with self.assertRaises(ValueError):
             optimizer.tile_footprint([-1], 128)
+
+    def test_adaptive_allocation_rejects_unlaunchable_grid_or_cap(self):
+        args = dict(
+            total_sms=148,
+            cluster_size=2,
+            max_decode_sm_fraction=0.01,
+            decode_sm_budget=96,
+            expected_decode_tiles=8,
+            current_decode_tiles=8,
+            prefill_ready=True,
+            decode_ready=True,
+        )
+        for decode_ready in (True, False):
+            with (
+                self.subTest(decode_ready=decode_ready),
+                self.assertRaisesRegex(ValueError, "one cluster"),
+            ):
+                optimizer.adaptive_sm_allocation(
+                    **(args | {"decode_ready": decode_ready})
+                )
+        with self.assertRaisesRegex(ValueError, "two complete clusters"):
+            optimizer.adaptive_sm_allocation(
+                **(args | {"total_sms": 2, "max_decode_sm_fraction": 0.99})
+            )
 
     def test_adaptive_allocation_progress_and_idle_lending(self):
         common = dict(
