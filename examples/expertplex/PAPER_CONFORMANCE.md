@@ -489,6 +489,15 @@ rank 配置、四组请求长度、固定 SLO 和自有进程清理均已核验�
    可选 `DecisionRecord` 单独记录 leader 获取策略前的时间、退休前缀、领取与交付序号；
    `bench_preemption.py::validate_decision_trace` 将其与 tile trace 关联，检查真实工作
    没有越过已作出的 phase 切换决策。这仍不覆盖此前 attention 发布到 CTA0 的传播。
+   B300 双卡组件测试使用 `bench_preemption.py --max-decode-sm-fraction 0.99`，
+   executor 报告 148 个 CTA、每 cluster 两个 CTA、decode 上限 146 个 CTA。
+   在四次受控 decode 到达中，六阶段 `sm100` 路径的 74 个 cluster 都领取了 decode 工作。
+   从决策到全部 warp 收到任务的实测上界最大为 32.064 µs，从发布起算的保守上界为
+   73.056 µs；3604 次 CTA 切换中每个 CTA 至多有一个尚在计算的 tile。
+   服务使用的 `sm100_swiglu` 路径产生了正确的组件输出，2920 次 CTA 切换也满足单 tile
+   条件，但四次到达均缺少 cluster 73 的 decode 工作记录。该 cluster 位于为 prefill
+   保留的范围；当前记录无法判断其中各 warp 收到策略的时刻。融合路径的全 cluster
+   传播上界仍待验证。这组测试使用合成输入，不计入模型 goodput。
 4. **SM 自适应（Eq.4）**：`update_policy` 从实际 decode GateUp row tiles 计算 footprint，
    按期望 footprint 缩放 q，向 cluster 倍数取整并限制 Qmax。每 phase 的 runnable 位图仅跳过空闲 mailbox；队列 CAS 仍按 tile 领取。`claim` 在首选 phase 无可领取
    工作时尝试另一 phase，实现空闲资源借用。CPU 对照是

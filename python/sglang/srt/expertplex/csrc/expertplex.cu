@@ -1131,6 +1131,7 @@ public:
   bool running = false;
   cudaFuncAttributes attributes{};
   int launch_ctas = 0, launch_threads = 0, dynamic_shared = 0, cluster_size = 1;
+  int max_decode_ctas = 0;
   std::string backend_name;
   expertplex_sm100::Context native_context{};
 
@@ -1174,7 +1175,7 @@ public:
     int ctas = requested_ctas == 0 ? prop.multiProcessorCount : requested_ctas;
     TORCH_CHECK(ctas >= 2 && ctas <= prop.multiProcessorCount,
                 "CTA count must be between 2 and the number of SMs");
-    int max_decode_ctas = std::min(
+    max_decode_ctas = std::min(
         ctas - 1, static_cast<int>(std::floor(ctas * max_decode_fraction)));
     TORCH_CHECK(max_decode_ctas >= 1,
                 "Decode cap must admit at least one decode CTA");
@@ -1367,6 +1368,7 @@ public:
     d["benchmark_stage"] = native_context.benchmark_stage;
     d["pipelined_stores"] = native_context.pipelined_stores;
     d["ctas"] = launch_ctas;
+    d["max_decode_ctas"] = max_decode_ctas;
     d["cluster_size"] = cluster_size;
     d["prefill_preprocess"] = bool(owner->b.prefill_preprocess);
     d["interleaved_swiglu"] = native_context.interleaved_swiglu;

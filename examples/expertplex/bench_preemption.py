@@ -562,6 +562,12 @@ def main():
     parser.add_argument("--world", type=int, default=4)
     parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--decode-budget", type=int, default=32)
+    parser.add_argument(
+        "--max-decode-sm-fraction",
+        type=float,
+        default=0.75,
+        help="Maximum decode share under contention, rounded down to complete clusters",
+    )
     parser.add_argument("--expected-tiles", type=float, default=40)
     parser.add_argument("--delay-us", type=int, default=10)
     parser.add_argument("--trace-capacity", type=int, default=4096)
@@ -587,6 +593,8 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if not 0 < args.max_decode_sm_fraction < 1:
+        parser.error("--max-decode-sm-fraction must lie strictly between zero and one")
     if (
         args.check_single_pending_compute or args.require_universal_propagation_bound
     ) and args.trace_capacity <= 0:
@@ -622,6 +630,7 @@ def main():
         seed=20261015,
         weight_std=0.02,
         decode_budget=args.decode_budget,
+        max_decode_sm_fraction=args.max_decode_sm_fraction,
         expected_tiles=args.expected_tiles,
         trace_capacity=args.trace_capacity,
         trace_path=str(trace_path) if args.trace_capacity else None,

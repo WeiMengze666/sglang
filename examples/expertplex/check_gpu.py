@@ -87,7 +87,7 @@ def _exporter(settings, device, start_executor, outbox, stop_event):
                 w2,
                 decode_sm_budget=settings.get("decode_budget", 2),
                 expected_decode_tiles=settings.get("expected_tiles", 64),
-                max_decode_sm_fraction=0.75,
+                max_decode_sm_fraction=settings.get("max_decode_sm_fraction", 0.75),
                 ctas=settings.get("ctas", 0),
                 trace_capacity=settings.get("trace_capacity", 0),
                 operation_trace_capacity=settings.get("operation_trace_capacity", 0),

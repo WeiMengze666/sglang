@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
@@ -21,6 +22,33 @@ validate_universal = module.validate_universal_propagation_bound
 
 
 class WarpPropagationTests(CustomTestCase):
+    def test_preemption_cli_passes_decode_cap_to_worker(self):
+        class WorkerCreated(Exception):
+            pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = str(Path(directory) / "trace.json")
+            for options, expected in (
+                ([], 0.75),
+                (["--max-decode-sm-fraction", ".99"], 0.99),
+            ):
+                with (
+                    self.subTest(options=options),
+                    patch.object(
+                        sys, "argv", ["bench_preemption", "--output", output, *options]
+                    ),
+                    patch.dict(sys.modules, {"torch": Mock()}),
+                    patch.object(module, "module"),
+                    patch.object(
+                        module, "Exporter", side_effect=WorkerCreated
+                    ) as worker,
+                    self.assertRaises(WorkerCreated),
+                ):
+                    module.main()
+                self.assertEqual(
+                    worker.call_args.args[0]["max_decode_sm_fraction"], expected
+                )
+
     def test_trace_checks_reject_timing_only_mode(self):
         """A timing-only run cannot report a requested trace check as passed."""
         for flag in (
