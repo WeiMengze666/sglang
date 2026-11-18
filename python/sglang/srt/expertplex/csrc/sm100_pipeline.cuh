@@ -281,6 +281,17 @@ __device__ __forceinline__ unsigned operation_tiles(const SlotState *state,
 
 #include "preprocessing.cuh"
 
+// The interleaved kernel runs gate/up and down without a separate activation
+// stage. When the slot fits one GEMM row tile per expert, use its two existing
+// prefix arrays as a dense list of (expert, valid rows), indexed by row tile.
+__device__ __forceinline__ int2 *decode_row_index(const DeviceBuffers &b,
+                                                  Context context, int slot,
+                                                  int phase) {
+  if (phase == 1 && context.interleaved_swiglu && b.capacity[slot] <= DecodeM)
+    return reinterpret_cast<int2 *>(context.tile_prefix) + slot * b.experts;
+  return nullptr;
+}
+
 template <int Cluster, bool Fused>
 __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
                                            int layers, Context context) {
@@ -327,15 +338,21 @@ __device__ __forceinline__ void initialize(const DeviceBuffers &b, int slot,
   }
   const int tile_m = s->phase == 0 ? M : DecodeM;
   U64 rows = 0, activation_rows = 0;
+  int2 *row_index = decode_row_index(b, context, slot, s->phase);
   for (int e = 0; e < b.experts; ++e) {
     int count =
         uncached_load_int(b.counts + static_cast<size_t>(slot) * b.experts + e);
-    if (count < 0 || count > b.capacity[slot])
+    if (count < 0 || count > b.capacity[slot]) {
       set_error(c, ROW_OVERFLOW);
-    else {
-      rows += (count + tile_m - 1) / tile_m;
-      activation_rows += (count + 31) / 32;
+      continue;
     }
+    if (row_index) {
+      if (count)
+        row_index[rows++] = make_int2(e, count);
+      continue;
+    }
+    rows += (count + tile_m - 1) / tile_m;
+    activation_rows += (count + 31) / 32;
     // Build once at admission, rather than serially loading all expert counts
     // on every tile claim. The operation queue's release publishes these
     // cumulative row-tile counts together with its fixed generation.
@@ -477,6 +494,13 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
                         tile_width * Cluster - 1) / (tile_width * Cluster);
     unsigned row_tile = index / tile_n;
     unsigned column_tile = index % tile_n;
+    if (const int2 *row_index = decode_row_index(b, context, slot, phase)) {
+      const int2 expert = row_index[row_tile];
+      task = {slot, stage, state->layer, expert.x, 0,
+              static_cast<int>(column_tile) * tile_width * Cluster, expert.y,
+              phase, q >> 35};
+      return true;
+    }
     const int *prefix =
         context.tile_prefix + (slot * 2 + (stage == ACTIVATE)) * b.experts;
     if (phase == 0 && stage != ACTIVATE) {
@@ -504,7 +528,8 @@ __device__ __forceinline__ bool claim(const DeviceBuffers &b, Context context,
       asm volatile("trap;");
     const unsigned previous = lo ? prefix[lo - 1] : 0;
     unsigned local_row = row_tile - previous;
-    if (phase == 1 && stage != ACTIVATE) {
+    // One row tile already has the native masked GEMM column order.
+    if (phase == 1 && stage != ACTIVATE && prefix[lo] - previous > 1) {
       // Native masked GEMM applies the same swizzle independently to each
       // expert's row range rather than the concatenated prefill range.
       const unsigned rows = prefix[lo] - previous;
