@@ -71,6 +71,28 @@ FlashInfer A2A 和 `flashinfer_trtllm_routed`。原生调度重叠开启，TBO �
 这次复测保留此前原生基线在 2.5 requests/s 的达标记录，也显示了边界附近的
 运行间波动。ExpertPlex 的 1.5× 验收仍需双方在相同负载下的容量对照。
 
+### 1P+3D+4E 主模型的解码调度与 TBO
+
+以下两组对照沿用相同请求和联合 SLO。P 使用单批，三张 D 卡组成原生
+attention-DP3 服务。每行是一轮 256 请求/到达率的结果。请求分配组使用同一
+源码。解码重叠组在修复 TBO 子批的路由和 scatter 后启用 TBO，并与先前完成的
+同配置单批解码比较。
+
+| 对照组与设置 | 3 requests/s 达标数 | 3.75 requests/s 达标数 | 3.75 requests/s 的 TPOT P90 |
+| --- | ---: | ---: | ---: |
+| 请求分配，D 单批，`round_robin` | 222 | 169 | 52.77 ms |
+| 请求分配，D 单批，`total_requests` | 232 | 169 | 53.31 ms |
+| 解码重叠，`round_robin`，D 单批 | 221 | 160 | 52.88 ms |
+| 解码重叠，`round_robin`，D 开启 TBO | 12 | 8 | 79.89 ms |
+
+在 3.75 requests/s，按在途请求数分配将 TTFT 超时从 33 个减至 1 个，
+仍有 87 个请求超过 TPOT 门槛。3 requests/s 有一次达标；与原生已通过的
+2.5 requests/s 相比，这两个离散负载点之比为 1.20。容量边界仍待复测。
+
+解码 TBO 的功能验证覆盖三张 B300 上 117 次 rank-local scatter 的 CUDA Graph
+重放，以及两档到达率的 512 个主模型请求。该配置显著增加逐 token 延迟；
+当前性能实验继续使用 D 单批。
+
 ## 2026-11-17 性能证据更新
 
 以下汇总维护恢复后完成的实验。主模型为 Coder-480B BF16，运行时基于
